@@ -1046,6 +1046,8 @@ public:
 
   bool can_be_merged();
 
+  uint upper_bound_of_exists2in_equalities();
+
   friend class st_select_lex;
 };
 
@@ -1193,6 +1195,8 @@ public:
   enum leaf_list_state {UNINIT, READY, SAVED};
   enum leaf_list_state prep_leaf_list_state;
   uint insert_tables;
+  uint card_of_ref_ptrs_slice;
+
   st_select_lex *merged_into; /* select which this select is merged into */
                               /* (not 0 only for views/derived tables)   */
 
@@ -1206,7 +1210,6 @@ public:
 
   /// Array of pointers to top elements of all_fields list
   Ref_ptr_array ref_pointer_array;
-
   /*
     number of items in select_list and HAVING clause used to get number
     bigger then can be number of entries that will be added to all item
@@ -1225,6 +1228,7 @@ public:
   uint order_group_num;
   /* reserved for exists 2 in */
   uint select_n_reserved;
+  uint select_n_eq;
   /*
    it counts the number of bit fields in the SELECT list. These are used when DISTINCT is
    converted to a GROUP BY involving BIT fields.
@@ -1300,6 +1304,8 @@ public:
     case of an error during prepare the PS is not created.
   */
   uint8 changed_elements; // see TOUCHED_SEL_*
+  uint8 save_uncacheable;
+  uint8 save_master_uncacheable;
   /* TODO: add foloowing first_* to bitmap above */
   bool first_natural_join_processing;
   bool first_cond_optimization;

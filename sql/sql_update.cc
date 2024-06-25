@@ -501,7 +501,7 @@ int mysql_update(THD *thd,
     unfix_fields(fields);
 
   if (setup_fields_with_no_wrap(thd, Ref_ptr_array(),
-                                fields, MARK_COLUMNS_WRITE, 0, 0))
+                                fields, MARK_COLUMNS_WRITE, 0))
     DBUG_RETURN(1);                     /* purecov: inspected */
   if (check_fields(thd, table_list, fields, table_list->view))
   {
@@ -522,7 +522,7 @@ int mysql_update(THD *thd,
   table_list->grant.want_privilege= table->grant.want_privilege=
     (SELECT_ACL & ~table->grant.privilege);
 #endif
-  if (setup_fields(thd, Ref_ptr_array(), values, MARK_COLUMNS_READ, 0, NULL, 0))
+  if (setup_fields(thd, Ref_ptr_array(), values, MARK_COLUMNS_READ, NULL, 0))
   {
     free_underlaid_joins(thd, select_lex);
     DBUG_RETURN(1);				/* purecov: inspected */
@@ -1766,7 +1766,7 @@ bool Multiupdate_prelocking_strategy::handle_end(THD *thd)
 
   List<Item> *fields= &lex->first_select_lex()->item_list;
   if (setup_fields_with_no_wrap(thd, Ref_ptr_array(),
-                                *fields, MARK_COLUMNS_WRITE, 0, 0))
+                                *fields, MARK_COLUMNS_WRITE, 0))
     DBUG_RETURN(1);
 
   // Check if we have a view in the list ...
@@ -2117,7 +2117,7 @@ int multi_update::prepare(List<Item> &not_used_values,
   */
 
   int error= setup_fields(thd, Ref_ptr_array(),
-                          *values, MARK_COLUMNS_READ, 0, NULL, 0);
+                          *values, MARK_COLUMNS_READ, NULL, 0);
 
   ti.rewind();
   while ((table_ref= ti++))

@@ -99,8 +99,7 @@ static bool init_fields(THD *thd, TABLE_LIST *tables,
                                    Lex_cstring_strlen(find_fields->table_name),
                                    Lex_cstring_strlen(find_fields->field_name)));
     if (!(find_fields->field= find_field_in_tables(thd, field, tables, NULL,
-						   0, REPORT_ALL_ERRORS, 1,
-                                                   TRUE)))
+						   0, REPORT_ALL_ERRORS, 1)))
       DBUG_RETURN(1);
     bitmap_set_bit(find_fields->field->table->read_set,
                    find_fields->field->field_index);

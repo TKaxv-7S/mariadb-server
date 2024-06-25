@@ -544,13 +544,32 @@ fix_inner_refs(THD *thd, List<Item> &all_fields, SELECT_LEX *select,
 {
   Item_outer_ref *ref;
 
+  List_iterator_fast <Item_outer_ref> ref_it(select->inner_refs_list);
+
+  /*
+    Item_outer_ref wrappers are allocated on the statement memory at
+    the first execution. So for subsequent executions the only thing
+    we have to do for each such wrapper is to add the corresponding
+    element to the list all_fields.
+  */
+  if (thd->is_noninitial_query_execution())
+  {
+    while ((ref= ref_it++))
+    {
+      if (ref->found_in_select_list)
+        continue;
+      int el= all_fields.elements;
+      all_fields.push_front(ref_pointer_array[el], thd->mem_root);
+    }
+    return false;
+  }
+
   /*
     Mark the references from  the inner_refs_list that are occurred in
     the group by expressions. Those references will contain direct
-    references to the referred fields. The markers are set in 
+    references to the referred fields. The markers are set in
     the found_in_group_by field of the references from the list.
   */
-  List_iterator_fast <Item_outer_ref> ref_it(select->inner_refs_list);
   for (ORDER *group= select->join->group_list; group;  group= group->next)
   {
     (*group->item)->walk(&Item::check_inner_refs_processor, TRUE, &ref_it);
@@ -603,15 +622,36 @@ fix_inner_refs(THD *thd, List<Item> &all_fields, SELECT_LEX *select,
     else if (ref->found_in_group_by)
       direct_ref= TRUE;
 
-    new_ref= direct_ref ?
-              new (thd->mem_root) Item_direct_ref(thd, ref->context, item_ref, ref->table_name,
-                          ref->field_name, ref->alias_name_used) :
-              new (thd->mem_root) Item_ref(thd, ref->context, item_ref, ref->table_name,
-                          ref->field_name, ref->alias_name_used);
-    if (!new_ref)
-      return TRUE;
-    ref->outer_ref= new_ref;
-    ref->ref= &ref->outer_ref;
+    bool is_first_execution= thd->is_first_query_execution();
+    if (is_first_execution ||
+        thd->stmt_arena->is_stmt_prepare())
+    {
+      Query_arena *arena, backup;
+      arena= 0;
+      if (is_first_execution)
+        arena= thd->activate_stmt_arena_if_needed(&backup);
+      new_ref= direct_ref ?
+                new (thd->mem_root) Item_direct_ref(thd, ref->context,
+                                                    item_ref, ref->table_name,
+                                                    ref->field_name,
+                                                    ref->alias_name_used) :
+                new (thd->mem_root) Item_ref(thd, ref->context,
+                                             item_ref, ref->table_name,
+                                             ref->field_name,
+                                             ref->alias_name_used);
+      if (arena)
+        thd->restore_active_arena(arena, &backup);
+      if (!new_ref)
+        return TRUE;
+      if (is_first_execution)
+        ref->outer_ref= new_ref;
+      else
+      {
+        DBUG_ASSERT(thd->stmt_arena->is_stmt_prepare());
+        thd->change_item_tree(&ref->outer_ref, new_ref);
+      }
+      ref->ref= &ref->outer_ref;
+    }
 
     if (ref->fix_fields_if_needed(thd, 0))
       return TRUE;
@@ -1356,24 +1396,17 @@ JOIN::prepare(TABLE_LIST *tables_init, COND *conds_init, uint og_num,
       DBUG_RETURN(-1);
   }
 
-  if (thd->lex->current_select->first_cond_optimization)
-  {
-    if ( conds && ! thd->lex->current_select->merged_into)
-      select_lex->select_n_reserved= conds->exists2in_reserved_items();
-    else
-      select_lex->select_n_reserved= 0;
-  }
-
   if (select_lex->setup_ref_array(thd, real_og_num))
     DBUG_RETURN(-1);
 
-  ref_ptrs= ref_ptr_array_slice(0);
+  ref_ptrs= !select_lex->ref_pointer_array.is_null() ?
+              ref_ptr_array_slice(0) : select_lex->ref_pointer_array;
   
   enum_parsing_place save_place=
                      thd->lex->current_select->context_analysis_place;
   thd->lex->current_select->context_analysis_place= SELECT_LIST;
   if (setup_fields(thd, ref_ptrs, fields_list, MARK_COLUMNS_READ,
-                   &all_fields, &select_lex->pre_fix, 1))
+                   &select_lex->pre_fix, 1))
     DBUG_RETURN(-1);
   thd->lex->current_select->context_analysis_place= save_place;
 
@@ -1483,6 +1516,30 @@ JOIN::prepare(TABLE_LIST *tables_init, COND *conds_init, uint og_num,
   if (res)
     DBUG_RETURN(res);
 
+  if (select_lex->inner_refs_list.elements &&
+      fix_inner_refs(thd, all_fields, select_lex, ref_ptrs))
+    DBUG_RETURN(-1);
+
+  if (thd->is_noninitial_query_execution())
+  {
+    select_lex->uncacheable= select_lex->save_uncacheable;
+    select_lex->master_unit()->uncacheable= select_lex->save_master_uncacheable;
+  }
+
+  {
+     Item *item;
+     List_iterator<Item> it(fields_list);
+     while ((item= it++))
+     {
+       if ((item->with_sum_func() && item->type() != Item::SUM_FUNC_ITEM) ||
+           item->with_window_func)
+       {
+         item->split_sum_func(thd, select_lex->ref_pointer_array, all_fields,
+                              SPLIT_SUM_SELECT);
+       }
+     }
+  }
+
   if (order)
   {
     bool real_order= FALSE;
@@ -1531,10 +1588,6 @@ JOIN::prepare(TABLE_LIST *tables_init, COND *conds_init, uint og_num,
     } while (item_sum != end);
   }
 
-  if (select_lex->inner_refs_list.elements &&
-      fix_inner_refs(thd, all_fields, select_lex, ref_ptrs))
-    DBUG_RETURN(-1);
-
   if (group_list)
   {
     /*
@@ -1563,18 +1616,21 @@ JOIN::prepare(TABLE_LIST *tables_init, COND *conds_init, uint og_num,
     Check if there are references to un-aggregated columns when computing 
     aggregate functions with implicit grouping (there is no GROUP BY).
   */
-  if (thd->variables.sql_mode & MODE_ONLY_FULL_GROUP_BY && !group_list &&
-      !(select_lex->master_unit()->item &&
-        select_lex->master_unit()->item->is_in_predicate() &&
-        select_lex->master_unit()->item->get_IN_subquery()->
-        test_set_strategy(SUBS_MAXMIN_INJECTED)) &&
-      select_lex->non_agg_field_used() &&
-      select_lex->agg_func_used())
+  if (thd->variables.sql_mode & MODE_ONLY_FULL_GROUP_BY && !group_list)
   {
-    my_message(ER_MIX_OF_GROUP_FUNC_AND_FIELDS,
-               ER_THD(thd, ER_MIX_OF_GROUP_FUNC_AND_FIELDS), MYF(0));
-    DBUG_RETURN(-1);
+    Item_subselect *subs= select_lex->master_unit()->item;
+    if (!(subs && subs->substype() == Item_subselect::SINGLEROW_SUBS &&
+	  ((Item_singlerow_subselect *) subs)->
+            test_set_strategy(SUBS_MAXMIN_INJECTED)) &&
+        select_lex->non_agg_field_used() &&
+        select_lex->agg_func_used())
+    {
+      my_message(ER_MIX_OF_GROUP_FUNC_AND_FIELDS,
+                 ER_THD(thd, ER_MIX_OF_GROUP_FUNC_AND_FIELDS), MYF(0));
+      DBUG_RETURN(-1);
+    }
   }
+
   {
     /* Caclulate the number of groups */
     send_group_parts= 0;
@@ -1944,7 +2000,6 @@ JOIN::optimize_inner()
   Json_writer_object trace_prepare(thd, "join_optimization");
   trace_prepare.add_select_number(select_lex->select_number);
   Json_writer_array trace_steps(thd, "steps");
-
   /*
     Needed in case optimizer short-cuts,
     set properly in make_aggr_tables_info()
@@ -1965,7 +2020,8 @@ JOIN::optimize_inner()
     DBUG_RETURN(1);
 
   // Update used tables after all handling derived table procedures
-  select_lex->update_used_tables();
+  if (select_lex->first_cond_optimization)
+    select_lex->update_used_tables();
 
   /*
     In fact we transform underlying subqueries after their 'prepare' phase and
@@ -1986,11 +2042,10 @@ JOIN::optimize_inner()
   }
   */
 
-  if (transform_max_min_subquery())
-    DBUG_RETURN(1); /* purecov: inspected */
-
   if (select_lex->first_cond_optimization)
   {
+    if (transform_max_min_subquery())
+      DBUG_RETURN(1); /* purecov: inspected */
     /* dump_TABLE_LIST_graph(select_lex, select_lex->leaf_tables); */
     if (convert_join_subqueries_to_semijoins(this))
       DBUG_RETURN(1); /* purecov: inspected */
@@ -2075,6 +2130,9 @@ JOIN::optimize_inner()
 
     if (arena)
       thd->restore_active_arena(arena, &backup);
+
+    select_lex->save_uncacheable= select_lex->uncacheable;
+    select_lex->save_master_uncacheable= select_lex->master_unit()->uncacheable;
   }
 
   if (optimize_constant_subqueries())
@@ -14829,13 +14887,14 @@ remove_const(JOIN *join,ORDER *first_order, COND *cond,
     }
     if (tmp_order != order)
       continue;                                // Duplicate order by. Remove
-    
+
     if (change_list)
-      *prev_ptr= order;				// use this entry
+      *prev_ptr= order;                                // use this entry
+
     prev_ptr= &order->next;
   }
   if (change_list)
-    *prev_ptr=0;
+    *prev_ptr= 0;
   if (prev_ptr == &first_order)			// Nothing to sort/group
     *simple_order=1;
 #ifndef DBUG_OFF
@@ -25299,12 +25358,27 @@ find_order_in_list(THD *thd, Ref_ptr_array ref_pointer_array,
     order->counter_used= 1;
     return FALSE;
   }
+
+
   /* Lookup the current GROUP/ORDER field in the SELECT clause. */
-  select_item= find_item_in_list(order_item, fields, &counter,
-                                 REPORT_EXCEPT_NOT_FOUND, &resolution);
+
+  if (!thd->is_noninitial_query_execution())
+  {
+    select_item= find_item_in_list(order_item, fields, &counter,
+                                   REPORT_EXCEPT_NOT_FOUND, &resolution);
+    order->resolution= resolution;
+    order->select_item= select_item;
+    order->counter= counter;
+  }
+  else
+  {
+    resolution= order->resolution;
+    select_item= order->select_item;
+    counter= order->counter;
+  }
+
   if (!select_item)
     return TRUE; /* The item is not unique, or some other error occurred. */
-
 
   /* Check whether the resolved field is not ambiguos. */
   if (select_item != not_found_item)
@@ -25320,14 +25394,32 @@ find_order_in_list(THD *thd, Ref_ptr_array ref_pointer_array,
       return TRUE;
 
     /* Lookup the current GROUP field in the FROM clause. */
-    order_item_type= order_item->type();
+    order_item_type= (*order->item)->type();
     from_field= (Field*) not_found_field;
     if ((is_group_field && order_item_type == Item::FIELD_ITEM) ||
         order_item_type == Item::REF_ITEM)
     {
-      from_field= find_field_in_tables(thd, (Item_ident*) order_item, tables,
-                                       NULL, &view_ref, IGNORE_ERRORS, FALSE,
-                                       FALSE);
+      if (!thd->is_noninitial_query_execution())
+      {
+        from_field= find_field_in_tables(thd, (Item_ident*) order_item, tables,
+                                         NULL, &view_ref, IGNORE_ERRORS, FALSE);
+        order->view_ref= view_ref;
+        order->from_field= from_field;
+      }
+      else
+      {
+        if (order->view_ref)
+        {
+          view_ref= order->view_ref;
+          from_field= order->from_field;
+        }
+        else
+	{
+          from_field= find_field_in_tables(thd, (Item_ident*) order_item,
+                                           tables, NULL, &view_ref,
+                                           IGNORE_ERRORS, FALSE);
+        }
+      }
       if (!from_field)
         from_field= (Field*) not_found_field;
     }
@@ -25421,6 +25513,7 @@ find_order_in_list(THD *thd, Ref_ptr_array ref_pointer_array,
     ((Item_sum *)order_item)->ref_by= all_fields.head_ref();
 
   order->item= &ref_pointer_array[el];
+
   return FALSE;
 }
 

@@ -39,7 +39,9 @@ public:
 
   Bounds_checked_array(Element_type *el, size_t size_arg)
     : m_array(el), m_size(size_arg)
-  {}
+  {
+    DBUG_ASSERT(m_size > 0);
+  }
 
   void reset() { m_array= NULL; m_size= 0; }
  

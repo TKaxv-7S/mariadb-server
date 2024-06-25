@@ -37,26 +37,6 @@ typedef class st_select_lex SELECT_LEX;
 
 typedef struct st_lock_param_type ALTER_PARTITION_PARAM_TYPE;
 
-/*
-  This enumeration type is used only by the function find_item_in_list
-  to return the info on how an item has been resolved against a list
-  of possibly aliased items.
-  The item can be resolved:
-   - against an alias name of the list's element (RESOLVED_AGAINST_ALIAS)
-   - against non-aliased field name of the list  (RESOLVED_WITH_NO_ALIAS)
-   - against an aliased field name of the list   (RESOLVED_BEHIND_ALIAS)
-   - ignoring the alias name in cases when SQL requires to ignore aliases
-     (e.g. when the resolved field reference contains a table name or
-     when the resolved item is an expression)   (RESOLVED_IGNORING_ALIAS)
-*/
-enum enum_resolution_type {
-  NOT_RESOLVED=0,
-  RESOLVED_IGNORING_ALIAS,
-  RESOLVED_BEHIND_ALIAS,
-  RESOLVED_WITH_NO_ALIAS,
-  RESOLVED_AGAINST_ALIAS
-};
-
 /* Argument to flush_tables() of what to flush */
 enum flush_tables_type {
   FLUSH_ALL,
@@ -184,8 +164,7 @@ int setup_wild(THD *thd, TABLE_LIST *tables, List<Item> &fields,
 int setup_returning_fields(THD* thd, TABLE_LIST* table_list);
 bool setup_fields(THD *thd, Ref_ptr_array ref_pointer_array,
                   List<Item> &item, enum_column_usage column_usage,
-                  List<Item> *sum_func_list, List<Item> *pre_fix,
-                  bool allow_sum_func);
+                  List<Item> *pre_fix, bool allow_sum_func);
 void unfix_fields(List<Item> &items);
 bool fill_record(THD * thd, TABLE *table_arg, List<Item> &fields,
                  List<Item> &values, bool ignore_errors, bool update);
@@ -197,7 +176,7 @@ Field *
 find_field_in_tables(THD *thd, Item_ident *item,
                      TABLE_LIST *first_table, TABLE_LIST *last_table,
                      Item **ref, find_item_error_report_type report_error,
-                     bool check_privileges, bool register_tree_change);
+                     bool check_privileges);
 Field *
 find_field_in_table_ref(THD *thd, TABLE_LIST *table_list,
                         const char *name, size_t length,
@@ -205,7 +184,7 @@ find_field_in_table_ref(THD *thd, TABLE_LIST *table_list,
                         const char *table_name, Item **ref,
                         bool check_privileges, bool allow_rowid,
                         uint *cached_field_index_ptr,
-                        bool register_tree_change, TABLE_LIST **actual_table);
+                        TABLE_LIST **actual_table);
 Field *
 find_field_in_table(THD *thd, TABLE *table, const char *name, size_t length,
                     bool allow_rowid, uint *cached_field_index_ptr);
@@ -374,7 +353,6 @@ inline TABLE_LIST *find_table_in_global_list(TABLE_LIST *table,
 inline bool setup_fields_with_no_wrap(THD *thd, Ref_ptr_array ref_pointer_array,
                                       List<Item> &item,
                                       enum_column_usage column_usage,
-                                      List<Item> *sum_func_list,
                                       bool allow_sum_func)
 {
   bool res;
@@ -382,7 +360,7 @@ inline bool setup_fields_with_no_wrap(THD *thd, Ref_ptr_array ref_pointer_array,
   DBUG_ASSERT(thd->lex->current_select == first);
   first->no_wrap_view_item= TRUE;
   res= setup_fields(thd, ref_pointer_array, item, column_usage,
-                    sum_func_list, NULL,  allow_sum_func);
+                    NULL,  allow_sum_func);
   first->no_wrap_view_item= FALSE;
   return res;
 }

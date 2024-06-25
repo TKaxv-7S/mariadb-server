@@ -93,10 +93,21 @@ bool Item_sum::init_sum_func_check(THD *thd)
   thd->lex->in_sum_func= this;
   nest_level= thd->lex->current_select->nest_level;
   ref_by= 0;
-  aggr_level= -1;
-  aggr_sel= NULL;
-  max_arg_level= -1;
-  max_sum_func_level= -1;
+  /*
+    The attributes aggr_level, aggr_sel, max_arg_level, max_sum_func_level
+    are calculated the first execution of the query and cannot be changed
+    for succeeding executions except the case when processing SP code we have
+    active_stmt_arena_to_use()->state == Query_arena::STMT_SP_QUERY_ARGUMENTS
+  */
+  if (!thd->is_noninitial_query_execution() ||
+      thd->active_stmt_arena_to_use()->state ==
+      Query_arena::STMT_SP_QUERY_ARGUMENTS)
+  {
+    aggr_level= -1;
+    aggr_sel= NULL;
+    max_arg_level= -1;
+    max_sum_func_level= -1;
+  }
   outer_fields.empty();
   return FALSE;
 }
@@ -413,7 +424,11 @@ bool Item_sum::register_sum_func(THD *thd, Item **ref)
          sl= sl->master_unit()->outer_select() )
       sl->master_unit()->item->get_with_sum_func_cache()->set_with_sum_func();
   }
-  if (aggr_sel)
+  /*
+    This set function is used in thd->lex->current_select and aggr_sel
+    points to the select where aggregation is to be done.
+  */
+  if (aggr_sel && aggr_sel != thd->lex->current_select)
     thd->lex->current_select->mark_as_dependent(thd, aggr_sel, NULL);
 
   if ((thd->lex->describe & DESCRIBE_EXTENDED) && aggr_sel)

@@ -7161,7 +7161,7 @@ int mysql_table_grant(THD *thd, TABLE_LIST *table_list,
                                          column->column.length(),
                                          column->column.ptr(), NULL, NULL,
                                          NULL, TRUE, FALSE,
-                                         &unused_field_idx, FALSE, &dummy);
+                                         &unused_field_idx, &dummy);
         if (unlikely(f == (Field*)0))
         {
           my_error(ER_BAD_FIELD_ERROR, MYF(0),
