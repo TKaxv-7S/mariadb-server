@@ -863,6 +863,11 @@ void THD::mark_tmp_table_as_free_for_reuse(TABLE *table)
       table->s->using_binlog() &&             // Table should be using binlog
       table->file->mark_trx_read_write_done)  // Changes where done
   {
+    /*
+      We should only come here if binlog is not open or if we where using
+      row format
+    */
+    DBUG_ASSERT(!mysql_bin_log.is_open() || is_binlog_format_row());
     /* Mark the table as not up to date */
     table->mark_as_not_binlogged();
   }
