@@ -6834,11 +6834,25 @@ bool THD::binlog_write_table_maps()
          table_ptr++)
     {
       TABLE *table= *table_ptr;
-      if (table->current_lock != F_WRLCK || ! table->file->row_logging)
-        continue;
-      if (mysql_bin_log.write_table_map(this, table))
-        DBUG_RETURN(1);
-      if (table->restore_row_logging)
+      bool restore= 0;
+      /*
+        We have to also write table maps for tables that have not yet been
+        used, like for tables in after triggers
+      */
+      if (!table->file->row_logging &&
+          table->query_id != query_id && table->current_lock == F_WRLCK)
+      {
+        if (table->file->prepare_for_row_logging())
+          restore= 1;
+      }
+      if (table->file->row_logging &&
+          !table->s->global_tmp_table()) // Never write table maps for GTT
+      {
+        if (mysql_bin_log.write_table_map(this, table, with_annotate))
+          DBUG_RETURN(1);
+        with_annotate= 0;
+      }
+      if (restore)
       {
         /*
           Restore original setting, changed in the previous loop,
