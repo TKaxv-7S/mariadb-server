@@ -897,7 +897,7 @@ ATTRIBUTE_COLD dberr_t ibuf_upgrade()
   sql_print_information("InnoDB: Upgrading the change buffer");
 
 #ifdef BTR_CUR_HASH_ADAPT
-  const bool ahi= btr_search.enabled;
+  const ahi_status ahi= btr_search.get_enabled();
   if (ahi)
     btr_search.disable();
 #endif
@@ -1004,7 +1004,7 @@ ATTRIBUTE_COLD dberr_t ibuf_upgrade()
 
 #ifdef BTR_CUR_HASH_ADAPT
   if (ahi)
-    btr_search.enable();
+    btr_search.enable(false, ahi);
 #endif
 
   ibuf_index->lock.free();
