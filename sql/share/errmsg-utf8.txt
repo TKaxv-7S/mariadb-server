@@ -12420,3 +12420,7 @@ ER_TRG_EVENT_CONFLICTS_NAME
         eng "%s with the same name '%s' already exists"
 ER_SYSTEM_TRG_DISABLED
         eng "The table mysql.event doesn't contain all mandatory columns required for support of system triggers. Operations with system triggers is disabled."
+ER_JSON_OPTIMIZER_REPLAY_CONTEXT_PARSE_FAILED
+        eng "Failed to parse saved optimizer context: %s at offset %d."
+ER_JSON_OPTIMIZER_REPLAY_CONTEXT_MATCH_FAILED
+        eng "Failed to match the stats from replay context with the optimizer stats: %s doesn't exist in %s"
