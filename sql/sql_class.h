@@ -6399,6 +6399,7 @@ class start_new_trans
   uint in_sub_stmt;
   uint server_status;
   my_bool wsrep_on;
+  rpl_group_info* org_rgi_slave;
 
 public:
   start_new_trans(THD *thd);
