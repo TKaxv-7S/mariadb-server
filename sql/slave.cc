@@ -898,8 +898,8 @@ bool init_slave_skip_errors_bitmap(const char* arg)
   }
   for (p= arg ; *p; )
   {
-    long err_code;
-    if (!(p= str2int(p, 10, 0, LONG_MAX, &err_code)))
+    uint err_code;
+    if (!(p= str2int(p, INT16_MAX, 10, &err_code)))
       break;
     if (err_code < MAX_SLAVE_ERROR)
     {
@@ -911,7 +911,7 @@ bool init_slave_skip_errors_bitmap(const char* arg)
       }
       else
       {
-        bitmap_set_bit(&slave_error_mask,(uint)err_code);
+        bitmap_set_bit(&slave_error_mask,err_code);
       }
     }
     while (!my_isdigit(system_charset_info,*p) && *p)
@@ -989,7 +989,7 @@ static constexpr uint DEFAULT_SLAVE_RETRY_ERRORS= 10;
 bool init_slave_transaction_retry_errors(const char* arg)
 {
   const char *p;
-  long err_code;
+  int err_code;
   uint i;
   DBUG_ENTER("init_slave_transaction_retry_errors");
 
@@ -1002,7 +1002,7 @@ bool init_slave_transaction_retry_errors(const char* arg)
     /* empty */;
   for (p= arg; *p; )
   {
-    if (!(p= str2int(p, 10, 0, LONG_MAX, &err_code)))
+    if (!(p= str2int(p, INT16_MAX, 10, &err_code)))
       break;
     slave_transaction_retry_error_length++;
     while (!my_isdigit(system_charset_info,*p) && *p)
@@ -1034,7 +1034,7 @@ bool init_slave_transaction_retry_errors(const char* arg)
   /* Add user codes after this */
   for (p= arg, i= DEFAULT_SLAVE_RETRY_ERRORS; *p; )
   {
-    if (!(p= str2int(p, 10, 0, LONG_MAX, &err_code)))
+    if (!(p= str2int(p, INT16_MAX, 10, &err_code)))
       break;
     if (err_code > 0)
       slave_transaction_retry_errors[i++]= (uint) err_code;
