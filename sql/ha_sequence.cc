@@ -271,7 +271,7 @@ int ha_sequence::write_row(const uchar *buf)
   }
 
 #ifdef WITH_WSREP
-  if (WSREP_ON && WSREP(thd) && wsrep_thd_is_local(thd))
+  if (WSREP_NNULL(thd) && wsrep_thd_is_local(thd))
   {
     /*
        We need to start Galera transaction for select NEXT VALUE FOR
