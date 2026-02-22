@@ -1,0 +1,754 @@
+replace_result InnoDB MyISAM;
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+<xs:element name="note">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="to" type="xs:string"/>
+      <xs:element name="from" type="xs:string"/>
+      <xs:element name="heading" type="xs:string"/>
+      <xs:element name="body" type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+</xs:schema>';
+
+
+set @xml= '<a> If <b> 123 </b> </a>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<?xml version="1.0"?>
+<note>
+  <to>JOHN</to>
+  <from>MARY</from>
+  <heading>Reminder</heading>
+  <body>Take care!</body>
+</note>';
+
+select XMLISVALID(@xml, @schema);
+
+--echo
+--echo Check 'xs:' namespace handling
+--echo
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+
+<xs:element name="note">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="to" type="xs:string"/>
+      <xs:element name="from" type="xs:string"/>
+      <xs:element name="heading" type="xs:string"/>
+      <xs:element name="body" type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+</xs:schema>';
+--error ER_WRONG_VALUE
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+
+<xsd:element name="note">
+  <xsd:complexType>
+    <xsd:sequence>
+      <xsd:element name="to" type="xsd:string"/>
+      <xsd:element name="from" type="xsd:string"/>
+      <xsd:element name="heading" type="xsd:string"/>
+      <xsd:element name="body" type="xsd:string"/>
+    </xsd:sequence>
+  </xsd:complexType>
+</xsd:element>
+
+</xsd:schema>';
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<my_ns:schema xmlns:my_ns="http://www.w3.org/2001/XMLSchema">
+
+<my_ns:element name="note">
+  <my_ns:complexType>
+    <my_ns:sequence>
+      <my_ns:element name="to" type="my_ns:string"/>
+      <my_ns:element name="from" type="my_ns:string"/>
+      <my_ns:element name="heading" type="my_ns:string"/>
+      <my_ns:element name="body" type="my_ns:string"/>
+    </my_ns:sequence>
+  </my_ns:complexType>
+</my_ns:element>
+
+</my_ns:schema>';
+
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+<xs:element name="note">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="to" type="xs:string"/>
+      <xsd:element name="from" type="xs:string"/>
+      <xs:element name="heading" type="xs:string"/>
+      <xs:element name="body" type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+</xs:schema>';
+--error ER_WRONG_VALUE
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<schema xmlns="http://www.w3.org/2001/XMLSchema">
+
+<element name="note">
+  <complexType>
+    <sequence>
+      <element name="to" type="string"/>
+      <:element name="from" type="string"/>
+      <element name="heading" type="string"/>
+      <element name="body" type="string"/>
+    </sequence>
+  </complexType>
+</element>
+
+</schema>';
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema>
+
+<xs:element name="note">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="to" type="xs:string"/>
+      <xs:element name="from" type="xs:string"/>
+      <xs:element name="heading" type="xs:string"/>
+      <xs:element name="body" type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+</xs:schema>';
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<xsd:schema>
+
+<xsd:element name="note">
+  <xsd:complexType>
+    <xsd:sequence>
+      <xsd:element name="to" type="xsd:string"/>
+      <xsd:element name="from" type="xsd:string"/>
+      <xsd:element name="heading" type="xsd:string"/>
+      <xsd:element name="body" type="xsd:string"/>
+    </xsd:sequence>
+  </xsd:complexType>
+</xsd:element>
+
+</xsd:schema>';
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<xsd:schema>
+
+<xsd:element name="note">
+  <xsd:complexType>
+    <xsd:sequence>
+      <xsd:element name="to" type="xsd:string"/>
+      <xsd:element name="from" type="xsd:string"/>
+      <xsd:element name="heading" type="xsd:string"/>
+      <xsd:element name="body" type="xs:string"/>
+    </xsd:sequence>
+  </xsd:complexType>
+</xsd:element>
+
+</xsd:schema>';
+--error ER_UNKNOWN_ERROR
+select XMLISVALID(@xml, @schema);
+
+--echo
+--echo <all>
+--echo
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <!-- Main Element -->
+  <xs:element name="person">
+    <!-- Defines the element as having child items -->
+    <xs:complexType>
+      <!-- Dictates children can appear in any sequence -->
+      <xs:all>
+        <xs:element name="firstname" type="xs:string" />
+        <xs:element name="lastname" type="xs:string" />
+        <xs:element name="age" type="xs:int" />
+      </xs:all>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>';
+
+set @xml= '<?xml version="1.0" encoding="UTF-8"?>
+<person>
+  <firstname>John</firstname>
+  <lastname>Doe</lastname>
+  <age>30</age>
+</person>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<?xml version="1.0" encoding="UTF-8"?>
+<person>
+  <age>30</age>
+  <lastname>Doe</lastname>
+  <firstname>John</firstname>
+</person>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<?xml version="1.0" encoding="UTF-8"?>
+<person>
+  <age>30</age>
+  <firstname>John</firstname>
+</person>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<?xml version="1.0" encoding="UTF-8"?>
+<person>
+  <age>30</age>
+  <name>Doe</name>
+  <firstname>John</firstname>
+</person>';
+
+select XMLISVALID(@xml, @schema);
+
+--echo
+--echo <choice>
+--echo
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+<!-- Main Element -->
+  <xs:element name="payment">
+    <!-- Defines the element as having child items -->
+    <xs:complexType>
+      <!-- Dictates that only ONE of the following elements can be used -->
+      <xs:choice>
+        <xs:element name="creditcard" type="xs:string" />
+        <xs:element name="paypal" type="xs:string" />
+      </xs:choice>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>';
+
+set @xml= '
+<payment>
+  <creditcard>1234-5678-9012-3456</creditcard>
+</payment>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '
+<payment>
+  <paypal>1234-5678-9012-3456</paypal>
+  <creditcard>1234-5678-9012-3456</creditcard>
+</payment>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '
+<payment>
+  <paypal>1234-5678-9012-3456</paypal>
+  <paypal>1234-5678-9012-3456</paypal>
+</payment>';
+
+select XMLISVALID(@xml, @schema);
+set @xml= '
+<payment> </payment>';
+
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+<!-- Main Element -->
+  <xs:element name="payment">
+    <!-- Defines the element as having child items -->
+    <xs:complexType>
+      <!-- Dictates that only ONE of the following elements can be used -->
+      <xs:choice>
+        <xs:element name="creditcard" type="xs:string" minOccurs="0"/>
+        <xs:element name="paypal" type="xs:string" />
+      </xs:choice>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>';
+
+set @xml= '
+<payment>
+  <paypal>1234-5678-9012-3456</paypal>
+</payment>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<payment> </payment>';
+
+select XMLISVALID(@xml, @schema);
+
+--echo
+--echo <attribute>
+--echo
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+<!-- Main Element -->
+  <xs:element name="payment">
+    <!-- Defines the element as having child items -->
+    <xs:complexType>
+      <!-- Dictates that only ONE of the following elements can be used -->
+      <xs:choice>
+        <xs:element name="creditcard" type="xs:string" />
+        <xs:element name="paypal" type="xs:string" />
+      </xs:choice>
+
+      <!-- Optional: Attributes always go last -->
+      <xs:attribute name="shopName" type="xs:string"/>
+    </xs:complexType>
+
+  </xs:element>
+</xs:schema>';
+
+set @xml= '
+
+<payment shopNmae="WholeMart">
+  <creditcard>1234-5678-9012-3456</creditcard>
+</payment>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '
+<payment shopName="WholeMart">
+  <creditcard>1234-5678-9012-3456</creditcard>
+</payment>';
+
+select XMLISVALID(@xml, @schema);
+
+
+--echo
+--echo Check basic types.
+--echo
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <!-- Order status type-->
+  <xs:simpleType name="StatusType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="New"/>
+      <xs:enumeration value="In process"/>
+      <xs:enumeration value="Finished"/>
+      <xs:enumeration value="Discarded"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- Order content -->
+  <xs:element name="order">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="id" type="xs:integer"/>
+        <xs:element name="status" type="StatusType"/>
+        <xs:element name="amount" type="xs:decimal"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<?xml version="1.0"?>
+<order>
+  <id>1001</id>
+  <status>In process</status>
+  <amount>2500.50</amount>
+</order>';
+
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <!-- Order content -->
+  <xs:element name="order">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="id" type="xs:integer"/>
+        <xs:element name="status" type="StatusType"/>
+        <xs:element name="amount" type="xs:decimal"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+  <!-- Order status type-->
+  <xs:simpleType name="StatusType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="New"/>
+      <xs:enumeration value="In process"/>
+      <xs:enumeration value="Finished"/>
+      <xs:enumeration value="Discarded"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+
+</xs:schema>';
+
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <!-- Book type definition -->
+  <xs:complexType name="BookType">
+    <xs:sequence>
+      <xs:element name="title" type="xs:string"/>
+      <xs:element name="author" type="xs:string"/>
+      <xs:element name="year" type="xs:integer"/>
+      <xs:element name="price" type="xs:decimal"/>
+    </xs:sequence>
+    <xs:attribute name="id" type="xs:string" use="required"/>
+  </xs:complexType>
+
+  <!-- Library element -->
+  <xs:element name="library">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="book" type="BookType" maxOccurs="unbounded"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<?xml version="1.0"?>
+<?xml version="1.0"?>
+<library>
+  <book id="b001">
+    <title>War and peace. Volume1</title>
+    <author>L.Tolstoy</author>
+    <year>1966</year>
+    <price>750.00</price>
+  </book>
+  <book id="b002">
+    <title>War and peace. Volume2</title>
+    <author>L.Tolstoy</author>
+    <year>1967</year>
+    <price>650.00</price>
+  </book>
+  <book id="b003">
+    <title>War and peace. Volume3</title>
+    <author>L.Tolstoy</author>
+    <year>1968</year>
+    <price>550.00</price>
+  </book>
+</library>';
+
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="order">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="id" type="xs:integer"/>
+        <xs:element name="date" type="xs:date"/>
+        <xs:element name="datetime" type="xs:dateTime"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>';
+
+set @xml= '<?xml version="1.0"?>
+<order>
+  <id>1001</id>
+  <date>2026-04-10</date>
+  <datetime>2026-04-10T11:31:00Z</datetime>
+</order>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<?xml version="1.0"?>
+<order>
+  <id>1001</id>
+  <date>2026-4-10</date>
+  <datetime>2026-04-10T11:31:00Z</datetime>
+</order>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xs= '<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  elementFormDefault="qualified">
+  <!-- <xs:attribute name="commonAttr" type="xs:string"/> -->
+
+    <xs:element name="employee">
+        <xs:complexType>
+            <xs:sequence>
+              <xs:element name="dt1" type="xs:dateTime" />
+              <xs:element name="dt2" type="xs:dateTime" />
+              <xs:element name="dt3" type="xs:dateTime" />
+              <xs:element name="dt4" type="xs:dateTime" />
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+</xs:schema>';
+
+set @xml= '<?xml version="1.0"?>
+<employee>
+  <dt1>2026-04-12T10:11:20.33+01:00</dt1>
+  <dt2>-2026-04-12T10:11:20+01:00</dt2>
+  <dt3>2026-04-12T10:11:20Z</dt3>
+  <dt4>22026-04-12T10:11:20.33Z</dt4>
+</employee>';
+
+select XMLISVALID(@xml, @xs);
+
+set @xs= '<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  elementFormDefault="qualified">
+  <!-- <xs:attribute name="commonAttr" type="xs:string"/> -->
+
+    <xs:element name="employee">
+        <xs:complexType>
+            <xs:sequence>
+              <xs:element name="dt1" type="xs:date" />
+              <xs:element name="dt2" type="xs:date" />
+              <xs:element name="dt3" type="xs:date" />
+              <xs:element name="dt4" type="xs:date" />
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+</xs:schema>';
+
+set @xml= '<?xml version="1.0"?>
+<employee>
+  <dt1>2026-04-12</dt1>
+  <dt2>-2026-04-12+01:00</dt2>
+  <dt3>2026-04-12Z</dt3>
+  <dt4>22026-04-12Z</dt4>
+</employee>';
+
+select XMLISVALID(@xml, @xs);
+
+set @xs= '<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  elementFormDefault="qualified">
+  <!-- <xs:attribute name="commonAttr" type="xs:string"/> -->
+
+    <xs:element name="employee">
+        <xs:complexType>
+            <xs:sequence>
+              <xs:element name="dt1" type="xs:time" />
+              <xs:element name="dt2" type="xs:time" />
+              <xs:element name="dt3" type="xs:time" />
+              <xs:element name="dt4" type="xs:time" />
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+</xs:schema>';
+
+set @xml= '<?xml version="1.0"?>
+<employee>
+  <dt1>10:11:20.33+01:00</dt1>
+  <dt2>10:11:20+01:00</dt2>
+  <dt3>10:11:20Z</dt3>
+  <dt4>10:11:20.33Z</dt4>
+</employee>';
+
+select XMLISVALID(@xml, @xs);
+
+set @xs= '<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  elementFormDefault="qualified">
+  <!-- <xs:attribute name="commonAttr" type="xs:string"/> -->
+
+    <xs:element name="employee">
+        <xs:complexType>
+            <xs:sequence>
+              <xs:element name="dt1" type="xs:gYear" />
+              <xs:element name="dt2" type="xs:gYear" />
+              <xs:element name="dt3" type="xs:gYear" />
+              <xs:element name="dt4" type="xs:gYear" />
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+</xs:schema>';
+
+set @xml= '<?xml version="1.0"?>
+<employee>
+  <dt1>2026+01:00</dt1>
+  <dt2>-2026+01:00</dt2>
+  <dt3>2026</dt3>
+  <dt4>2226Z</dt4>
+</employee>';
+
+select XMLISVALID(@xml, @xs);
+
+set @xs= '<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  elementFormDefault="qualified">
+  <!-- <xs:attribute name="commonAttr" type="xs:string"/> -->
+
+    <xs:element name="employee">
+        <xs:complexType>
+            <xs:sequence>
+              <xs:element name="dt1" type="xs:gMonth" />
+              <xs:element name="dt2" type="xs:gMonth" />
+              <xs:element name="dt3" type="xs:gMonth" />
+              <xs:element name="dt4" type="xs:gMonth" />
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+</xs:schema>';
+
+set @xml= '<?xml version="1.0"?>
+<employee>
+  <dt1>--01--+01:00</dt1>
+  <dt2>--12--+01:00</dt2>
+  <dt3>--02--</dt3>
+  <dt4>--03--Z</dt4>
+</employee>';
+
+select XMLISVALID(@xml, @xs);
+
+set @xs= '<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  elementFormDefault="qualified">
+  <!-- <xs:attribute name="commonAttr" type="xs:string"/> -->
+
+    <xs:element name="employee">
+        <xs:complexType>
+            <xs:sequence>
+              <xs:element name="dt1" type="xs:gDay" />
+              <xs:element name="dt2" type="xs:gDay" />
+              <xs:element name="dt3" type="xs:gDay" />
+              <xs:element name="dt4" type="xs:gDay" />
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+</xs:schema>';
+
+set @xml= '<?xml version="1.0"?>
+<employee>
+  <dt1>---01+01:00</dt1>
+  <dt2>---12+01:00</dt2>
+  <dt3>---02</dt3>
+  <dt4>---03Z</dt4>
+</employee>';
+
+select XMLISVALID(@xml, @xs);
+
+set @xs= '<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  elementFormDefault="qualified">
+  <!-- <xs:attribute name="commonAttr" type="xs:string"/> -->
+
+    <xs:element name="employee">
+        <xs:complexType>
+            <xs:sequence>
+              <xs:element name="dt1" type="xs:gMonthDay" />
+              <xs:element name="dt2" type="xs:gMonthDay" />
+              <xs:element name="dt3" type="xs:gMonthDay" />
+              <xs:element name="dt4" type="xs:gMonthDay" />
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+</xs:schema>';
+
+set @xml= '<?xml version="1.0"?>
+<employee>
+  <dt1>--01-01+01:00</dt1>
+  <dt2>--12-12+01:00</dt2>
+  <dt3>--11-02</dt3>
+  <dt4>--01-03Z</dt4>
+</employee>';
+
+select XMLISVALID(@xml, @xs);
+
+set @xs= '<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  elementFormDefault="qualified">
+  <!-- <xs:attribute name="commonAttr" type="xs:string"/> -->
+
+    <xs:element name="employee">
+        <xs:complexType>
+            <xs:sequence>
+              <xs:element name="dt1" type="xs:base64Binary" />
+              <xs:element name="dt2" type="xs:base64Binary" />
+              <xs:element name="dt3" type="xs:base64Binary" />
+              <xs:element name="dt4" type="xs:base64Binary" />
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+</xs:schema>';
+
+set @xml= '<?xml version="1.0"?>
+<employee>
+  <dt1></dt1>
+  <dt2>SGVsbG8=</dt2>
+  <dt3>  SGVsbG8=  </dt3>
+  <dt4>VGhpcyBpcyBhbiBleG
+       FtcGxlIG9mIGJhc2U2
+       NCBlbmNvZGVkIHRleHQu
+  </dt4>
+</employee>';
+
+select XMLISVALID(@xml, @xs);
+
+set @xs= '<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  elementFormDefault="qualified">
+  <!-- <xs:attribute name="commonAttr" type="xs:string"/> -->
+
+    <xs:element name="employee">
+        <xs:complexType>
+            <xs:sequence>
+              <xs:element name="dt1" type="xs:hexBinary" />
+              <xs:element name="dt2" type="xs:hexBinary" />
+              <xs:element name="dt3" type="xs:hexBinary" />
+              <xs:element name="dt4" type="xs:hexBinary" />
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+</xs:schema>';
+
+set @xml= '<?xml version="1.0"?>
+<employee>
+  <dt1></dt1>
+  <dt2>48656c6c6f</dt2>
+  <dt3>  48656C6C6F  </dt3>
+  <dt4> 48656c6c6f
+        48656c6c6f
+        48656c6c6f
+  </dt4>
+</employee>';
+
+select XMLISVALID(@xml, @xs);
+
+--echo # End of 11.8 tests
+
