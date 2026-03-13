@@ -168,7 +168,7 @@ SET(SQL_EMBEDDED_SOURCES emb_qcache.cc libmysqld.c lib_sql.cc
            ../sql/sql_path.cc
            ../sql/sql_sys_or_ddl_trigger.cc
            ../sql/event_common.cc
-           ../sql/opt_store_replay_context.cc ../sql/opt_store_replay_context.h
+           ../sql/opt_context_store_replay.cc ../sql/opt_context_store_replay.h
            ../sql/sql_json_lib.cc ../sql/sql_json_lib.h
            ${GEN_SOURCES}
            ${MYSYS_LIBWRAP_SOURCE}
