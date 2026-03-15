@@ -7,6 +7,10 @@ set optimizer_trace=1;
 create database db1;
 use db1;
 
+# This testcase loads the saved optimizer context back from the context file.
+# If we use the View Protocol, we'll see the "wrapper" mysqltest_tmp_v view in
+# the test output.
+--disable_view_protocol
 create table t1
 (
     a int, b int,
@@ -35,6 +39,7 @@ drop table t1;
 --source "$MYSQLTEST_VARDIR/tmp/dump1.sql"
 
 --remove_file "$MYSQLTEST_VARDIR/tmp/dump1.sql"
+--enable_view_protocol
 
 drop table t1;
 drop database db1;
