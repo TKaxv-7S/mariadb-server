@@ -164,18 +164,20 @@ ST_FIELD_INFO optimizer_context_capture_info[]= {
 static void append_full_table_name(const TABLE_LIST *tbl, String *buf);
 static int parse_check_obj_start_in_array(json_engine_t *je, String *err_buf,
                                           const char *err_msg);
-static int parse_table_context(THD *thd, json_engine_t *je, String *err_buf,
+static int parse_table_context(MEM_ROOT *mem_root, json_engine_t *je,
+                               String *err_buf,
                                table_context_for_replay *table_ctx);
-static int parse_index_context(THD *thd, json_engine_t *je, String *err_buf,
+static int parse_index_context(MEM_ROOT *mem_root, json_engine_t *je,
+                               String *err_buf,
                                index_context_for_replay *index_ctx);
-static int parse_range_context(THD *thd, json_engine_t *je, String *err_buf,
+static int parse_range_context(MEM_ROOT *mem_root, json_engine_t *je, String *err_buf,
                                Multi_range_read_const_call_record *range_ctx);
-static int parse_index_read_cost_context(THD *thd, json_engine_t *je,
+static int parse_index_read_cost_context(MEM_ROOT*, json_engine_t *je,
                                          String *err_buf,
                                          cost_index_read_call_record *out);
-static bool parse_range_cost_estimate(THD *thd, json_engine_t *je,
+static bool parse_range_cost_estimate(MEM_ROOT*, json_engine_t *je,
                                       String *err_buf, Cost_estimate *cost);
-static int parse_records_in_range_context(THD *thd, json_engine_t *je,
+static int parse_records_in_range_context(MEM_ROOT *mem_root, json_engine_t *je,
                                           String *err_buf,
                                           records_in_range_call_record *rir_ctx);
 
@@ -893,30 +895,29 @@ public:
 // psergey: Reads a JSON object
 class Read_range_cost_estimate : public Read_value
 {
-  THD *thd;
+  MEM_ROOT *mem_root;
   Cost_estimate *ptr;
 
 public:
-  Read_range_cost_estimate(THD *thd_arg, Cost_estimate *ptr_arg)
-      : thd(thd_arg), ptr(ptr_arg)
-  {
-  }
+  Read_range_cost_estimate(MEM_ROOT *mem_root_arg, Cost_estimate *ptr_arg)
+      : mem_root(mem_root_arg), ptr(ptr_arg)
+  {}
   bool read_value(json_engine_t *je, const char *value_name,
                   String *err_buf) override
   {
-    return parse_range_cost_estimate(thd, je, err_buf, ptr);
+    return parse_range_cost_estimate(mem_root, je, err_buf, ptr);
   }
 };
 
-
+// psergey: reads an array of integers..
 class Read_list_of_ha_rows : public Read_array
 {
-  THD *thd;
+  MEM_ROOT *mem_root;
   List<ha_rows> *list_values;
 
 public:
-  Read_list_of_ha_rows(THD *thd_arg, List<ha_rows> *list_values_arg)
-      : thd(thd_arg), list_values(list_values_arg)
+  Read_list_of_ha_rows(MEM_ROOT *mem_root_arg, List<ha_rows> *list_values_arg)
+      : mem_root(mem_root_arg), list_values(list_values_arg)
   {
   }
   int read_container(json_engine_t *je, String *err_buf) override
@@ -932,14 +933,14 @@ public:
         return 1;
       }
 
-      ha_rows *records_ptr= (ha_rows *) thd->alloc(sizeof(ha_rows));
+      ha_rows *records_ptr= (ha_rows *) alloc_root(mem_root, sizeof(ha_rows));
 
       if (unlikely(!records_ptr))
         return 1; // OOM
 
       *records_ptr= temp_value;
 
-      if (list_values->push_back(records_ptr) || json_scan_next(je))
+      if (list_values->push_back(records_ptr, mem_root) || json_scan_next(je))
         return 1;
     }
     return 0;
@@ -952,15 +953,15 @@ public:
 */
 template <typename T> class Read_array_into_list : public Read_array
 {
-  THD *thd;
+  MEM_ROOT *mem_root;
   List<T> *list_ctx;
-  int (*parse_context_fn)(THD *, json_engine_t *, String *, T *);
+  int (*parse_context_fn)(MEM_ROOT *, json_engine_t *, String *, T *);
 
 public:
-  Read_array_into_list(THD *thd_arg, List<T> *list_ctx_arg,
-                       int (*parse_context_fn_arg)(THD *, json_engine_t *,
+  Read_array_into_list(MEM_ROOT *mem_root_arg, List<T> *list_ctx_arg,
+                       int (*parse_context_fn_arg)(MEM_ROOT *, json_engine_t *,
                                                    String *, T *))
-      : thd(thd_arg), list_ctx(list_ctx_arg),
+      : mem_root(mem_root_arg), list_ctx(list_ctx_arg),
         parse_context_fn(parse_context_fn_arg)
   {
   }
@@ -975,31 +976,26 @@ public:
       if (unlikely(!ctx))
         return 1; // OOM
 
-      rc= parse_context_fn(thd, je, err_buf, ctx);
+      if ((rc= parse_context_fn(mem_root, je, err_buf, ctx)))
+        break; // Parse error
 
-      if (rc == 0)
-      {
-        if (list_ctx->push_back(ctx))
-          return 1; // OOM
-      }
-      else
-        break;
+      if (list_ctx->push_back(ctx, mem_root))
+        return 1; // OOM
     }
-
     return rc;
   }
 };
 
+// psergey-todo: this is just array of strings right?
 class Read_list_of_ranges : public Read_array
 {
-  THD *thd;
+  MEM_ROOT *mem_root;
   List<char> *list_ranges;
 
 public:
-  Read_list_of_ranges(THD *thd_arg, List<char> *list_ranges_arg)
-      : thd(thd_arg), list_ranges(list_ranges_arg)
-  {
-  }
+  Read_list_of_ranges(MEM_ROOT *mem_root_arg, List<char> *list_ranges_arg)
+    : mem_root(mem_root_arg), list_ranges(list_ranges_arg)
+  {}
   int read_container(json_engine_t *je, String *err_buf) override
   {
     if (json_scan_next(je))
@@ -1008,7 +1004,7 @@ public:
     while (je->state != JST_ARRAY_END)
     {
       char *value;
-      if (read_string(thd->mem_root, je, "ranges", err_buf, value))
+      if (read_string(mem_root, je, "ranges", err_buf, value))
         return 1;
 
       list_ranges->push_back(value);
@@ -1086,13 +1082,14 @@ static int parse_context_obj_from_json_array(json_engine_t *je,
     1  Parse Error
    -1  EOF
 */
-static int parse_table_context(THD *thd, json_engine_t *je, String *err_buf,
+static int parse_table_context(MEM_ROOT *mem_root, json_engine_t *je,
+                               String *err_buf,
                                table_context_for_replay *table_ctx)
 {
   const char *err_msg= "Expected an object in the list_contexts array";
 
   Read_named_member array[]= {
-      {"name", Read_string(thd->mem_root, &table_ctx->name), false},
+      {"name", Read_string(mem_root, &table_ctx->name), false},
       {"num_of_records",
        Read_non_neg_integer<ha_rows, ULONGLONG_MAX>(&table_ctx->total_rows),
        false},
@@ -1100,19 +1097,19 @@ static int parse_table_context(THD *thd, json_engine_t *je, String *err_buf,
       {"read_cost_cpu", Read_double(&table_ctx->read_cost_cpu), false},
       {"indexes",
        Read_array_into_list<index_context_for_replay>(
-           thd, &table_ctx->index_list, parse_index_context),
+           mem_root, &table_ctx->index_list, parse_index_context),
        true},
       {"list_ranges",
        Read_array_into_list<Multi_range_read_const_call_record>(
-           thd, &table_ctx->ranges_list, parse_range_context),
+           mem_root, &table_ctx->ranges_list, parse_range_context),
        true},
       {"list_index_read_costs",
        Read_array_into_list<cost_index_read_call_record>(
-           thd, &table_ctx->irc_list, parse_index_read_cost_context),
+           mem_root, &table_ctx->irc_list, parse_index_read_cost_context),
        true},
       {"list_records_in_range",
        Read_array_into_list<records_in_range_call_record>(
-           thd, &table_ctx->rir_list, parse_records_in_range_context),
+           mem_root, &table_ctx->rir_list, parse_records_in_range_context),
        true},
       {NULL, Read_double(NULL), true}};
 
@@ -1132,14 +1129,15 @@ static int parse_table_context(THD *thd, json_engine_t *je, String *err_buf,
     1  Parse Error
    -1  EOF
 */
-static int parse_index_context(THD *thd, json_engine_t *je, String *err_buf,
+static int parse_index_context(MEM_ROOT *mem_root, json_engine_t *je,
+                               String *err_buf,
                                index_context_for_replay *index_ctx)
 {
   const char *err_msg= "Expected an object in the indexes array";
 
   Read_named_member array[]= {
-      {"index_name", Read_string(thd->mem_root, &index_ctx->idx_name), false},
-      {"rec_per_key", Read_list_of_ha_rows(thd, &index_ctx->list_rec_per_key),
+      {"index_name", Read_string(mem_root, &index_ctx->idx_name), false},
+      {"rec_per_key", Read_list_of_ha_rows(mem_root, &index_ctx->list_rec_per_key),
        false},
       {NULL, Read_double(NULL), true}};
 
@@ -1159,18 +1157,18 @@ static int parse_index_context(THD *thd, json_engine_t *je, String *err_buf,
     1  Parse Error
    -1  EOF
 */
-static int parse_range_context(THD *thd, json_engine_t *je, String *err_buf,
+static int parse_range_context(MEM_ROOT *mem_root, json_engine_t *je, String *err_buf,
                                Multi_range_read_const_call_record *out)
 {
   const char *err_msg= "Expected an object in the list_ranges array";
 
   Read_named_member array[]= {
-      {"index_name", Read_string(thd->mem_root, &out->idx_name), false},
-      {"ranges", Read_list_of_ranges(thd, &out->range_list), false},
+      {"index_name", Read_string(mem_root, &out->idx_name), false},
+      {"ranges", Read_list_of_ranges(mem_root, &out->range_list), false},
       {"num_rows",
        Read_non_neg_integer<ha_rows, ULONGLONG_MAX>(&out->rows),
        false},
-      {"cost", Read_range_cost_estimate(thd, &out->cost), false},
+      {"cost", Read_range_cost_estimate(mem_root, &out->cost), false},
       {"max_index_blocks",
        Read_non_neg_integer<ha_rows, ULONGLONG_MAX>(&out->max_index_blocks),
        false},
@@ -1193,7 +1191,7 @@ static int parse_range_context(THD *thd, json_engine_t *je, String *err_buf,
     1  Parse Error
    -1  EOF
 */
-static bool parse_range_cost_estimate(THD *thd, json_engine_t *je,
+static bool parse_range_cost_estimate(MEM_ROOT*, json_engine_t *je,
                                       String *err_buf, Cost_estimate *cost)
 {
   if (json_scan_next(je) || je->state != JST_OBJ_START)
@@ -1232,7 +1230,7 @@ static bool parse_range_cost_estimate(THD *thd, json_engine_t *je,
     1  Parse Error
    -1  EOF
 */
-static int parse_index_read_cost_context(THD *thd, json_engine_t *je,
+static int parse_index_read_cost_context(MEM_ROOT* , json_engine_t *je,
                                          String *err_buf,
                                          cost_index_read_call_record *out)
 {
@@ -1275,7 +1273,8 @@ static int parse_index_read_cost_context(THD *thd, json_engine_t *je,
     1  Parse Error
    -1  EOF
 */
-static int parse_records_in_range_context(THD *thd, json_engine_t *je,
+static int parse_records_in_range_context(MEM_ROOT *mem_root,
+                                          json_engine_t *je,
                                           String *err_buf,
                                           records_in_range_call_record *out)
 {
@@ -1284,8 +1283,8 @@ static int parse_records_in_range_context(THD *thd, json_engine_t *je,
   Read_named_member array[]= {
       {"key_number", Read_non_neg_integer<uint, UINT_MAX>(&out->keynr),
        false},
-      {"min_key", Read_string(thd->mem_root, &out->min_key), false},
-      {"max_key", Read_string(thd->mem_root, &out->max_key), false},
+      {"min_key", Read_string(mem_root, &out->min_key), false},
+      {"max_key", Read_string(mem_root, &out->max_key), false},
       {"num_records",
        Read_non_neg_integer<ha_rows, ULONGLONG_MAX>(&out->records), false},
       {NULL, Read_double(NULL), true}};
@@ -1696,7 +1695,7 @@ bool Optimizer_context_replay::parse()
 
   Read_named_member array[]= {{"list_contexts",
                                Read_array_into_list<table_context_for_replay>(
-                                   thd, &ctx_list, parse_table_context),
+                                   thd->mem_root, &ctx_list, parse_table_context),
                                false},
                               {NULL, Read_double(NULL), true}};
 
