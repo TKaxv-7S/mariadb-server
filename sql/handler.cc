@@ -114,6 +114,30 @@ static handlerton *installed_htons[128];
 KEY_CREATE_INFO default_key_create_info=
 { HA_KEY_ALG_UNDEF, 0, 0, {NullS, 0}, {NullS, 0}, false };
 
+static void flush_pending_cascade_binlog_for_thd(THD *thd)
+{
+  if (!thd || thd->rgi_slave) return;
+
+  TABLE *table;
+  for (table = thd->open_tables; table; table = table->next) {
+    if (table->file) {
+      table->file->flush_pending_cascade_binlog();
+    }
+  }
+}
+
+static void discard_pending_cascade_binlog_for_thd(THD *thd)
+{
+  if (!thd || thd->rgi_slave) return;
+
+  TABLE *table;
+  for (table = thd->open_tables; table; table = table->next) {
+    if (table->file) {
+      table->file->discard_pending_cascade_binlog();
+    }
+  }
+}
+
 /* number of entries in handlertons[] */
 ulong total_ha= 0;
 /* number of storage engines (from handlertons[]) that support 2pc */
@@ -2129,6 +2153,14 @@ end:
       thd->mdl_context.release_lock(mdl_backup.ticket);
     thd->backup_commit_lock= 0;
   }
+
+  if (!error)
+  {
+    if ((thd->variables.rpl_use_binlog_events_for_fk_cascade ||
+         WSREP_EMULATE_BINLOG(thd)) &&
+        (all || thd->in_active_multi_stmt_transaction()))
+      flush_pending_cascade_binlog_for_thd(thd);
+  }
 #ifdef WITH_WSREP
   if (wsrep_is_active(thd) && is_real_trans && !error &&
       (rw_ha_count == 0 || all) &&
@@ -2337,12 +2369,11 @@ int ha_rollback_trans(THD *thd, bool all)
       rollback without signalling following transactions. And in release
       builds, we explicitly do the signalling before rolling back.
     */
-    DBUG_ASSERT(
-        !(thd->rgi_slave &&
-          !thd->rgi_slave->worker_error &&
-          thd->rgi_slave->did_mark_start_commit) ||
-        (thd->transaction->xid_state.is_explicit_XA() ||
-         (thd->rgi_slave->gtid_ev_flags2 & Gtid_log_event::FL_PREPARED_XA)));
+    if (!(thd->rgi_slave && thd->rgi_slave->worker_error))
+      DBUG_ASSERT(
+          !(thd->rgi_slave && thd->rgi_slave->did_mark_start_commit) ||
+          (thd->transaction->xid_state.is_explicit_XA() ||
+           (thd->rgi_slave->gtid_ev_flags2 & Gtid_log_event::FL_PREPARED_XA)));
 
     if (thd->rgi_slave &&
         !thd->rgi_slave->worker_error &&
@@ -2412,6 +2443,19 @@ int ha_rollback_trans(THD *thd, bool all)
     trans->ha_list= 0;
     trans->no_2pc=0;
   }
+
+  /*
+    The engines have rolled back (the whole transaction when all==true, or the
+    current statement to its implicit savepoint when all==false). Any queued
+    FK-cascade row events describe row changes that were just undone, so
+    discard and free them rather than letting them be flushed into the binary
+    log by a later statement or at commit. For a full rollback the queue would
+    also be freed when the trx is released, but discarding here keeps the
+    statement-rollback case correct and the behaviour consistent.
+  */
+  if (thd->variables.rpl_use_binlog_events_for_fk_cascade ||
+      WSREP_EMULATE_BINLOG(thd))
+    discard_pending_cascade_binlog_for_thd(thd);
 
 #ifdef WITH_WSREP
   if (WSREP(thd) && thd->is_error())
@@ -3101,6 +3145,18 @@ int ha_rollback_to_savepoint(THD *thd, SAVEPOINT *sv)
       my_error(ER_ERROR_DURING_ROLLBACK, MYF(0), err);
       error=1;
     }
+
+    /*
+      The cascade row events queued for this transaction describe row
+      changes that are being rolled back to the savepoint (or the queue is
+      empty because earlier statements already flushed their events into the
+      binlog cache, which the binlog savepoint machinery truncates
+      separately). Either way we must not write these events, so discard and
+      free them rather than flushing them into the binary log.
+    */
+    if (thd->variables.rpl_use_binlog_events_for_fk_cascade ||
+        WSREP_EMULATE_BINLOG(thd))
+      discard_pending_cascade_binlog_for_thd(thd);
 #ifdef WITH_WSREP
     if (WSREP(thd) && ht->flags & HTON_WSREP_REPLICATION)
     {
