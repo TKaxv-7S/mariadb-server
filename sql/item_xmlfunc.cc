@@ -3930,7 +3930,7 @@ enum xml_time_char_classes {
   TC_SPC,
   TC_EOF,
   tc_er,
-  TC_TIME_CLASSES
+  TC_NUM_CLASSES
 };
 
 
@@ -3994,13 +3994,63 @@ enum xml_time_states {
   T_dY3,
   T_dY4,
   T_dYE,
+  T_dM1,
+  T_dM2,
+  T_dME,
+  T_dD1,
+  T_dD2,
+
+  /* time */
+  T_tGO,
+
+  /* gYear */
+  T_yGO,
+  T_yYMI,
+  T_yY1,
+  T_yY2,
+  T_yY3,
+  T_yY4,
+
+  /* gMonth */
+  T_mGO,
+  T_mG1,
+  T_mG2,
+  T_mM1,
+  T_mM2,
+  T_mE1,
+  T_mE2,
+
+  /* gDay */
+  T_aGO,
+  T_aG1,
+  T_aG2,
+  T_aG3,
+  T_aD1,
+  T_aD2,
+
+  /* gYearMonth */
+  T_hGO,
+  T_hYMI,
+  T_hY1,
+  T_hY2,
+  T_hY3,
+  T_hY4,
+  T_hM1,
+  T_hM2,
+
+  /* gMonthDay */
+  T_nGO,
+  T_nG1,
+  T_nG2,
+  T_nM1,
+  T_nM2,
 
   T_NUM_STATES,
   T_SYN   /* Syntax error. */
 };
 
 
-static int xml_time_states[T_NUM_STATES][TC_TIME_CLASSES]= {
+static int xml_time_states[T_NUM_STATES][TC_NUM_CLASSES]= {
 /*       -       +     0..9    .       T      Z     :     SPACE  EOF  BAD_SYM*/
 /* dateTime */
 /*GO*/ {T_YMI, T_SYN, T_Y1,  T_SYN, T_SYN, T_SYN, T_SYN, T_GO,  T_SYN, T_SYN},
@@ -4018,8 +4068,6 @@ static int xml_time_states[T_NUM_STATES][TC_TIME_CLASSES]= {
 /*D2*/ {T_SYN, T_SYN, T_SYN, T_SYN, T_DE,  T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
 /*DE*/ {T_SYN, T_SYN, T_H1,  T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
 
-/* time */
-/*       -       +     0..9    .       T      Z     :     SPACE  EOF  BAD_SYM*/
 /*H1*/ {T_SYN, T_SYN, T_H2,  T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
 /*H2*/ {T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_HE,  T_SYN, T_SYN, T_SYN},
 /*HE*/ {T_SYN, T_SYN, T_MI1, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
@@ -4053,36 +4101,72 @@ static int xml_time_states[T_NUM_STATES][TC_TIME_CLASSES]= {
 /*D1*/ {T_SYN, T_SYN, T_dD2, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
 /*D2*/ {T_ZH0, T_ZH0, T_SYN, T_SYN, T_SYN, T_Z,   T_SYN, T_END, T_END, T_SYN},
 
+/* time */
+/*       -       +     0..9    .       T      Z     :     SPACE  EOF  BAD_SYM*/
+/*GO*/ {T_SYN, T_SYN, T_H1,  T_SYN, T_SYN, T_SYN, T_SYN, T_tGO, T_SYN, T_SYN},
+
 /* gYear "2026+01:00" */
 /*       -       +     0..9    .       T      Z     :     SPACE  EOF  BAD_SYM*/
-/*GO*/ {T_gYMI,T_SYN, T_gY1, T_SYN, T_SYN, T_SYN, T_SYN, T_dGO, T_SYN, T_SYN},
-/*YMI*/{T_SYN, T_SYN, T_gY1, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
-/*Y1*/ {T_SYN, T_SYN, T_gY2, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
-/*Y2*/ {T_SYN, T_SYN, T_gY3, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
-/*Y3*/ {T_SYN, T_SYN, T_gY4, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
-/*Y4*/ {T_ZH0, T_ZH0, T_gY4, T_SYN, T_SYN, T_SYN, T_SYN, T_END, T_END, T_SYN},
+/*GO*/ {T_yYMI,T_SYN, T_yY1, T_SYN, T_SYN, T_SYN, T_SYN, T_yGO, T_SYN, T_SYN},
+/*YMI*/{T_SYN, T_SYN, T_yY1, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*Y1*/ {T_SYN, T_SYN, T_yY2, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*Y2*/ {T_SYN, T_SYN, T_yY3, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*Y3*/ {T_SYN, T_SYN, T_yY4, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*Y4*/ {T_ZH0, T_ZH0, T_yY4, T_SYN, T_SYN, T_Z,   T_SYN, T_END, T_END, T_SYN},
 
-/* gMonth "--02" */
+/* gMonth "--02--+01:00" */
 /*       -       +     0..9    .       T      Z     :     SPACE  EOF  BAD_SYM*/
-/*GO*/ {T_gM0, T_SYN, T_gM1, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
-/*M1*/ {T_SYN, T_SYN, T_gM2, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
-/*M2*/ {T_ZH0, T_ZH0, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_END, T_END, T_SYN},
+/*GO*/ {T_mG1, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_mGO, T_SYN, T_SYN},
+/*G1*/ {T_mG2, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*G2*/ {T_SYN, T_SYN, T_mM1, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*M1*/ {T_SYN, T_SYN, T_mM2, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*M2*/ {T_mE1, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*E1*/ {T_mE2, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*E2*/ {T_ZH0, T_ZH0, T_SYN, T_SYN, T_SYN, T_Z,   T_SYN, T_END, T_END, T_SYN},
 
-/* gDay */
+/* gDay "---10+02:00" */
 /*       -       +     0..9    .       T      Z     :     SPACE  EOF  BAD_SYM*/
-/*ME*/ {T_SYN, T_SYN, T_dD1, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
-/*D1*/ {T_SYN, T_SYN, T_dD2, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*GO*/ {T_aG1, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_aGO, T_SYN, T_SYN},
+/*G1*/ {T_aG2, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*G2*/ {T_aG3, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*G3*/ {T_SYN, T_SYN, T_aD1, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*D1*/ {T_SYN, T_SYN, T_aD2, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
 /*D2*/ {T_ZH0, T_ZH0, T_SYN, T_SYN, T_SYN, T_Z,   T_SYN, T_END, T_END, T_SYN},
+
+/* gYearMonth "2026-10+02:00" */
+/*       -       +     0..9    .       T      Z     :     SPACE  EOF  BAD_SYM*/
+/*GO*/ {T_hYMI,T_SYN, T_hY1, T_SYN, T_SYN, T_SYN, T_SYN, T_hGO, T_SYN, T_SYN},
+/*YMI*/{T_SYN, T_SYN, T_hY1, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*Y1*/ {T_SYN, T_SYN, T_hY2, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*Y2*/ {T_SYN, T_SYN, T_hY3, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*Y3*/ {T_SYN, T_SYN, T_hY4, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*Y4*/ {T_hM1, T_SYN, T_hY4, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*M1*/ {T_SYN, T_SYN, T_hM2, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*M2*/ {T_ZH0, T_ZH0, T_SYN, T_SYN, T_SYN, T_Z,   T_SYN, T_END, T_END, T_SYN},
+
+/* gMonthDay "--05-02+01:00" */
+/*       -       +     0..9    .       T      Z     :     SPACE  EOF  BAD_SYM*/
+/*GO*/ {T_nG1, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_nGO, T_SYN, T_SYN},
+/*G1*/ {T_nG2, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*G2*/ {T_SYN, T_SYN, T_nM1, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*M1*/ {T_SYN, T_SYN, T_nM2, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
+/*M2*/ {T_aG3, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN, T_SYN},
 };
 
 
+#ifdef MDEV37262
+//TODO add control for invalid date-times.
+
 enum xml_time_types
 {
-  TIME_TYPE_YEAR=  0b00000001,
-  TIME_TYPE_MONTH= 0b00000010,
-  TIME_TYPE_DAY=   0b00000100,
-  TIME_TYPE_TIME=  0b00001000,
-  TIME_TYPE_TZ=    0b00010000,
+  TIME_TYPE_YEAR,
+  TIME_TYPE_MONTH,
+  TIME_TYPE_DAY,
+  TIME_TYPE_HOUR,
+  TIME_TYPE_MIN,
+  TIME_TYPE_SEC,
+  TIME_TYPE_TZH,
+  TIME_TYPE_TZM
 };
 
 
@@ -4120,16 +4204,24 @@ static uint xml_timestate_types[T_NUM_STATES]=
 /*T_ZM2*/ 0,
 /*T_Z*/   TIME_TYPE_TZ
 };
+#endif /*MDEV37262*/
+
 
 class XMLSchema_datetime_builtin_type: public XMLSchema_builtin_type
 {
 public:
-  int m_type;
-  XMLSchema_datetime_builtin_type(): XMLSchema_builtin_type(),
-    m_type() {}
+  enum xml_time_states m_state0;
+  bool m_spaces_allowed;
+
+  XMLSchema_datetime_builtin_type(
+      enum xml_time_states state0, bool spaces_allowed= TRUE):
+    XMLSchema_builtin_type(),
+    m_state0(state0), m_spaces_allowed(spaces_allowed) {}
+
   bool valid_value(const char *value, size_t len) override
   {
-    int state= T_GO;
+    int state= m_state0;
+
     size_t pos= 0;
 
     while (len > pos)
@@ -4144,6 +4236,93 @@ public:
     }
 
     return xml_time_states[state][TC_EOF] == T_END;
+  }
+};
+
+
+enum xml_bin_char_classes {
+  BC_HEX,
+  BC_B64,
+  BC_EQ,
+  BC_SPC,
+  BC_EOF,
+  bc_er,
+  BC_NUM_CLASSES
+};
+
+
+static enum xml_bin_char_classes xml_bin_chr_map[128]=
+{
+   bc_er, bc_er, bc_er, bc_er, bc_er, bc_er, bc_er, bc_er,
+   bc_er,BC_SPC,BC_SPC, bc_er, bc_er,BC_SPC, bc_er, bc_er,
+   bc_er, bc_er, bc_er, bc_er, bc_er, bc_er, bc_er, bc_er,
+   bc_er, bc_er, bc_er, bc_er, bc_er, bc_er, bc_er, bc_er,
+  BC_SPC, bc_er, bc_er, bc_er, bc_er, bc_er, bc_er, bc_er, /*  !"#$%&' */
+   bc_er, bc_er, bc_er,BC_B64, bc_er, bc_er, bc_er,BC_B64, /* ()*+,-./ */
+  BC_HEX,BC_HEX,BC_HEX,BC_HEX,BC_HEX,BC_HEX,BC_HEX,BC_HEX, /* 01234567 */
+  BC_HEX,BC_HEX, bc_er, bc_er, bc_er, BC_EQ, bc_er, bc_er, /* 89:;<=>? */
+   bc_er,BC_HEX,BC_HEX,BC_HEX,BC_HEX,BC_HEX,BC_HEX,BC_B64, /* @ABCDEFG */
+  BC_B64,BC_B64,BC_B64,BC_B64,BC_B64,BC_B64,BC_B64,BC_B64, /* HIJKLMNO */
+  BC_B64,BC_B64,BC_B64,BC_B64,BC_B64,BC_B64,BC_B64,BC_B64, /* PQRSTUVW */
+  BC_B64,BC_B64,BC_B64, bc_er, bc_er, bc_er, bc_er, bc_er, /* XYZ[\]^_ */
+   bc_er,BC_HEX,BC_HEX,BC_HEX,BC_HEX,BC_HEX,BC_HEX,BC_B64, /* `abcdefg */
+  BC_B64,BC_B64,BC_B64,BC_B64,BC_B64,BC_B64,BC_B64,BC_B64, /* hijklmno */
+  BC_B64,BC_B64,BC_B64,BC_B64,BC_B64,BC_B64,BC_B64,BC_B64, /* pqrstuvwxyz{|}~  */
+  BC_B64,BC_B64,BC_B64, bc_er, bc_er, bc_er, bc_er, bc_er  /* pqrstuvwxyz{|}~  */
+};
+
+
+enum xml_bin_states {
+  B_END,
+  B_HEX0,
+  B_HEX1,
+  B_B640,
+  B_B641,
+  B_B642,
+  B_B643,
+  B_NUM_STATES,
+  B_SYN   /* Syntax error. */
+};
+
+
+static int xml_bin_states[B_NUM_STATES][BC_NUM_CLASSES]= {
+/*          HEX     B64     =      SPACE   EOF    BAD_SYM */
+/*END*/  { B_SYN,  B_SYN,  B_SYN,  B_END,  B_END,  T_SYN },
+/*HEX0*/ { B_HEX1, B_SYN,  B_SYN,  B_HEX0, B_END,  T_SYN },
+/*HEX1*/ { B_HEX0, B_SYN,  B_SYN,  B_HEX1, B_SYN,  T_SYN },
+/*B640*/ { B_B641, B_B641, B_SYN,  B_B640, B_END,  T_SYN },
+/*B641*/ { B_B642, B_B642, B_SYN,  B_B641, B_SYN,  T_SYN },
+/*B642*/ { B_B643, B_B643, B_SYN,  B_B642, B_SYN,  T_SYN },
+/*B643*/ { B_B640, B_B640, B_END,  B_B643, B_SYN,  T_SYN }
+};
+
+
+class XMLSchema_binary_builtin_type: public XMLSchema_builtin_type
+{
+public:
+  enum xml_bin_states m_state0;
+
+  XMLSchema_binary_builtin_type(enum xml_bin_states state0):
+    XMLSchema_builtin_type(), m_state0(state0) {}
+
+  bool valid_value(const char *value, size_t len) override
+  {
+    int state= m_state0;
+
+    size_t pos= 0;
+
+    while (len > pos)
+    {
+      int c= (int) value[pos++];
+      if (c > 127)
+        return 0;
+
+      state= xml_bin_states[state][xml_bin_chr_map[c]];
+      if (state == B_SYN)
+        return 0;
+    }
+
+    return xml_bin_states[state][BC_EOF] == B_END;
   }
 };
 
@@ -4850,7 +5029,7 @@ static xs_word xs_time(STRING_WITH_LEN("time"));
 static xs_word xs_dateTime(STRING_WITH_LEN("dateTime"));
 static xs_word xs_duration(STRING_WITH_LEN("duration"));
 static xs_word xs_gDay(STRING_WITH_LEN("gDay"));
-static xs_word xs_gMonty(STRING_WITH_LEN("gMonth"));
+static xs_word xs_gMonth(STRING_WITH_LEN("gMonth"));
 static xs_word xs_gMonthDay(STRING_WITH_LEN("gMonthDay"));
 static xs_word xs_gYear(STRING_WITH_LEN("gYear"));
 static xs_word xs_gYearMonth(STRING_WITH_LEN("gYearMonth"));
@@ -4938,10 +5117,25 @@ XMLSchema_builtin_type *XMLSchema_builtin_type::get_builtin_type_by_name(
     return new(st->mem_root) XMLSchema_datetime_builtin_type(T_dGO);
 
   if (xs_time.eq(name, len))
-    return new(st->mem_root) XMLSchema_datetime_builtin_type(T_H1);
+    return new(st->mem_root) XMLSchema_datetime_builtin_type(T_tGO);
 
-  if (xs_gDby.eq(name, len))
-    return new(st->mem_root) XMLSchema_datetime_builtin_type(T_H1);
+  if (xs_gYear.eq(name, len))
+    return new(st->mem_root) XMLSchema_datetime_builtin_type(T_yGO);
+
+  if (xs_gMonth.eq(name, len))
+    return new(st->mem_root) XMLSchema_datetime_builtin_type(T_mGO);
+
+  if (xs_gDay.eq(name, len))
+    return new(st->mem_root) XMLSchema_datetime_builtin_type(T_aGO);
+
+  if (xs_gMonthDay.eq(name, len))
+    return new(st->mem_root) XMLSchema_datetime_builtin_type(T_nGO);
+
+  if (xs_base64Binary.eq(name, len))
+    return new(st->mem_root) XMLSchema_binary_builtin_type(B_B640);
+
+  if (xs_hexBinary.eq(name, len))
+    return new(st->mem_root) XMLSchema_binary_builtin_type(B_HEX0);
 
   /* various types */
   if (xs_anySimpleType.eq(name, len))

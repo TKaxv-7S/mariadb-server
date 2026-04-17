@@ -279,10 +279,10 @@ set @xs= '<?xml version="1.0" encoding="UTF-8"?>
 
 set @xml= '<?xml version="1.0"?>
 <employee>
-  <dt1>-01+01:00</dt1>
-  <dt2>-12+01:00</dt2>
-  <dt3>-02</dt3>
-  <dt4>-03Z</dt4>
+  <dt1>--01--+01:00</dt1>
+  <dt2>--12--+01:00</dt2>
+  <dt3>--02--</dt3>
+  <dt4>--03--Z</dt4>
 </employee>';
 
 select XMLISVALID(@xml, @xs);
@@ -306,10 +306,10 @@ set @xs= '<?xml version="1.0" encoding="UTF-8"?>
 
 set @xml= '<?xml version="1.0"?>
 <employee>
-  <dt1>--01+01:00</dt1>
-  <dt2>--12+01:00</dt2>
-  <dt3>--02</dt3>
-  <dt4>--03Z</dt4>
+  <dt1>---01+01:00</dt1>
+  <dt2>---12+01:00</dt2>
+  <dt3>---02</dt3>
+  <dt4>---03Z</dt4>
 </employee>';
 
 select XMLISVALID(@xml, @xs);
@@ -333,12 +333,73 @@ set @xs= '<?xml version="1.0" encoding="UTF-8"?>
 
 set @xml= '<?xml version="1.0"?>
 <employee>
-  <dt1>-01-01+01:00</dt1>
-  <dt2>-12-12+01:00</dt2>
-  <dt3>-11-02</dt3>
-  <dt4>-01-03Z</dt4>
+  <dt1>--01-01+01:00</dt1>
+  <dt2>--12-12+01:00</dt2>
+  <dt3>--11-02</dt3>
+  <dt4>--01-03Z</dt4>
 </employee>';
 
 select XMLISVALID(@xml, @xs);
+
+set @xs= '<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  elementFormDefault="qualified">
+  <!-- <xs:attribute name="commonAttr" type="xs:string"/> -->
+
+    <xs:element name="employee">
+        <xs:complexType>
+            <xs:sequence>
+              <xs:element name="dt1" type="xs:base64Binary" />
+              <xs:element name="dt2" type="xs:base64Binary" />
+              <xs:element name="dt3" type="xs:base64Binary" />
+              <xs:element name="dt4" type="xs:base64Binary" />
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+</xs:schema>';
+
+set @xml= '<?xml version="1.0"?>
+<employee>
+  <dt1></dt1>
+  <dt2>SGVsbG8=</dt2>
+  <dt3>  SGVsbG8=  </dt3>
+  <dt4>VGhpcyBpcyBhbiBleG
+       FtcGxlIG9mIGJhc2U2
+       NCBlbmNvZGVkIHRleHQu
+  </dt4>
+</employee>';
+
+select XMLISVALID(@xml, @xs);
+
+set @xs= '<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  elementFormDefault="qualified">
+  <!-- <xs:attribute name="commonAttr" type="xs:string"/> -->
+
+    <xs:element name="employee">
+        <xs:complexType>
+            <xs:sequence>
+              <xs:element name="dt1" type="xs:hexBinary" />
+              <xs:element name="dt2" type="xs:hexBinary" />
+              <xs:element name="dt3" type="xs:hexBinary" />
+              <xs:element name="dt4" type="xs:hexBinary" />
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+</xs:schema>';
+
+set @xml= '<?xml version="1.0"?>
+<employee>
+  <dt1></dt1>
+  <dt2>48656c6c6f</dt2>
+  <dt3>  48656C6C6F  </dt3>
+  <dt4> 48656c6c6f
+        48656c6c6f
+        48656c6c6f
+  </dt4>
+</employee>';
+
+select XMLISVALID(@xml, @xs);
+
 --echo # End of 11.8 tests
 
