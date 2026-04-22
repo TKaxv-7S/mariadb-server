@@ -9264,6 +9264,7 @@ select_into:
             if (Lex->select_finalize(unit))
               MYSQL_YYABORT;
           }
+        | '(' select_into ')' {}
         ;
 
 simple_table:
