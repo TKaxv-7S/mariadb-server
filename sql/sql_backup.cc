@@ -23,6 +23,20 @@
 
 #ifdef _WIN32
 #elif defined __APPLE__
+# include <sys/attr.h>
+# include <sys/clonefile.h>
+# include <copyfile.h>
+
+int copy_entire_file(int src, int dst)
+{
+  return fcopyfile(src, dst, nullptr, COPYFILE_ALL | COPYFILE_CLONE);
+}
+
+extern "C" int copy_file(int src, int dst, off_t)
+{
+  return fcopyfile(src, dst, nullptr, COPYFILE_ALL | COPYFILE_CLONE);
+}
+
 #else
 using copying_step= ssize_t(int,int,size_t,off_t*);
 template<copying_step step>
@@ -134,6 +148,16 @@ static ssize_t pread_write(int in_fd, int out_fd, off_t count) noexcept
   return ret;
 }
 # endif
+
+/** Copy a file (whole content).
+@param src  source file descriptor
+@param dst  target to append src to
+@return error code (negative)
+@retval 0   on success */
+int copy_entire_file(int src, int dst)
+{
+  return copy_file(src, dst, lseek(src, 0, SEEK_END));
+}
 
 /** Copy a file.
 @param src  source file descriptor
