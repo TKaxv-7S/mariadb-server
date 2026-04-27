@@ -255,13 +255,18 @@ void dump_mrr_info_calls(List<Multi_range_read_const_call_record> *mrr_list,
   {
     Json_writer_object irc_wrapper(ctx_writer);
     irc_wrapper.add("index_name", irc->idx_name);
-
+    List_iterator rc_li(irc->range_list);
+    Json_writer_array ranges_wrapper(ctx_writer, "ranges");
+    while (const char *range_str= rc_li++)
     {
-      Json_writer_array ranges_wrapper(ctx_writer, "ranges");
-      List_iterator rc_li(irc->range_list);
-      while (const char *range_str= rc_li++)
-        ranges_wrapper.add(range_str, strlen(range_str));
+      const String range_info(range_str, strlen(range_str),
+                              system_charset_info);
+      StringBuffer<128> escaped_range_info;
+      json_escape_to_string(&range_info, &escaped_range_info);
+      ranges_wrapper.add(escaped_range_info.c_ptr_safe(),
+                         escaped_range_info.length());
     }
+    ranges_wrapper.end();
 
     irc_wrapper.add("num_rows", irc->rows);
     {

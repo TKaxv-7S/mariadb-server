@@ -78,17 +78,7 @@ bool read_string(MEM_ROOT *mem_root, json_engine_t *je, const char *read_elem_ke
   if (check_reading_of_elem_key(je, read_elem_key, err_buf))
     return true;
 
-  StringBuffer<128> val_buf;
-  if (json_unescape_to_string((const char *) je->value, je->value_len,
-                              &val_buf))
-  {
-    err_buf->append(STRING_WITH_LEN("un-escaping error of "));
-    err_buf->append(read_elem_key, strlen(read_elem_key));
-    err_buf->append(STRING_WITH_LEN(" element"));
-    return true;
-  }
-
-  value= strdup_root(mem_root, val_buf.c_ptr_safe());
+  value= strmake_root(mem_root, (const char *) je->value, je->value_len);
   return false;
 }
 
