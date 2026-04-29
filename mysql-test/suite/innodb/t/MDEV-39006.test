@@ -1,0 +1,99 @@
+#
+# MDEV-39006: simple non-Galera reproducer for the InnoDB page-cleaner
+# write leak after ha_disable_internal_writes(true).
+#
+# This test bypasses Galera entirely. It drives sst_disable_innodb_writes()
+# / sst_enable_innodb_writes() through DBUG hooks (sst_disable_writes_now /
+# sst_enable_writes_now) installed at the bottom of
+# innodb_max_dirty_pages_pct_lwm_update().  The same setter wakes the page
+# cleaner, so each `SET GLOBAL innodb_max_dirty_pages_pct_lwm = ...` is the
+# single trigger for both the test action and the cleaner wake-up.
+#
+# The sst_force_lsn_advance DBUG injection (inside sst_disable_innodb_writes)
+# deterministically advances LSN past the log_checkpoint_low() early-return
+# threshold so the page cleaner's idle-path call has work to do.
+#
+# Without the wsrep_sst_disable_writes gate in
+# storage/innobase/buf/buf0flu.cc:buf_flush_page_cleaner(), the page
+# cleaner's idle-path log_checkpoint_low() trips
+# ut_ad(!recv_no_log_write) (debug) or appends a fresh FILE_CHECKPOINT
+# record to ib_logfile0 (release). With the gate, the cleaner skips
+# both and the snapshot stays byte-identical.
+#
+
+--source include/have_innodb.inc
+--source include/have_debug.inc
+--source include/have_wsrep.inc
+
+--let $datadir= `SELECT @@datadir`
+--let $innodb_max_dirty_pages_pct = `SELECT @@innodb_max_dirty_pages_pct`
+--let $innodb_max_dirty_pages_pct_lwm = `SELECT @@innodb_max_dirty_pages_pct_lwm`
+
+# Drain any baseline dirty pages first, so the buffer pool is clean
+# before we accumulate test dirty pages.
+SET GLOBAL innodb_max_dirty_pages_pct=0.0;
+SET GLOBAL innodb_max_dirty_pages_pct_lwm=0.0;
+--let $wait_condition = SELECT variable_value = 0 FROM information_schema.global_status WHERE variable_name = 'INNODB_BUFFER_POOL_PAGES_DIRTY'
+--source include/wait_condition.inc
+
+# Raise the threshold so the page cleaner does not flush proactively
+# while we build up dirty pages.
+SET GLOBAL innodb_max_dirty_pages_pct=99;
+SET GLOBAL innodb_max_dirty_pages_pct_lwm=99;
+
+CREATE TABLE t1 (f1 INTEGER, f2 VARCHAR(1024)) ENGINE=InnoDB;
+CREATE TABLE ten (f1 INTEGER) ENGINE=InnoDB;
+INSERT INTO ten VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+INSERT INTO t1 (f2) SELECT REPEAT('x', 1024) FROM ten AS a1, ten AS a2, ten AS a3, ten AS a4;
+
+# Arm two DBUG hooks on innodb_max_dirty_pages_pct_lwm_update():
+#   sst_disable_writes_now  -> calls ha_disable_internal_writes(true)
+#   sst_force_lsn_advance   -> writes one FILE_MODIFY redo record from
+#                              inside sst_disable_innodb_writes() so LSN
+#                              moves past the log_checkpoint_low()
+#                              early-return threshold.
+SET GLOBAL debug_dbug = "+d,sst_disable_writes_now,sst_force_lsn_advance";
+
+# Trigger the disable hook. Setting lwm to 99 (its current value) is enough
+# to invoke innodb_max_dirty_pages_pct_lwm_update(), which fires the DBUG
+# block and drives ha_disable_internal_writes(true) -> sst_disable_innodb_writes
+# (where sst_force_lsn_advance also fires).
+SET GLOBAL innodb_max_dirty_pages_pct_lwm=99;
+
+SET GLOBAL debug_dbug = "";
+
+# Snapshot of datadir BEFORE waking the page cleaner.  Excludes transient
+# SST/PID artefacts so the test isolates engine-level writes.
+--exec find $datadir -type f ! -name 'tables_flushed' ! -name 'backup_sst_complete' ! -name 'wsrep_sst*.pid' ! -name 'wsrep_sst*.log' ! -name 'stunnel.conf' -exec md5sum {} \; 2>/dev/null | sort -u | md5sum > $MYSQLTEST_VARDIR/tmp/innodb_before
+
+# Wake the page cleaner. With the production fix in
+# buf_flush_page_cleaner() this is a no-op; without it the cleaner
+# enters log_checkpoint_low() past the early-return because the
+# injection bumped LSN, then either trips ut_ad(!recv_no_log_write)
+# (debug) or writes FILE_CHECKPOINT to ib_logfile0 (release).
+SET GLOBAL innodb_max_dirty_pages_pct_lwm=0.0;
+SET GLOBAL innodb_max_dirty_pages_pct=0.0;
+--sleep 2
+
+# Snapshot of datadir AFTER the page cleaner has had a chance to run.
+--exec find $datadir -type f ! -name 'tables_flushed' ! -name 'backup_sst_complete' ! -name 'wsrep_sst*.pid' ! -name 'wsrep_sst*.log' ! -name 'stunnel.conf' -exec md5sum {} \; 2>/dev/null | sort -u | md5sum > $MYSQLTEST_VARDIR/tmp/innodb_after
+
+# The two snapshots must be identical: no datadir writes while
+# wsrep_sst_disable_writes is set.
+--diff_files $MYSQLTEST_VARDIR/tmp/innodb_before $MYSQLTEST_VARDIR/tmp/innodb_after
+
+# Re-enable internal writes via the matching DBUG hook.  Clears
+# recv_no_log_write and resumes normal page-cleaner operation.
+# (raise pct first so the lwm setter does not warn about lwm > pct.)
+SET GLOBAL innodb_max_dirty_pages_pct=99;
+SET GLOBAL debug_dbug = "+d,sst_enable_writes_now";
+SET GLOBAL innodb_max_dirty_pages_pct_lwm=99;
+SET GLOBAL debug_dbug = "";
+
+DROP TABLE t1;
+DROP TABLE ten;
+
+--disable_query_log
+--eval SET GLOBAL innodb_max_dirty_pages_pct = $innodb_max_dirty_pages_pct
+--eval SET GLOBAL innodb_max_dirty_pages_pct_lwm = $innodb_max_dirty_pages_pct_lwm
+--enable_query_log

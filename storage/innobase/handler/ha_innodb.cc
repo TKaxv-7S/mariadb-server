@@ -1798,10 +1798,29 @@ static void sst_disable_innodb_writes()
   buf_flush_page_cleaner(). Let us prevent that by invoking another
   checkpoint (which will write the FILE_CHECKPOINT record). */
   log_make_checkpoint();
+
+  bool skip_verify_checkpoint= false;
+  DBUG_EXECUTE_IF("sst_force_lsn_advance",
+  {
+    /* Test-only: write a single FILE_MODIFY redo record so that
+    log_sys.get_lsn() advances past
+      last_checkpoint_lsn + SIZE_OF_FILE_CHECKPOINT + 8*is_encrypted().
+    A subsequent buf_flush_page_cleaner() wake-up will then enter
+    log_checkpoint_low() past its early-return and, absent the
+    wsrep_sst_disable_writes gate in buf0flu.cc, fire the
+    recv_no_log_write tripwire (debug) or write a FILE_CHECKPOINT
+    record to ib_logfile0 (release).  With the gate in place this
+    extra LSN gets checkpointed past once sst_enable_innodb_writes()
+    runs, so it does not survive past the SST window. */
+    skip_verify_checkpoint= true;
+    debug_advance_lsn_via_file_modify();
+  });
+
   ut_d(recv_no_log_write= true);
   /* If this were not a no-op, an assertion would fail due to
   recv_no_log_write. */
-  ut_d(log_make_checkpoint());
+  if (!skip_verify_checkpoint)
+    ut_d(log_make_checkpoint());
 }
 
 static void sst_enable_innodb_writes()
@@ -17502,6 +17521,15 @@ innodb_max_dirty_pages_pct_lwm_update(
 	mysql_mutex_lock(&buf_pool.flush_list_mutex);
 	buf_pool.page_cleaner_wakeup();
 	mysql_mutex_unlock(&buf_pool.flush_list_mutex);
+
+#ifdef WITH_WSREP
+	/* To drive ha_disable_internal_writes() through this setter. */
+	DBUG_EXECUTE_IF("sst_disable_writes_now",
+	                ha_disable_internal_writes(true););
+	DBUG_EXECUTE_IF("sst_enable_writes_now",
+	                ha_disable_internal_writes(false););
+#endif /* WITH_WSREP */
+
 	mysql_mutex_lock(&LOCK_global_system_variables);
 }
 

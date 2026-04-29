@@ -1805,6 +1805,14 @@ and write out FILE_MODIFY if needed, and write FILE_CHECKPOINT.
 @return current LSN */
 ATTRIBUTE_COLD lsn_t fil_names_clear(lsn_t lsn) noexcept;
 
+#ifdef UNIV_DEBUG
+/** Append a single FILE_MODIFY redo record so that log_sys.get_lsn() advances
+past last_checkpoint_lsn + SIZE_OF_FILE_CHECKPOINT + 8*is_encrypted().
+The record refers to a non-predefined dummy tablespace and is flushed to
+ib_logfile0; recovery from a later checkpoint skips past it. */
+ATTRIBUTE_COLD void debug_advance_lsn_via_file_modify() noexcept;
+#endif
+
 #ifdef UNIV_ENABLE_UNIT_TEST_MAKE_FILEPATH
 void test_make_filepath();
 #endif /* UNIV_ENABLE_UNIT_TEST_MAKE_FILEPATH */

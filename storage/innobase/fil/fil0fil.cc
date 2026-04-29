@@ -3009,6 +3009,26 @@ ATTRIBUTE_NOINLINE ATTRIBUTE_COLD void mtr_t::name_write() noexcept
   mtr.commit_files();
 }
 
+#ifdef UNIV_DEBUG
+/** A debug helper function to append a single FILE_MODIFY redo record so that
+log_sys.get_lsn() advances past
+  last_checkpoint_lsn + SIZE_OF_FILE_CHECKPOINT + 8*is_encrypted().
+The record refers to a non-predefined dummy tablespace and is flushed to
+ib_logfile0 before recv_no_log_write is set; recovery from a later
+checkpoint will skip past it. */
+ATTRIBUTE_COLD void debug_advance_lsn_via_file_modify() noexcept
+{
+  log_sys.latch.wr_lock();
+  mtr_t mtr;
+  mtr.start();
+  mtr.log_file_op(FILE_MODIFY, SRV_SPACE_ID_UPPER_BOUND - 1,
+                  "./mdev39006_fake.ibd");
+  const lsn_t commit_lsn= mtr.commit_files();
+  log_sys.latch.wr_unlock();
+  log_write_up_to(commit_lsn ? commit_lsn : log_sys.get_lsn(), true);
+}
+#endif
+
 /** On a log checkpoint, reset fil_names_dirty_and_write() flags
 and write out FILE_MODIFY if needed, and write FILE_CHECKPOINT.
 @param lsn  checkpoint LSN

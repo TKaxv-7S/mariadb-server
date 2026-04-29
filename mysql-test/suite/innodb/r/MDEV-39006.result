@@ -1,0 +1,22 @@
+SET GLOBAL innodb_max_dirty_pages_pct=0.0;
+SET GLOBAL innodb_max_dirty_pages_pct_lwm=0.0;
+SET GLOBAL innodb_max_dirty_pages_pct=99;
+SET GLOBAL innodb_max_dirty_pages_pct_lwm=99;
+CREATE TABLE t1 (f1 INTEGER, f2 VARCHAR(1024)) ENGINE=InnoDB;
+CREATE TABLE ten (f1 INTEGER) ENGINE=InnoDB;
+INSERT INTO ten VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+INSERT INTO t1 (f2) SELECT REPEAT('x', 1024) FROM ten AS a1, ten AS a2, ten AS a3, ten AS a4;
+SET GLOBAL debug_dbug = "+d,sst_disable_writes_now,sst_force_lsn_advance";
+SET GLOBAL innodb_max_dirty_pages_pct_lwm=99;
+SET GLOBAL debug_dbug = "";
+SET GLOBAL innodb_max_dirty_pages_pct_lwm=0.0;
+SET GLOBAL innodb_max_dirty_pages_pct=0.0;
+SET GLOBAL innodb_max_dirty_pages_pct=99;
+SET GLOBAL debug_dbug = "+d,sst_enable_writes_now";
+SET GLOBAL innodb_max_dirty_pages_pct_lwm=99;
+SET GLOBAL debug_dbug = "";
+DROP TABLE t1;
+DROP TABLE ten;
+Warnings:
+Warning	1210	innodb_max_dirty_pages_pct cannot be set lower than innodb_max_dirty_pages_pct_lwm.
+Warning	1210	Lowering innodb_max_dirty_page_pct_lwm to 90.000000

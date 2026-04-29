@@ -44,6 +44,12 @@ Created 11/11/1995 Heikki Tuuri
 #include "lzo/lzo1x.h"
 #include "snappy-c.h"
 
+#ifdef WITH_WSREP
+extern Atomic_relaxed<bool> wsrep_sst_disable_writes;
+#else
+constexpr bool wsrep_sst_disable_writes= false;
+#endif
+
 /** Number of pages flushed via LRU. Protected by buf_pool.mutex.
 Also included in buf_pool.stat.n_pages_written. */
 ulint buf_lru_flush_page_count;
@@ -2012,6 +2018,7 @@ static void log_checkpoint_low(lsn_t oldest_lsn, lsn_t end_lsn) noexcept
     log_sys.latch.wr_lock();
   }
 
+  ut_ad(!recv_no_log_write);
   ut_ad(oldest_lsn > log_sys.last_checkpoint_lsn);
   ut_ad(log_sys.get_flushed_lsn() >= flush_lsn);
 
@@ -2544,23 +2551,28 @@ static void buf_flush_page_cleaner() noexcept
       pthread_cond_broadcast(&buf_pool.done_flush_LRU);
       pthread_cond_broadcast(&buf_pool.done_flush_list);
       mysql_mutex_unlock(&buf_pool.flush_list_mutex);
-      buf_dblwr.flush_buffered_writes();
-
-      do
+      /* Skip the doublewrite flush and checkpoint while a Galera SST donor
+      has called ha_disable_internal_writes(true). */
+      if (UNIV_LIKELY(!wsrep_sst_disable_writes))
       {
-        if (recv_recovery_is_on())
-          continue;
-        IF_DBUG(if (log_sys.last_checkpoint_lsn &&
-                    srv_shutdown_state < SRV_SHUTDOWN_CLEANUP &&
-                    (_db_keyword_(nullptr, "ib_log_checkpoint_avoid", 1) ||
-                     _db_keyword_(nullptr, "ib_log_checkpoint_avoid_hard", 1)))
-                  continue,);
-        if (log_sys.check_for_checkpoint() ||
-            (!srv_startup_is_before_trx_rollback_phase &&
-             srv_operation <= SRV_OPERATION_EXPORT_RESTORED))
-          log_checkpoint();
+        buf_dblwr.flush_buffered_writes();
+
+        do
+        {
+          if (recv_recovery_is_on())
+            continue;
+          IF_DBUG(if (log_sys.last_checkpoint_lsn &&
+                      srv_shutdown_state < SRV_SHUTDOWN_CLEANUP &&
+                      (_db_keyword_(nullptr, "ib_log_checkpoint_avoid", 1) ||
+                       _db_keyword_(nullptr, "ib_log_checkpoint_avoid_hard", 1)))
+                    continue,);
+          if (log_sys.check_for_checkpoint() ||
+              (!srv_startup_is_before_trx_rollback_phase &&
+               srv_operation <= SRV_OPERATION_EXPORT_RESTORED))
+            log_checkpoint();
+        }
+        while (false);
       }
-      while (false);
 
       if (UNIV_UNLIKELY(srv_shutdown_state >= SRV_SHUTDOWN_LAST_PHASE))
       {
