@@ -1,0 +1,54 @@
+drop table if exists t1;
+#
+# Setup: constrained MEMORY table with blob column
+#
+set @save_max_heap_table_size=@@max_heap_table_size;
+set max_heap_table_size=1*1024*1024;
+create table t1 (a int not null, b blob, primary key(a)) engine=memory;
+#
+# Fill table with short-blob rows to consume capacity
+#
+select count(*) as total_rows from t1;
+total_rows
+500
+#
+# Delete every other row to create fragmentation
+#
+select count(*) as rows_after_delete from t1;
+rows_after_delete
+250
+#
+# Insert new rows with blobs — exercises free-list scavenge
+#
+insert into t1 values (10000, repeat('A', 200));
+insert into t1 values (10001, repeat('B', 500));
+insert into t1 values (10002, repeat('C', 50));
+#
+# Verify data integrity
+#
+select a, length(b) as blob_len, left(b, 5) as prefix from t1
+where a >= 10000 order by a;
+a	blob_len	prefix
+10000	200	AAAAA
+10001	500	BBBBB
+10002	50	CCCCC
+select a, md5(b) from t1 where a=10000;
+a	md5(b)
+10000	16bf06b3717d1f238252870e699c2a2e
+select a, md5(b) from t1 where a=10001;
+a	md5(b)
+10001	f05df5898d087fc01bd25737b2b85788
+select a, md5(b) from t1 where a=10002;
+a	md5(b)
+10002	4aec7e49aeea73fdd3e1e5c565fc126a
+#
+# Verify scan still works correctly
+#
+select count(*) as scan_count from t1;
+scan_count
+253
+#
+# Cleanup
+#
+drop table t1;
+set max_heap_table_size=@save_max_heap_table_size;
