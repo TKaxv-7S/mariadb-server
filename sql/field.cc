@@ -9159,6 +9159,15 @@ Field *Field_blob::make_new_field(MEM_ROOT *root, TABLE *newt, bool keep_type,
       res->init_for_make_new_field(newt, orig_table);
     return res;
   }
+  /*
+    MDEV-16699: Field_geom::store() lacks Blob_mem_storage support,
+    so GROUP_CONCAT with ORDER BY/DISTINCT on geometry columns would
+    read freed memory.  Downgrade to plain Field_blob whose store()
+    routes data through table->blob_storage.
+  */
+  if (newt->group_concat)
+    return new (root) Field_blob(field_length, maybe_null(), &field_name,
+                                 charset());
   return Field::make_new_field(root, newt, keep_type, param);
 }
 
