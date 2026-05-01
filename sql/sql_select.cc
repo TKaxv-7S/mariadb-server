@@ -24875,6 +24875,60 @@ end:
   @seealso end_unique_update()
 */
 
+/*
+  Convert a HEAP temp table to Aria after ha_update_tmp_row() fails with
+  HA_ERR_RECORD_FILE_FULL, then re-locate the duplicate row and retry the
+  update.
+
+  After conversion the HEAP blocks are freed, so any blob pointers in
+  record[0] that referenced HEAP memory become dangling.  We re-derive
+  record[0] by reading the pre-update row from Aria (ha_rnd_pos into
+  record[1], restore_record, update_tmptable_sum_func) before retrying.
+  update_field() is stateless (reads result_field + args[0], writes
+  result_field) so re-running it on the pre-update values is safe and
+  produces the correct post-update result.
+
+  @return 0  success (table converted, update applied, index re-opened)
+  @return -1 error (already printed)
+*/
+
+static int
+convert_heap_to_aria_update(JOIN *join, JOIN_TAB *join_tab,
+                            TABLE *table, int error)
+{
+  bool is_duplicate;
+  if (create_internal_tmp_table_from_heap(join->thd, table,
+                                     join_tab->tmp_table_param->start_recinfo,
+                                          &join_tab->tmp_table_param->recinfo,
+                                          error, 1, &is_duplicate))
+    return -1;
+  DBUG_ASSERT(is_duplicate);
+  table->file->get_dup_key(HA_ERR_FOUND_DUPP_KEY);
+  if (unlikely((error= table->file->ha_rnd_init(0))))
+  {
+    table->file->print_error(error, MYF(0));
+    return -1;
+  }
+  error= table->file->ha_rnd_pos(table->record[1],
+                                   table->file->dup_ref);
+  if (likely(!error))
+  {
+    restore_record(table, record[1]);
+    update_tmptable_sum_func(join->sum_funcs, table);
+    error= table->file->ha_update_tmp_row(table->record[1],
+                                           table->record[0]);
+  }
+  if (unlikely(error) ||
+      unlikely((error= table->file->ha_rnd_end())) ||
+      unlikely((error= table->file->ha_index_init(0, 0))))
+  {
+    table->file->print_error(error, MYF(0));
+    return -1;
+  }
+  return 0;
+}
+
+
 static enum_nested_loop_state
 end_update(JOIN *join, JOIN_TAB *join_tab __attribute__((unused)),
 	   bool end_of_records)
@@ -24917,8 +24971,9 @@ end_update(JOIN *join, JOIN_TAB *join_tab __attribute__((unused)),
     if (unlikely((error= table->file->ha_update_tmp_row(table->record[1],
                                                         table->record[0]))))
     {
-      table->file->print_error(error,MYF(0));	/* purecov: inspected */
-      DBUG_RETURN(NESTED_LOOP_ERROR);            /* purecov: inspected */
+      if (convert_heap_to_aria_update(join, join_tab, table, error))
+        DBUG_RETURN(NESTED_LOOP_ERROR);
+      join_tab->aggr->set_write_func(end_unique_update);
     }
     goto end;
   }
@@ -25036,8 +25091,9 @@ end_unique_update(JOIN *join, JOIN_TAB *join_tab __attribute__((unused)),
     if (unlikely((error= table->file->ha_update_tmp_row(table->record[1],
                                                         table->record[0]))))
     {
-      table->file->print_error(error,MYF(0));	/* purecov: inspected */
-      DBUG_RETURN(NESTED_LOOP_ERROR);            /* purecov: inspected */
+      if (convert_heap_to_aria_update(join, join_tab, table, error))
+        DBUG_RETURN(NESTED_LOOP_ERROR);
+      rnd_inited= true;
     }
     if (!rnd_inited &&
         ((error= table->file->ha_rnd_end()) ||
