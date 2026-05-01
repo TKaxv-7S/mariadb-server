@@ -36,6 +36,75 @@
 
 
 /*
+  Try to reclaim deleted records at the tail of the HP_BLOCK tree.
+
+  After hp_free_run_chain() puts tail-allocated records onto the delete
+  list, this function checks if those records are at the current tail
+  (highest positions in the last leaf block).  If so, it pops them from
+  the delete list and decrements last_allocated, effectively returning
+  them for future tail allocation.
+
+  Crosses block boundaries by updating last_blocks to the previous
+  leaf via hp_find_block().  Empty blocks stay allocated in the tree
+  (freed at table drop) but their slots become available for reuse.
+
+  Maintains the scan-boundary invariant:
+      total_records + deleted == block.last_allocated
+  Each reclaimed slot does deleted-- and last_allocated--, keeping the
+  difference (total_records) unchanged.
+
+  @param share  Table share
+*/
+
+static void hp_shrink_tail(HP_SHARE *share)
+{
+  HP_BLOCK *block= &share->block;
+  uint recbuffer= block->recbuffer;
+  ulong records_in_block= block->records_in_block;
+
+  DBUG_ASSERT(share->total_records + share->deleted ==
+              block->last_allocated);
+
+  if (block->last_allocated > block->high_water_allocated)
+    block->high_water_allocated= block->last_allocated;
+
+  while (share->del_link && block->last_allocated > 0)
+  {
+    ulong block_pos= block->last_allocated % records_in_block;
+    uchar *last_blocks= (uchar*) block->level_info[0].last_blocks;
+    uchar *tail_pos;
+
+    if (block_pos == 0)
+      tail_pos= last_blocks + (records_in_block - 1) * recbuffer;
+    else
+      tail_pos= last_blocks + (block_pos - 1) * recbuffer;
+
+    if (share->del_link != tail_pos)
+      break;
+
+    share->del_link= *((uchar**) share->del_link);
+    share->deleted--;
+    block->last_allocated--;
+
+    /*
+      When the current leaf block becomes empty (block_pos was 1),
+      find the previous leaf block so subsequent iterations can
+      continue reclaiming there.  The empty block stays allocated
+      in the tree (freed at table drop).
+    */
+    if (block_pos == 1 && block->last_allocated > 0)
+    {
+      uchar *prev_rec= hp_find_block(block, block->last_allocated - 1);
+      ulong prev_offset=
+        (block->last_allocated - 1) % records_in_block;
+      block->level_info[0].last_blocks=
+        (HP_PTRS*)(prev_rec - prev_offset * recbuffer);
+    }
+  }
+}
+
+
+/*
   Free one continuation chain of variable-length runs.
 
   Walks from the first run, reads run_rec_count from each, frees all
@@ -481,7 +550,12 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
 
 err:
   if (first_run)
+  {
     hp_free_run_chain(share, first_run);
+    hp_shrink_tail(share);
+    DBUG_ASSERT(share->total_records + share->deleted ==
+                share->block.last_allocated);
+  }
   *first_run_out= NULL;
   return my_errno;
 }
@@ -539,6 +613,9 @@ int hp_write_blobs(HP_INFO *info, const uchar *record, uchar *pos)
           hp_free_run_chain(share, chain);
         *((uchar**) (pos + rd->offset + rd->packlength))= NULL;
       }
+      hp_shrink_tail(share);
+      DBUG_ASSERT(share->total_records + share->deleted ==
+                  share->block.last_allocated);
       *((uchar**) (pos + desc->offset + desc->packlength))= NULL;
       DBUG_RETURN(my_errno);
     }
