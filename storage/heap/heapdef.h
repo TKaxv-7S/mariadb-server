@@ -220,7 +220,7 @@ extern ha_rows hp_rows_in_memory(size_t reclength, size_t index_size,
                           size_t memory_limit);
 extern size_t hp_memory_needed_per_row(size_t reclength);
 
-extern uchar *hp_alloc_from_tail(HP_SHARE *info);
+extern uchar *hp_alloc_from_tail(HP_SHARE *info, uint *blocks);
 extern uchar *next_free_record_pos(HP_SHARE *info);
 static inline uint32 hp_blob_length(const HP_BLOB_DESC *desc,
                                     const uchar *record)
