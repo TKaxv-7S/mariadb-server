@@ -416,6 +416,7 @@ static void init_block(HP_BLOCK *block, size_t reclength, ulong min_records,
   block->records_in_block= records_in_block;
   block->recbuffer= recbuffer;
   block->last_allocated= 0L;
+  block->high_water_allocated= 0L;
   /* All alloctions are done with this size, if possible */
   block->alloc_size= alloc_size - MALLOC_OVERHEAD;
 

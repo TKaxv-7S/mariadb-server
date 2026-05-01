@@ -105,6 +105,7 @@ typedef struct st_heap_block
   uint recbuffer;			/* Length of one saved record */
   ulong records_in_block;		/* Records in one heap-block */
   ulong last_allocated; /* number of records there is allocated space for */
+  ulong high_water_allocated; /* peak last_allocated before hp_shrink_tail() */
   size_t alloc_size;			/* Allocate blocks of this size */
 } HP_BLOCK;
 

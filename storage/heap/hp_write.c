@@ -214,9 +214,17 @@ uchar *hp_alloc_from_tail(HP_SHARE *info, uint *blocks)
       DBUG_RETURN(NULL);
     }
 
-    if (hp_get_new_block(info, &info->block, &length))
-      DBUG_RETURN(NULL);
-    info->data_length+=length;
+    if (info->block.last_allocated < info->block.high_water_allocated)
+    {
+      info->block.level_info[0].last_blocks=
+        (HP_PTRS*) hp_find_block(&info->block, info->block.last_allocated);
+    }
+    else
+    {
+      if (hp_get_new_block(info, &info->block, &length))
+        DBUG_RETURN(NULL);
+      info->data_length+=length;
+    }
   }
   available= (uint)(info->block.records_in_block - block_pos);
   requested= *blocks;
