@@ -10,6 +10,7 @@
 
 # SHOW STATUS output differs across protocol variants; disable them globally.
 --disable_cursor_protocol
+--disable_ps_protocol
 --disable_ps2_protocol
 
 --echo #
@@ -142,4 +143,5 @@ SHOW STATUS LIKE 'Created_tmp%';
 DROP TABLE t1;
 
 --enable_ps2_protocol
+--enable_ps_protocol
 --enable_cursor_protocol
