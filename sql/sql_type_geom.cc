@@ -840,6 +840,7 @@ int Field_geom::store_decimal(const my_decimal *)
 
 int Field_geom::store(const char *from, size_t length, CHARSET_INFO *cs)
 {
+  DBUG_ASSERT(!table->blob_storage);
   if (!length)
     bzero(ptr, Field_blob::pack_length());
   else

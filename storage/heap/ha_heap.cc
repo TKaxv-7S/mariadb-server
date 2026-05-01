@@ -715,6 +715,9 @@ int heap_prepare_hp_create_info(TABLE *table_arg, bool internal_table,
                       HA_KEYTYPE_VARBINARY4 : HA_KEYTYPE_VARTEXT4;
         seg->bit_start= ((Field_blob*) field)->pack_length_no_ptr();
         seg->length= 4 + portable_sizeof_char_ptr;
+        DBUG_ASSERT(seg->type == HA_KEYTYPE_VARBINARY4 ||
+                    seg->type == HA_KEYTYPE_VARTEXT4);
+        DBUG_ASSERT(seg->bit_start >= 1 && seg->bit_start <= 4);
       }
 
       if (field->flags & (ENUM_FLAG | SET_FLAG))
