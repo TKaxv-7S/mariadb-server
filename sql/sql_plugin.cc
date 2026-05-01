@@ -1702,9 +1702,12 @@ int plugin_init(int *argc, char **argv, int flags)
   DBUG_ASSERT(plugin_ptr || !mysql_mandatory_plugins[0]);
   if (plugin_ptr)
   {
+    bool opts_only= test_all_bits(flags,
+                                  PLUGIN_INIT_SKIP_INITIALIZATION |
+                                  PLUGIN_INIT_SKIP_PLUGIN_TABLE);
     DBUG_ASSERT(plugin_ptr->load_option == PLUGIN_FORCE);
 
-    if (plugin_initialize(&tmp_root, plugin_ptr, argc, argv, false))
+    if (plugin_initialize(&tmp_root, plugin_ptr, argc, argv, opts_only))
       goto err_unlock;
 
     /*
@@ -1713,7 +1716,7 @@ int plugin_init(int *argc, char **argv, int flags)
     */
     global_system_variables.table_plugin =
       intern_plugin_lock(NULL, plugin_int_to_ref(plugin_ptr));
-    DBUG_SLOW_ASSERT(plugin_ptr->ref_count == 1);
+    DBUG_SLOW_ASSERT(plugin_ptr->ref_count == 1 || opts_only);
   }
   mysql_mutex_unlock(&LOCK_plugin);
 
@@ -3311,7 +3314,8 @@ void plugin_thdvar_init(THD *thd)
   thd->variables.dynamic_variables_ptr= 0;
 
   mysql_mutex_lock(&LOCK_plugin);
-  thd->variables.table_plugin=
+  if (global_system_variables.table_plugin)
+    thd->variables.table_plugin=
       intern_plugin_lock(NULL, global_system_variables.table_plugin);
   if (global_system_variables.tmp_table_plugin)
     thd->variables.tmp_table_plugin=

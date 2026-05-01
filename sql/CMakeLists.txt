@@ -156,7 +156,7 @@ SET (SQL_SOURCE
                sql_reload.cc
 
                # added in MariaDB:
-               grant.cc
+               grant.cc check_syntax.cc check_syntax.h
                sql_explain.cc
                sql_analyze_stmt.cc
                sql_join_cache.cc

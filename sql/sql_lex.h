@@ -5093,6 +5093,7 @@ public:
   */
   bool init(THD *thd, char *buff, size_t length)
   {
+    parse_only= 0;
     return m_lip.init(thd, buff, length);
   }
 
@@ -5100,6 +5101,7 @@ public:
 
   Lex_input_stream m_lip;
   Yacc_state m_yacc;
+  bool parse_only;
 
   /**
     Current performance digest instrumentation. 
