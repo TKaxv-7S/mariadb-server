@@ -9090,7 +9090,7 @@ uint Field_blob::get_key_image_itRAW(const uchar *ptr_arg, uchar *buff,
   size_t local_char_length= length / mbmaxlen();
   local_char_length= field_charset()->charpos(blob, blob + blob_length,
                                               local_char_length);
-  set_if_smaller(blob_length, local_char_length);
+  set_if_smaller(blob_length, (uint32) local_char_length);
 
   if (length > blob_length)
   {
@@ -9125,7 +9125,7 @@ int Field_blob::key_cmp(const uchar *key_ptr, uint max_key_length) const
   size_t local_char_length= max_key_length / cs->mbmaxlen;
   local_char_length= cs->charpos(blob1, blob1+blob_length,
                                  local_char_length);
-  set_if_smaller(blob_length, local_char_length);
+  set_if_smaller(blob_length, (uint32) local_char_length);
   return Field_blob::cmp(blob1, (uint32)blob_length,
 			 key_ptr+HA_KEY_BLOB_LENGTH,
 			 uint2korr(key_ptr));

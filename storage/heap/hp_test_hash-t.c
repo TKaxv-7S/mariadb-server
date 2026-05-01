@@ -98,7 +98,7 @@ static void setup_keydef(HP_KEYDEF *keydef, HA_KEYSEG *seg, uint keysegs)
   Sets the blob field to point to blob_data with blob_len bytes.
 */
 static void build_record(uchar *rec, int32 int_val,
-                         const uchar *blob_data, uint16 blob_len,
+                         const uchar *blob_data, size_t blob_len,
                          my_bool blob_is_null)
 {
   memset(rec, 0, REC_LENGTH);
@@ -138,7 +138,7 @@ static void test_hash_consistency(void)
 
   /* Case C: larger blob data (would need multiple runs in real storage) */
   uchar data_c[200];
-  uint16 len_c= sizeof(data_c);
+  size_t len_c= sizeof(data_c);
   memset(data_c, 'X', sizeof(data_c));
   /* Make it non-uniform so hash is more interesting */
   data_c[0]= 'A';
@@ -767,8 +767,8 @@ static void setup_mixed_keydef(HP_KEYDEF *keydef, HA_KEYSEG *segs)
 
 
 static void build_mixed_record(uchar *rec, const uchar *blob_data,
-                                uint16 blob_len, const uchar *varchar_data,
-                                uint8 varchar_len,
+                                size_t blob_len, const uchar *varchar_data,
+                                size_t varchar_len,
                                 my_bool blob_null, my_bool varchar_null)
 {
   memset(rec, 0, MIX_REC_LENGTH);
@@ -780,7 +780,7 @@ static void build_mixed_record(uchar *rec, const uchar *blob_data,
     rec[MIX_NULL_OFFSET] |= 8;
 
   /* varchar: 1-byte length prefix + data */
-  rec[MIX_VARCHAR_OFFSET]= varchar_len;
+  rec[MIX_VARCHAR_OFFSET]= (uchar) varchar_len;
   if (varchar_data && varchar_len > 0)
     memcpy(rec + MIX_VARCHAR_OFFSET + MIX_VARCHAR_LENBYTES,
            varchar_data, varchar_len);
