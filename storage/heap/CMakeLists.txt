@@ -27,15 +27,13 @@ IF(CMAKE_SYSTEM_NAME MATCHES AIX AND CMAKE_BUILD_TYPE STREQUAL "DEBUG")
 ENDIF()
 
 IF(WITH_UNIT_TESTS)
-  TARGET_COMPILE_DEFINITIONS(heap PRIVATE HEAP_UNIT_TESTS)
-
   ADD_EXECUTABLE(hp_test1 hp_test1.c)
   TARGET_LINK_LIBRARIES(hp_test1 heap mysys dbug strings)
 
   ADD_EXECUTABLE(hp_test2 hp_test2.c)
   TARGET_LINK_LIBRARIES(hp_test2 heap mysys dbug strings)
 
-  MY_ADD_TESTS(hp_test_hash LINK_LIBRARIES heap mysys dbug strings)
+  MY_ADD_TESTS(hp_test_hash hp_test_scan LINK_LIBRARIES heap mysys dbug strings)
 
   INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR}/sql
                       ${CMAKE_SOURCE_DIR}/include)

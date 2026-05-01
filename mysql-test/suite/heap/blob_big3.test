@@ -5,6 +5,6 @@
 # Test without all temporary tables being dicrectly created in Aria
 
 SET @@tmp_memory_table_size= 0;
---source heap_blob_big.inc
+--source blob_big.inc
 
 

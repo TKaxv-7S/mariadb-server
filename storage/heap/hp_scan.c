@@ -63,6 +63,7 @@ int heap_scan(register HP_INFO *info, uchar *record)
     that manipulates next_block externally (e.g. restart_rnd_next) must
     also enforce this cap.
   */
+retry:
   pos= ++info->current_record;
   if (pos < info->next_block)
   {
@@ -97,17 +98,15 @@ int heap_scan(register HP_INFO *info, uchar *record)
     DBUG_RETURN(my_errno=HA_ERR_RECORD_DELETED);
   }
   /*
-    Skip blob continuation runs.  Rec 0 of each run has the flags byte
-    with HP_ROW_IS_CONT set; inner records (rec 1..N-1) have no flags
-    byte.  Read run_rec_count from the header and skip the entire run.
+    Skip blob continuation runs internally — advance past the entire run
+    and retry from the top rather than returning to the caller.
+
+    Rec 0 of each run has the flags byte with HP_ROW_IS_CONT set; inner
+    records (rec 1..N-1) have no flags byte.  Read run_rec_count from the
+    header and skip the entire run.
   */
   if (hp_is_cont(info->current_ptr, share->visible))
   {
-    /*
-      Case A (HP_BLOB_CASE_A_SINGLE_REC): single record, no header — skip
-      just this one record.
-      Case B/C: read run_rec_count from header and skip the entire run.
-    */
     if (hp_blob_run_format(info->current_ptr, share->visible)
         != HP_BLOB_CASE_A_SINGLE_REC)
     {
@@ -119,8 +118,7 @@ int heap_scan(register HP_INFO *info, uchar *record)
         info->current_ptr+= skip * share->block.recbuffer;
       }
     }
-    info->update= HA_STATE_PREV_FOUND | HA_STATE_NEXT_FOUND;
-    DBUG_RETURN(my_errno=HA_ERR_RECORD_DELETED);
+    goto retry;
   }
   info->update= HA_STATE_PREV_FOUND | HA_STATE_NEXT_FOUND | HA_STATE_AKTIV;
   memcpy(record,info->current_ptr,(size_t) share->reclength);

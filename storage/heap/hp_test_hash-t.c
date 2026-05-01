@@ -131,12 +131,10 @@ static void test_hash_consistency(void)
   ulong rec_hash_a, rec_hash_b, rec_hash_c;
 
   /* Case A: very small blob (fits in single record, <= visible - 10) */
-  const uchar *data_a= (const uchar*) "Hi";
-  uint16 len_a= 2;
+  LEX_CUSTRING data_a= { USTRING_WITH_LEN("Hi") };
 
   /* Case B: medium blob (fits in single run, zero-copy) */
-  const uchar *data_b= (const uchar*) "Hello World! This is a medium blob.";
-  uint16 len_b= 35;
+  LEX_CUSTRING data_b= { USTRING_WITH_LEN("Hello World! This is a medium blob.") };
 
   /* Case C: larger blob data (would need multiple runs in real storage) */
   uchar data_c[200];
@@ -152,7 +150,7 @@ static void test_hash_consistency(void)
   setup_keydef(&keydef, &seg, 1);
 
   /* --- Case A: small blob --- */
-  build_record(rec, 1, data_a, len_a, FALSE);
+  build_record(rec, 1, data_a.str, data_a.length, FALSE);
 
   rec_hash_a= hp_rec_hashnr(&keydef, rec);
   hp_make_key(&keydef, key_buf, rec);
@@ -163,17 +161,17 @@ static void test_hash_consistency(void)
     uint32 key_blob_len= uint4korr(key_buf);
     const uchar *key_blob_data;
     memcpy(&key_blob_data, key_buf + 4, PTR_SIZE);
-    ok(key_blob_len == len_a,
+    ok(key_blob_len == data_a.length,
        "Case A: hp_make_key blob length = %u (expected %u)",
-       (uint) key_blob_len, (uint) len_a);
-    ok(key_blob_data == data_a,
+       (uint) key_blob_len, (uint) data_a.length);
+    ok(key_blob_data == data_a.str,
        "Case A: hp_make_key blob pointer matches source data");
-    ok(memcmp(key_blob_data, data_a, len_a) == 0,
+    ok(memcmp(key_blob_data, data_a.str, data_a.length) == 0,
        "Case A: hp_make_key blob data content matches");
   }
 
   /* --- Case B: medium blob --- */
-  build_record(rec, 2, data_b, len_b, FALSE);
+  build_record(rec, 2, data_b.str, data_b.length, FALSE);
 
   rec_hash_b= hp_rec_hashnr(&keydef, rec);
   hp_make_key(&keydef, key_buf, rec);
@@ -181,12 +179,12 @@ static void test_hash_consistency(void)
     uint32 key_blob_len= uint4korr(key_buf);
     const uchar *key_blob_data;
     memcpy(&key_blob_data, key_buf + 4, PTR_SIZE);
-    ok(key_blob_len == len_b,
+    ok(key_blob_len == data_b.length,
        "Case B: hp_make_key blob length = %u (expected %u)",
-       (uint) key_blob_len, (uint) len_b);
-    ok(key_blob_data == data_b,
+       (uint) key_blob_len, (uint) data_b.length);
+    ok(key_blob_data == data_b.str,
        "Case B: hp_make_key blob pointer matches source data");
-    ok(memcmp(key_blob_data, data_b, len_b) == 0,
+    ok(memcmp(key_blob_data, data_b.str, data_b.length) == 0,
        "Case B: hp_make_key blob data content matches");
   }
 
@@ -229,29 +227,26 @@ static void test_rec_key_cmp(void)
   HP_KEYDEF keydef;
   uchar rec1[REC_LENGTH], rec2[REC_LENGTH];
 
-  const uchar *data1= (const uchar*) "same_data_value!";
-  uint16 len1= 16;
-  const uchar *data2= (const uchar*) "different_value!";
-  uint16 len2= 16;
-  const uchar *data3= (const uchar*) "short";
-  uint16 len3= 5;
+  LEX_CUSTRING data1= { USTRING_WITH_LEN("same_data_value!") };
+  LEX_CUSTRING data2= { USTRING_WITH_LEN("different_value!") };
+  LEX_CUSTRING data3= { USTRING_WITH_LEN("short") };
 
   setup_blob_keyseg(&seg, FALSE);
   setup_keydef(&keydef, &seg, 1);
 
   /* Same data, same length */
-  build_record(rec1, 1, data1, len1, FALSE);
-  build_record(rec2, 2, data1, len1, FALSE);  /* different int, same blob */
+  build_record(rec1, 1, data1.str, data1.length, FALSE);
+  build_record(rec2, 2, data1.str, data1.length, FALSE);
   ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) == 0,
      "rec_key_cmp: same blob data compares equal");
 
   /* Different data, same length */
-  build_record(rec2, 2, data2, len2, FALSE);
+  build_record(rec2, 2, data2.str, data2.length, FALSE);
   ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) != 0,
      "rec_key_cmp: different blob data compares unequal");
 
   /* Different length (PAD SPACE: "short" vs "short\0\0..." may differ) */
-  build_record(rec2, 2, data3, len3, FALSE);
+  build_record(rec2, 2, data3.str, data3.length, FALSE);
   /* For binary charset, different lengths always means different */
   {
     HA_KEYSEG seg_bin;
@@ -260,8 +255,8 @@ static void test_rec_key_cmp(void)
     seg_bin.charset= &my_charset_bin;
     setup_keydef(&keydef_bin, &seg_bin, 1);
 
-    build_record(rec1, 1, data1, len1, FALSE);
-    build_record(rec2, 2, data3, len3, FALSE);
+    build_record(rec1, 1, data1.str, data1.length, FALSE);
+    build_record(rec2, 2, data3.str, data3.length, FALSE);
     ok(hp_rec_key_cmp(&keydef_bin, rec1, rec2, NULL) != 0,
        "rec_key_cmp: different length blobs compare unequal (binary)");
   }
@@ -282,8 +277,7 @@ static void test_null_blob(void)
   uchar key_buf[KEY_BUF_SIZE];
   ulong hash1, hash2;
 
-  const uchar *data1= (const uchar*) "not_null_data";
-  uint16 len1= 13;
+  LEX_CUSTRING data1= { USTRING_WITH_LEN("not_null_data") };
 
   setup_blob_keyseg(&seg, TRUE);  /* nullable */
   setup_keydef(&keydef, &seg, 1);
@@ -295,7 +289,7 @@ static void test_null_blob(void)
      "null_blob: two NULLs compare equal");
 
   /* NULL vs non-NULL */
-  build_record(rec2, 2, data1, len1, FALSE);
+  build_record(rec2, 2, data1.str, data1.length, FALSE);
   ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) != 0,
      "null_blob: NULL vs non-NULL compares unequal");
 
@@ -307,9 +301,9 @@ static void test_null_blob(void)
 
   /* NULL hash differs from empty non-NULL */
   {
-    const uchar *empty= (const uchar*) "";
+    LEX_CUSTRING empty= { USTRING_WITH_LEN("") };
     ulong hash_empty;
-    build_record(rec2, 2, empty, 0, FALSE);
+    build_record(rec2, 2, empty.str, empty.length, FALSE);
     hash_empty= hp_rec_hashnr(&keydef, rec2);
     ok(hash1 != hash_empty,
        "null_blob: NULL hash (%lu) != empty non-NULL hash (%lu)",
@@ -334,20 +328,20 @@ static void test_empty_blob(void)
   uchar rec1[REC_LENGTH], rec2[REC_LENGTH];
   ulong h1, h2;
 
-  const uchar *empty= (const uchar*) "";
-  const uchar *nonempty= (const uchar*) "x";
+  LEX_CUSTRING empty= { USTRING_WITH_LEN("") };
+  LEX_CUSTRING nonempty= { USTRING_WITH_LEN("x") };
 
   setup_blob_keyseg(&seg, FALSE);
   setup_keydef(&keydef, &seg, 1);
 
   /* Two empty blobs */
-  build_record(rec1, 1, empty, 0, FALSE);
-  build_record(rec2, 2, empty, 0, FALSE);
+  build_record(rec1, 1, empty.str, empty.length, FALSE);
+  build_record(rec2, 2, empty.str, empty.length, FALSE);
   ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) == 0,
      "empty_blob: two empty blobs compare equal");
 
   /* Empty vs non-empty */
-  build_record(rec2, 2, nonempty, 1, FALSE);
+  build_record(rec2, 2, nonempty.str, nonempty.length, FALSE);
   ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) != 0,
      "empty_blob: empty vs non-empty compares unequal");
 
@@ -369,10 +363,8 @@ static void test_multi_segment_key(void)
   HP_KEYDEF keydef;
   uchar rec1[REC_LENGTH], rec2[REC_LENGTH];
   uchar key_buf[KEY_BUF_SIZE];
-  const uchar *blob_data= (const uchar*) "multi_seg_test_data";
-  uint16 blob_len= 19;
-  const uchar *blob_data2= (const uchar*) "different_blob_data";
-  uint16 blob_len2= 19;
+  LEX_CUSTRING blob_data= { USTRING_WITH_LEN("multi_seg_test_data") };
+  LEX_CUSTRING blob_data2= { USTRING_WITH_LEN("different_blob_data") };
 
   /* Segment 0: int4 at offset 1, length 4 */
   memset(&segs[0], 0, sizeof(segs[0]));
@@ -388,23 +380,23 @@ static void test_multi_segment_key(void)
   setup_keydef(&keydef, segs, 2);
 
   /* Same int, same blob */
-  build_record(rec1, 42, blob_data, blob_len, FALSE);
-  build_record(rec2, 42, blob_data, blob_len, FALSE);
+  build_record(rec1, 42, blob_data.str, blob_data.length, FALSE);
+  build_record(rec2, 42, blob_data.str, blob_data.length, FALSE);
   ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) == 0,
      "multi_seg: same int + same blob compares equal");
 
   /* Different int, same blob */
-  build_record(rec2, 99, blob_data, blob_len, FALSE);
+  build_record(rec2, 99, blob_data.str, blob_data.length, FALSE);
   ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) != 0,
      "multi_seg: different int + same blob compares unequal");
 
   /* Same int, different blob */
-  build_record(rec2, 42, blob_data2, blob_len2, FALSE);
+  build_record(rec2, 42, blob_data2.str, blob_data2.length, FALSE);
   ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) != 0,
      "multi_seg: same int + different blob compares unequal");
 
   /* Hash consistency: record hash matches after make_key round-trip */
-  build_record(rec1, 42, blob_data, blob_len, FALSE);
+  build_record(rec1, 42, blob_data.str, blob_data.length, FALSE);
   (void) hp_rec_hashnr(&keydef, rec1);
 
   hp_make_key(&keydef, key_buf, rec1);
@@ -417,10 +409,10 @@ static void test_multi_segment_key(void)
 
     ok(key_int == 42,
        "multi_seg: hp_make_key int = %d (expected 42)", (int) key_int);
-    ok(key_blob_len == blob_len,
+    ok(key_blob_len == blob_data.length,
        "multi_seg: hp_make_key blob length = %u (expected %u)",
-       (uint) key_blob_len, (uint) blob_len);
-    ok(key_blob_data == blob_data,
+       (uint) key_blob_len, (uint) blob_data.length);
+    ok(key_blob_data == blob_data.str,
        "multi_seg: hp_make_key blob pointer matches");
   }
 }
@@ -436,16 +428,16 @@ static void test_pad_space(void)
   HA_KEYSEG seg;
   HP_KEYDEF keydef;
   uchar rec1[REC_LENGTH], rec2[REC_LENGTH];
-  const uchar *data_no_pad= (const uchar*) "abc";
-  const uchar *data_padded= (const uchar*) "abc   ";
+  LEX_CUSTRING data_no_pad= { USTRING_WITH_LEN("abc") };
+  LEX_CUSTRING data_padded= { USTRING_WITH_LEN("abc   ") };
   ulong h1, h2;
 
   setup_blob_keyseg(&seg, FALSE);
   seg.charset= &my_charset_latin1;  /* PAD SPACE */
   setup_keydef(&keydef, &seg, 1);
 
-  build_record(rec1, 1, data_no_pad, 3, FALSE);
-  build_record(rec2, 2, data_padded, 6, FALSE);
+  build_record(rec1, 1, data_no_pad.str, data_no_pad.length, FALSE);
+  build_record(rec2, 2, data_padded.str, data_padded.length, FALSE);
 
   ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) == 0,
      "pad_space: 'abc' == 'abc   ' with PAD SPACE collation");
@@ -468,14 +460,16 @@ static void test_pad_space(void)
 
   The SQL layer builds lookup keys in varstring format (2B length prefix +
   inline data) via Field_blob::new_key_field() -> Field_varstring.  The HEAP
-  handler's rebuild_key_from_group_buff() converts this to record[0]'s blob descriptor
-  format, then hp_make_key() builds the hash key.
+  handler's rebuild_key_from_group_buff() converts this to
+  record[0]'s blob descriptor format, then hp_make_key()
+  builds the hash key.
 
   This test simulates the full round-trip:
     1. Build a record with blob data (as at INSERT time)
     2. Compute hp_rec_hashnr() (stored in HASH_INFO at write time)
     3. Build a varstring-format key (as the SQL layer would for lookup)
-    4. Parse the varstring key into a record's blob field (rebuild_key_from_group_buff)
+    4. Parse the varstring key into a record's blob field
+       (rebuild_key_from_group_buff)
     5. hp_make_key() from that record, then hp_rec_hashnr() on the record
     6. Verify the hashes match
 */
@@ -487,8 +481,7 @@ static void test_distinct_key_format(void)
   uchar rec_lookup[REC_LENGTH];  /* record rebuilt from lookup key */
   ulong insert_hash, lookup_hash;
 
-  const uchar *blob_data= (const uchar*) "1 - 01xxxxxxxxxx";
-  uint16 blob_len= 16;
+  LEX_CUSTRING blob_data= { USTRING_WITH_LEN("1 - 01xxxxxxxxxx") };
 
   /*
     Step 3: Build varstring-format key (what SQL layer produces).
@@ -500,12 +493,12 @@ static void test_distinct_key_format(void)
   setup_keydef(&keydef, &seg, 1);
 
   /* Step 1-2: INSERT-time record and hash */
-  build_record(rec_insert, 1, blob_data, blob_len, FALSE);
+  build_record(rec_insert, 1, blob_data.str, blob_data.length, FALSE);
   insert_hash= hp_rec_hashnr(&keydef, rec_insert);
 
   varstring_key[0]= 0;  /* not null */
-  int2store(varstring_key + 1, blob_len);
-  memcpy(varstring_key + 3, blob_data, blob_len);
+  int2store(varstring_key + 1, blob_data.length);
+  memcpy(varstring_key + 3, blob_data.str, blob_data.length);
 
   /*
     Step 4: Parse varstring key into rec_lookup's blob field.
@@ -561,8 +554,7 @@ static void test_distinct_key_truncation(void)
   uchar rec_trunc[REC_LENGTH];
   ulong full_hash, trunc_hash;
 
-  const uchar *full_data= (const uchar*) "1 - 01xxxxxxxxxx";  /* 16 bytes */
-  uint16 full_len= 16;
+  LEX_CUSTRING full_data= { USTRING_WITH_LEN("1 - 01xxxxxxxxxx") };
   uint16 trunc_len= 10;  /* pack_length() = packlength(2) + sizeof(ptr)(8) */
 
   setup_blob_keyseg(&seg, FALSE);
@@ -570,11 +562,11 @@ static void test_distinct_key_truncation(void)
   setup_keydef(&keydef, &seg, 1);
 
   /* Full record (as stored at INSERT time) */
-  build_record(rec_full, 1, full_data, full_len, FALSE);
+  build_record(rec_full, 1, full_data.str, full_data.length, FALSE);
   full_hash= hp_rec_hashnr(&keydef, rec_full);
 
   /* Truncated record (as rebuilt from truncated varstring key) */
-  build_record(rec_trunc, 1, full_data, trunc_len, FALSE);
+  build_record(rec_trunc, 1, full_data.str, trunc_len, FALSE);
   trunc_hash= hp_rec_hashnr(&keydef, rec_trunc);
 
   /* Hashes MUST differ — this is the bug: truncation causes lookup miss */
@@ -605,8 +597,7 @@ static void test_group_by_key_format(void)
   ulong insert_hash, lookup_hash;
 
   /* GROUP BY on group_concat result: blob data */
-  const uchar *data= (const uchar*) "group_concat_result_data_here!!";
-  uint16 data_len= 31;
+  LEX_CUSTRING data= { USTRING_WITH_LEN("group_concat_result_data_here!!") };
 
   uchar varstring_key[1 + 2 + 256];
 
@@ -614,16 +605,17 @@ static void test_group_by_key_format(void)
   setup_keydef(&keydef, &seg, 1);
 
   /* INSERT-time hash */
-  build_record(rec_insert, 1, data, data_len, FALSE);
+  build_record(rec_insert, 1, data.str, data.length, FALSE);
   insert_hash= hp_rec_hashnr(&keydef, rec_insert);
 
   /*
-    Simulate rebuild_key_from_group_buff: parse varstring key, populate rec_lookup.
+    Simulate rebuild_key_from_group_buff: parse varstring
+    key, populate rec_lookup.
     In GROUP BY, key_field_length = max_length (not 0, not pack_length).
   */
   /* no null bit for this test */
-  int2store(varstring_key, data_len);
-  memcpy(varstring_key + 2, data, data_len);
+  int2store(varstring_key, data.length);
+  memcpy(varstring_key + 2, data.str, data.length);
 
   memset(rec_lookup, 0, REC_LENGTH);
   {
@@ -663,8 +655,8 @@ static void test_multi_seg_distinct(void)
   HA_KEYSEG segs[2];
   HP_KEYDEF keydef;
   uchar rec1[REC_LENGTH], rec2[REC_LENGTH];
-  const uchar *blob1= (const uchar*) "sj_materialize_value_1";
-  const uchar *blob2= (const uchar*) "sj_materialize_value_2";
+  LEX_CUSTRING blob1= { USTRING_WITH_LEN("sj_materialize_value_1") };
+  LEX_CUSTRING blob2= { USTRING_WITH_LEN("sj_materialize_value_2") };
   ulong h1, h2, h3;
 
   /* Segment 0: int4 at offset 1, length 4 */
@@ -680,8 +672,8 @@ static void test_multi_seg_distinct(void)
   setup_keydef(&keydef, segs, 2);
 
   /* Same int, same blob */
-  build_record(rec1, 100, blob1, 22, FALSE);
-  build_record(rec2, 100, blob1, 22, FALSE);
+  build_record(rec1, 100, blob1.str, blob1.length, FALSE);
+  build_record(rec2, 100, blob1.str, blob1.length, FALSE);
 
   h1= hp_rec_hashnr(&keydef, rec1);
   h2= hp_rec_hashnr(&keydef, rec2);
@@ -690,8 +682,16 @@ static void test_multi_seg_distinct(void)
   ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) == 0,
      "multi_distinct: same data compares equal");
 
+  /* Same blob, different int */
+  build_record(rec2, 200, blob1.str, blob1.length, FALSE);
+  h3= hp_rec_hashnr(&keydef, rec2);
+  ok(h1 != h3,
+     "multi_distinct: different int hashes differ (%lu != %lu)", h1, h3);
+  ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) != 0,
+     "multi_distinct: same blob + different int compares unequal");
+
   /* Same int, different blob */
-  build_record(rec2, 100, blob2, 22, FALSE);
+  build_record(rec2, 100, blob2.str, blob2.length, FALSE);
   h3= hp_rec_hashnr(&keydef, rec2);
   ok(h1 != h3,
      "multi_distinct: different blob hashes differ (%lu != %lu)", h1, h3);
@@ -716,7 +716,6 @@ static void test_multi_seg_distinct(void)
   hp_rec_hashnr).
 */
 
-/* hp_hashnr is static by default; exposed via HEAP_UNIT_TESTS */
 extern ulong hp_hashnr(HP_KEYDEF *keydef, const uchar *key);
 
 /*
@@ -800,15 +799,13 @@ static void test_key_vs_rec_hash_consistency(void)
   uchar key_buf[MIX_KEY_BUF_SIZE];
   ulong rec_hash, key_hash;
 
-  const uchar *city= (const uchar *) "New York";
-  uint16 city_len= 8;
-  const uchar *libname= (const uchar *) "New York Public Libra";
-  uint8 libname_len= 21;
+  LEX_CUSTRING city= { USTRING_WITH_LEN("New York") };
+  LEX_CUSTRING libname= { USTRING_WITH_LEN("New York Public Libra") };
 
   setup_mixed_keydef(&keydef, segs);
 
   /* Build record and compute record-based hash (used at INSERT time) */
-  build_mixed_record(rec, city, city_len, libname, libname_len,
+  build_mixed_record(rec, city.str, city.length, libname.str, libname.length,
                      FALSE, FALSE);
   rec_hash= hp_rec_hashnr(&keydef, rec);
 
@@ -823,13 +820,11 @@ static void test_key_vs_rec_hash_consistency(void)
 
   /* Second test: different data to ensure it's not a coincidence */
   {
-    const uchar *city2= (const uchar *) "San Fran";
-    uint16 city2_len= 8;
-    const uchar *libname2= (const uchar *) "SF Public Library";
-    uint8 libname2_len= 17;
+    LEX_CUSTRING city2= { USTRING_WITH_LEN("San Fran") };
+    LEX_CUSTRING libname2= { USTRING_WITH_LEN("SF Public Library") };
 
-    build_mixed_record(rec, city2, city2_len, libname2, libname2_len,
-                       FALSE, FALSE);
+    build_mixed_record(rec, city2.str, city2.length,
+                       libname2.str, libname2.length, FALSE, FALSE);
     rec_hash= hp_rec_hashnr(&keydef, rec);
     hp_make_key(&keydef, key_buf, rec);
     key_hash= hp_hashnr(&keydef, key_buf);
@@ -859,11 +854,11 @@ static void test_key_vs_rec_hash_consistency(void)
     memset(rec2b, 0, sizeof(rec2b));
     /* blob */
     rec2b[MIX_NULL_OFFSET]= 0;
-    int2store(rec2b + MIX_BLOB_OFFSET, city_len);
-    memcpy(rec2b + MIX_BLOB_OFFSET + MIX_BLOB_PACKLEN, &city, PTR_SIZE);
+    int2store(rec2b + MIX_BLOB_OFFSET, city.length);
+    memcpy(rec2b + MIX_BLOB_OFFSET + MIX_BLOB_PACKLEN, &city.str, PTR_SIZE);
     /* varchar with 2B length prefix */
-    int2store(rec2b + MIX_VARCHAR_OFFSET, libname_len);
-    memcpy(rec2b + MIX_VARCHAR_OFFSET + 2, libname, libname_len);
+    int2store(rec2b + MIX_VARCHAR_OFFSET, libname.length);
+    memcpy(rec2b + MIX_VARCHAR_OFFSET + 2, libname.str, libname.length);
 
     rec_hash= hp_rec_hashnr(&keydef2b, rec2b);
     hp_make_key(&keydef2b, key2b, rec2b);
@@ -885,7 +880,7 @@ static void test_key_vs_rec_hash_consistency(void)
     setup_blob_keyseg(&seg_blob, TRUE);
     setup_keydef(&kd_blob, &seg_blob, 1);
 
-    build_record(rec_b, 1, city, city_len, FALSE);
+    build_record(rec_b, 1, city.str, city.length, FALSE);
     rec_hash= hp_rec_hashnr(&kd_blob, rec_b);
     hp_make_key(&kd_blob, key_b, rec_b);
     key_hash= hp_hashnr(&kd_blob, key_b);
@@ -902,7 +897,7 @@ int main(int argc __attribute__((unused)),
          char **argv __attribute__((unused)))
 {
   MY_INIT("hp_test_hash");
-  plan(47);
+  plan(49);
 
   diag("Test 1: Hash consistency between record and key formats");
   test_hash_consistency();

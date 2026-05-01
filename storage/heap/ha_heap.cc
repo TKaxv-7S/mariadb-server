@@ -28,7 +28,7 @@
 #include "field.h"
 
 static handler *heap_create_handler(handlerton *, TABLE_SHARE *, MEM_ROOT *);
-static int heap_prepare_hp_create_info(TABLE *, bool, HP_CREATE_INFO *);
+int heap_prepare_hp_create_info(TABLE *, bool, HP_CREATE_INFO *);
 
 
 static int heap_panic(handlerton *hton, ha_panic_function flag)
@@ -72,7 +72,7 @@ static handler *heap_create_handler(handlerton *hton,
 *****************************************************************************/
 
 ha_heap::ha_heap(handlerton *hton, TABLE_SHARE *table_arg)
-  :handler(hton, table_arg), file(0), records_changed(0), key_stat_version(0),
+  :handler(hton, table_arg), file(0), records_changed(0), key_stat_version(0), 
   internal_table(0)
 {}
 
@@ -366,12 +366,14 @@ void ha_heap::position(const uchar *record)
   *(HEAP_PTR*) ref= heap_position(file);	// Ref is aligned
 }
 
+
 int ha_heap::remember_rnd_pos()
 {
   saved_current_record= file->current_record;
   position((uchar*) 0);
   return 0;
 }
+
 
 int ha_heap::restart_rnd_next(uchar *buf)
 {
@@ -625,12 +627,12 @@ ha_rows ha_heap::records_in_range(uint inx, const key_range *min_key,
 }
 
 
-static int heap_prepare_hp_create_info(TABLE *table_arg, bool internal_table,
-                                       HP_CREATE_INFO *hp_create_info)
+int heap_prepare_hp_create_info(TABLE *table_arg, bool internal_table,
+                               HP_CREATE_INFO *hp_create_info)
 {
   TABLE_SHARE *share= table_arg->s;
   uint key, parts, mem_per_row= 0, keys= share->keys;
-  uint auto_key= 0, auto_key_type= 0;
+  uint auto_key= 0, auto_key_type= 0, blob_count= 0;
   ha_rows max_rows;
   HP_KEYDEF *keydef;
   HA_KEYSEG *seg;
@@ -770,24 +772,21 @@ static int heap_prepare_hp_create_info(TABLE *table_arg, bool internal_table,
       my_free(keydef);
       return my_errno;
     }
+    for (uint blob_index= 0; blob_index < share->blob_fields; blob_index++)
     {
-      uint blob_count= 0;
-      for (uint b= 0; b < share->blob_fields; b++)
-      {
-        Field *field= table_arg->field[share->blob_field[b]];
-        Field_blob *blob= (Field_blob*) field;
+      Field *field= table_arg->field[share->blob_field[blob_index]];
+      Field_blob *blob= (Field_blob*) field;
 
-        DBUG_ASSERT(field->type() == MYSQL_TYPE_BLOB ||
-                    field->type() == MYSQL_TYPE_GEOMETRY);
+      DBUG_ASSERT(field->type() == MYSQL_TYPE_BLOB ||
+                  field->type() == MYSQL_TYPE_GEOMETRY);
 
-          blob_descs[blob_count].offset=
-            (uint) blob->offset(table_arg->record[0]);
-          blob_descs[blob_count].packlength= blob->pack_length_no_ptr();
-          blob_count++;
-      }
-      hp_create_info->blob_descs= blob_descs;
-      hp_create_info->blob_count= blob_count;
+      blob_descs[blob_count].offset=
+        (uint) blob->offset(table_arg->record[0]);
+      blob_descs[blob_count].packlength= blob->pack_length_no_ptr();
+      blob_count++;
     }
+    hp_create_info->blob_descs= blob_descs;
+    hp_create_info->blob_count= blob_count;
   }
 
   hp_create_info->auto_key= auto_key;
@@ -901,7 +900,10 @@ int ha_heap::find_unique_row(uchar *record, uint unique_idx)
                                        share->blength, share->records));
   do
   {
-    /* Hash pre-check avoids expensive blob materialization for non-matching entries */
+    /*
+      Hash pre-check avoids expensive blob materialization
+      for non-matching entries.
+    */
     if (pos->hash_of_key == rec_hash &&
         !hp_rec_key_cmp(keyinfo, record, pos->ptr_to_rec, file))
     {
@@ -913,6 +915,12 @@ int ha_heap::find_unique_row(uchar *record, uint unique_idx)
         records.
       */
       memcpy(record, file->current_ptr, (size_t) share->reclength);
+      /*
+        TODO: hp_rec_key_cmp() above already materialized blobs
+        via hp_materialize_one_blob(). A future optimization could
+        concatenate all non-zero-copy blobs into blob_buff during
+        comparison, avoiding this second materialization pass.
+      */
       if (share->blob_count && hp_read_blobs(file, record, file->current_ptr))
         DBUG_RETURN(-1);
 

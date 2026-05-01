@@ -5,5 +5,5 @@
 # Test with forcing conversion of temporary table to Aria
 
 SET @@tmp_memory_table_size = 65536;
---source heap_blob_big.inc
+--source blob_big.inc
 

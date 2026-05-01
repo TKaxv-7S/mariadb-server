@@ -10,13 +10,7 @@ select engine from information_schema.tables
 where table_schema=database() and table_name='t1';
 engine
 MEMORY
-INSERT INTO t1 VALUES (1, ST_GeomFromText('LineString(2 2, 150 150)'));
-INSERT INTO t1 VALUES (2, ST_GeomFromText('LineString(3 3, 160 160)'));
-INSERT INTO t1 VALUES (3, ST_GeomFromText('LineString(4 4, 170 170)'));
-INSERT INTO t1 VALUES (4, ST_GeomFromText('LineString(5 5, 180 180)'));
-INSERT INTO t1 VALUES (5, ST_GeomFromText('LineString(6 6, 190 190)'));
-INSERT INTO t1 VALUES (6, ST_GeomFromText('LineString(7 7, 200 200)'));
-INSERT INTO t1 VALUES (7, ST_GeomFromText('LineString(8 8, 210 210)'));
+INSERT INTO t1 SELECT seq, ST_GeomFromText(concat('LineString(',seq,' ',seq,',',(mod(seq,10)*10+100),' ',mod(seq,10)*10+100,')')) from seq_1_to_7;
 # 7 rows, all valid
 select count(*) from t1;
 count(*)
@@ -59,17 +53,17 @@ expect 0
 select ST_AsText(c2) as geom, count(*) as cnt from t1
 group by geom order by geom;
 geom	cnt
-LINESTRING(2 2,150 150)	2048
-LINESTRING(3 3,160 160)	2048
-LINESTRING(4 4,170 170)	2048
-LINESTRING(5 5,180 180)	2048
-LINESTRING(6 6,190 190)	2048
-LINESTRING(7 7,200 200)	2048
-LINESTRING(8 8,210 210)	2048
+LINESTRING(1 1,110 110)	2048
+LINESTRING(2 2,120 120)	2048
+LINESTRING(3 3,130 130)	2048
+LINESTRING(4 4,140 140)	2048
+LINESTRING(5 5,150 150)	2048
+LINESTRING(6 6,160 160)	2048
+LINESTRING(7 7,170 170)	2048
 # MBRWithin check
 set @g1 = ST_GeomFromText('Polygon((0 0,0 200,200 200,200 0,0 0))');
-select count(*) as 'expect 12288' from t1 where MBRWithin(t1.c2, @g1);
-expect 12288
-12288
+select count(*) as 'expect 14336' from t1 where MBRWithin(t1.c2, @g1);
+expect 14336
+14336
 drop table t1;
 set max_heap_table_size= @save_max_heap_table_size;

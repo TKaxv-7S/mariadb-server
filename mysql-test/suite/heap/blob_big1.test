@@ -5,4 +5,4 @@
 # Test with all data fitting in memory tables
 
 SET @@tmp_memory_table_size = 1024*1024;
---source heap_blob_big.inc
+--source blob_big.inc
