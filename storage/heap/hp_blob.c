@@ -29,7 +29,6 @@
 */
 
 #include "heapdef.h"
-#include <my_stacktrace.h>
 #include <string.h>
 
 
@@ -361,163 +360,68 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
   /*
     Step 2: Allocate remaining data from the block tail.
 
-    Tail allocation is always contiguous within a leaf block.
-    When we hit a block boundary, we start a new run.
+    Batch allocation: hp_alloc_from_tail() returns a contiguous
+    batch of records within a single leaf block in one call.
+    When we hit a block boundary, a new run starts.
   */
   while (data_offset < data_len)
   {
     uchar *run_start;
-    uint16 run_rec_count;
+    uint run_rec_count;
     uint32 remaining= data_len - data_offset;
-    uint32 run_payload;
-    my_bool is_only_run;
+    my_bool is_only_run= (first_run == NULL && prev_run_start == NULL);
 
-    run_start= hp_alloc_from_tail(share);
-    if (!run_start)
-      goto err;
-    run_rec_count= 1;
-
-    /* Extend the run with consecutive tail records */
-    for (;;)
+    /*
+      Compute the number of records to request.
+      Case B (zero-copy) needs the most records per data byte, so
+      request that amount for is_only_run to give zero-copy the best
+      chance.  hp_alloc_from_tail() caps at the remaining slots in
+      the current leaf block.
+    */
+    if (is_only_run && remaining <= visible)
+      run_rec_count= 1;
+    else if (is_only_run)
     {
-      uint block_pos;
-
-      if (run_rec_count == 1)
-        run_payload= visible;             /* HP_ROW_SINGLE_REC: no header */
-      else
-        run_payload= (visible - HP_CONT_HEADER_SIZE) +
-                      (uint32)(run_rec_count - 1) * recbuffer;
-      if (run_payload >= remaining)
-        break;
-
-      /*
-        Check if the next record would be in the same leaf block.
-        block_pos == 0 means last_allocated is at a block boundary
-        and the next allocation would start a new block.
-      */
-      block_pos= share->block.last_allocated %
-                 share->block.records_in_block;
-      if (block_pos == 0)
-        break;
-
-      {
-        uchar *next_rec= hp_alloc_from_tail(share);
-        if (!next_rec)
-          break;
-        /*
-          Contiguity guard (active in all builds, not just debug).
-
-          Blob continuation runs use pointer arithmetic (run_start +
-          i * recbuffer) to access inner records in the write, read,
-          zero-copy, scan-skip, and free paths.  Today, contiguity
-          within a leaf block is guaranteed by hp_get_new_block()
-          allocating a single flat array of records_in_block * recbuffer
-          bytes, and hp_alloc_from_tail() handing them out sequentially.
-          But this is an implementation detail of HP_BLOCK, not a
-          documented contract.  A future change (e.g. sub-block
-          allocation, memory pooling, or alignment padding between
-          records) could silently break this assumption, turning every
-          blob path into a source of data corruption.  Abort here so
-          such a change is caught immediately by any test that exercises
-          blob writes.
-        */
-        if (unlikely(next_rec !=
-                     run_start + (uint32) run_rec_count * recbuffer))
-        {
-          my_safe_printf_stderr(
-            "HEAP blob: tail allocation not contiguous: "
-            "expected %p, got %p (run_start=%p, count=%u, recbuffer=%u)\n",
-            run_start + (uint32) run_rec_count * recbuffer,
-            next_rec, run_start, (uint) run_rec_count, recbuffer);
-          abort();
-        }
-        run_rec_count++;
-      }
-    }
-
-    is_only_run= (first_run == NULL && prev_run_start == NULL);
-
-    if (is_only_run && run_payload >= remaining)
-    {
-      /*
-        Single-run blob - use zero-copy layout if possible.
-        Case A: data fits in rec 0 payload (run_rec_count == 1).
-        Case B: data in rec 1..N-1 only, contiguous for zero-copy reads.
-      */
-      if (run_rec_count == 1)
-      {
-        /* Case A: data fits in rec 0 */
-        hp_write_run_data(share, data_ptr, data_len, run_start,
-                          run_rec_count, HP_BLOB_CASE_A_SINGLE_REC,
-                          &data_offset);
-      }
-      else
-      {
-        uint32 case_b_payload= (uint32)(run_rec_count - 1) * recbuffer;
-        if (case_b_payload >= remaining)
-        {
-          /* Case B: rec 1..N-1 alone hold all data */
-          hp_write_run_data(share, data_ptr, data_len, run_start,
-                            run_rec_count, HP_BLOB_CASE_B_ZEROCOPY,
-                            &data_offset);
-        }
-        else
-        {
-          /*
-            Case B needs one more record than Case C.  Try to extend
-            if we're not at a block boundary.
-          */
-          uint block_pos= share->block.last_allocated %
-                           share->block.records_in_block;
-          if (block_pos != 0)
-          {
-            uchar *extra= hp_alloc_from_tail(share);
-            if (extra)
-            {
-              /*
-                Contiguity guard for the Case B extra record, same
-                rationale as the main extension loop ~60 lines above:
-                hp_get_new_block() today allocates flat arrays but this
-                is an HP_BLOCK implementation detail, not a contract.
-                A future change could break contiguity and silently
-                corrupt every blob read/write/free path that relies on
-                run_start + i * recbuffer arithmetic.
-              */
-              if (unlikely(extra !=
-                           run_start + (uint32) run_rec_count * recbuffer))
-              {
-                my_safe_printf_stderr(
-                  "HEAP blob: Case B extra allocation not contiguous: "
-                  "expected %p, got %p "
-                  "(run_start=%p, count=%u, recbuffer=%u)\n",
-                  run_start + (uint32) run_rec_count * recbuffer,
-                  extra, run_start, (uint) run_rec_count, recbuffer);
-                abort();
-              }
-              run_rec_count++;
-              hp_write_run_data(share, data_ptr, data_len, run_start,
-                                run_rec_count, HP_BLOB_CASE_B_ZEROCOPY,
-                                &data_offset);
-            }
-            else
-              /* Case B extension failed - fall back to Case C */
-              hp_write_run_data(share, data_ptr, data_len, run_start,
-                                run_rec_count, HP_BLOB_CASE_C_MULTI_RUN,
-                                &data_offset);
-          }
-          else
-            /* At block boundary - Case C */
-            hp_write_run_data(share, data_ptr, data_len, run_start,
-                              run_rec_count, HP_BLOB_CASE_C_MULTI_RUN,
-                              &data_offset);
-        }
-      }
+      uint64 needed= ((uint64) remaining + recbuffer - 1) / recbuffer + 1;
+      run_rec_count= (uint) MY_MIN(needed, UINT_MAX16);
     }
     else
     {
-      /* Case C: multi-run or not the only run */
+      if (remaining <= first_payload)
+        run_rec_count= 1;
+      else
+      {
+        uint64 needed= 1 + ((uint64)(remaining - first_payload) +
+                             recbuffer - 1) / recbuffer;
+        run_rec_count= (uint) MY_MIN(needed, UINT_MAX16);
+      }
+    }
+
+    run_start= hp_alloc_from_tail(share, &run_rec_count);
+    if (!run_start)
+      goto err;
+    DBUG_ASSERT(run_rec_count >= 1);
+
+    if (is_only_run && run_rec_count == 1 && remaining <= visible)
+    {
+      /* Case A: single record, no header */
       hp_write_run_data(share, data_ptr, data_len, run_start,
-                        run_rec_count, HP_BLOB_CASE_C_MULTI_RUN,
+                        (uint16) run_rec_count, HP_BLOB_CASE_A_SINGLE_REC,
+                        &data_offset);
+    }
+    else if (is_only_run &&
+             (uint32)(run_rec_count - 1) * recbuffer >= remaining)
+    {
+      /* Case B: data in rec 1..N-1, contiguous for zero-copy reads */
+      hp_write_run_data(share, data_ptr, data_len, run_start,
+                        (uint16) run_rec_count, HP_BLOB_CASE_B_ZEROCOPY,
+                        &data_offset);
+    }
+    else
+    {
+      /* Case C: multi-run or partial run */
+      hp_write_run_data(share, data_ptr, data_len, run_start,
+                        (uint16) run_rec_count, HP_BLOB_CASE_C_MULTI_RUN,
                         &data_offset);
     }
 

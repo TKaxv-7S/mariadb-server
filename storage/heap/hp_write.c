@@ -171,25 +171,33 @@ int hp_rb_write_key(HP_INFO *info, HP_KEYDEF *keyinfo, const uchar *record,
 */
 
 /*
-  Allocate one record from the HP_BLOCK tail, bypassing the
-  delete list.  Used by next_free_record_pos() when no deleted
-  records are available, and by hp_write_one_blob() for blob
-  continuation chain allocation.
+  Allocate a contiguous batch of records from the HP_BLOCK tail.
+
+  *blocks is in/out: on entry, the maximum number of records to
+  allocate; on return, the actual count (capped at the remaining
+  slots in the current leaf block).  All returned records are
+  contiguous in memory (run_start + i * recbuffer).
+
+  Used by next_free_record_pos() (blocks=1) when no deleted records
+  are available, and by hp_write_one_blob() for blob continuation
+  chain allocation.
 
   Maintains the scan-boundary invariant:
       total_records + deleted == block.last_allocated
-  by incrementing both last_allocated and total_records together.
-  heap_scan() relies on this invariant to know when to stop.
+  by incrementing both last_allocated and total_records by the
+  allocated count.  heap_scan() relies on this invariant.
 */
 
-uchar *hp_alloc_from_tail(HP_SHARE *info)
+uchar *hp_alloc_from_tail(HP_SHARE *info, uint *blocks)
 {
-  int block_pos;
+  uint block_pos;
+  uint available, requested;
   size_t length;
   DBUG_ENTER("hp_alloc_from_tail");
 
-  if (!(block_pos=(info->block.last_allocated %
-                    info->block.records_in_block)))
+  DBUG_ASSERT(*blocks > 0);
+  if (!(block_pos= (uint)(info->block.last_allocated %
+                           info->block.records_in_block)))
   {
     if ((info->block.last_allocated > info->max_records &&
          info->max_records) ||
@@ -206,17 +214,24 @@ uchar *hp_alloc_from_tail(HP_SHARE *info)
       DBUG_RETURN(NULL);
     }
 
-    if (hp_get_new_block(info, &info->block,&length))
+    if (hp_get_new_block(info, &info->block, &length))
       DBUG_RETURN(NULL);
     info->data_length+=length;
   }
-  info->block.last_allocated++;
-  info->total_records++;
-  DBUG_PRINT("exit",("Used new position: %p",
+  available= (uint)(info->block.records_in_block - block_pos);
+  requested= *blocks;
+  if (requested > available)
+    requested= available;
+  DBUG_ASSERT(block_pos + requested <= info->block.records_in_block);
+  info->block.last_allocated+= requested;
+  info->total_records+= requested;
+  *blocks= requested;
+  DBUG_PRINT("exit",("Used new position: %p  blocks: %u",
 		     ((uchar*) info->block.level_info[0].last_blocks+
-                      block_pos * info->block.recbuffer)));
+                      block_pos * info->block.recbuffer),
+                     requested));
   DBUG_RETURN((uchar*) info->block.level_info[0].last_blocks+
-	      block_pos*info->block.recbuffer);
+	      block_pos * info->block.recbuffer);
 }
 
 
@@ -234,7 +249,10 @@ uchar *next_free_record_pos(HP_SHARE *info)
     DBUG_PRINT("exit",("Used old position: %p", pos));
     DBUG_RETURN(pos);
   }
-  DBUG_RETURN(hp_alloc_from_tail(info));
+  {
+    uint blocks= 1;
+    DBUG_RETURN(hp_alloc_from_tail(info, &blocks));
+  }
 }
 
 
