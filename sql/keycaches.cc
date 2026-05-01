@@ -348,10 +348,12 @@ bool create_default_optimizer_costs()
 
 void copy_tmptable_optimizer_costs()
 {
-  memcpy(&heap_optimizer_costs, heap_hton->optimizer_costs,
-         sizeof(heap_optimizer_costs));
-  memcpy(&tmp_table_optimizer_costs, TMP_ENGINE_HTON->optimizer_costs,
-         sizeof(tmp_table_optimizer_costs));
+  if (heap_hton)
+    memcpy(&heap_optimizer_costs, heap_hton->optimizer_costs,
+           sizeof(heap_optimizer_costs));
+  if (TMP_ENGINE_HTON)
+    memcpy(&tmp_table_optimizer_costs, TMP_ENGINE_HTON->optimizer_costs,
+           sizeof(tmp_table_optimizer_costs));
 }
 
 

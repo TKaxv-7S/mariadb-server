@@ -7951,8 +7951,9 @@ void mysql_parse(THD *thd, char *rawbuf, uint length,
                                  (char *) thd->security_ctx->host_or_ip,
                                  0);
 
-          int error __attribute__((unused));
-          error= mysql_execute_command(thd);
+          int error __attribute__((unused))= 0;
+          if (likely(!parser_state->parse_only))
+            error= mysql_execute_command(thd);
           MYSQL_QUERY_EXEC_DONE(error);
 	}
       }

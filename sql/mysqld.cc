@@ -84,6 +84,7 @@
 #endif /* WITH_WSREP */
 #include "proxy_protocol.h"
 #include "gtid_index.h"
+#include "check_syntax.h"
 
 #include "sql_callback.h"
 #include "threadpool.h"
@@ -338,7 +339,7 @@ PSI_statement_info stmt_info_rpl;
 static bool lower_case_table_names_used= 0;
 static bool volatile select_thread_in_use, signal_thread_in_use;
 static my_bool opt_debugging= 0, opt_external_locking= 0, opt_console= 0;
-static my_bool opt_short_log_format= 0;
+static my_bool opt_short_log_format= 0, opt_syntax_checker;
 
 ulong max_used_connections;
 time_t max_used_connections_time;
@@ -2257,7 +2258,7 @@ static struct passwd *check_user(const char *user)
   myf flags= 0;
   if (global_system_variables.log_warnings)
     flags|= MY_WME;
-  if (!opt_bootstrap && !opt_help)
+  if (!opt_bootstrap && !opt_help && !opt_syntax_checker)
     flags|= MY_FAE;
 
   struct passwd *tmp_user_info= my_check_user(user, MYF(flags));
@@ -4434,8 +4435,9 @@ static int init_common_variables()
   DBUG_PRINT("info", ("lower_case_table_names: %d", lower_case_table_names));
   if(mysql_real_data_home_ptr == NULL || *mysql_real_data_home_ptr == 0)
     mysql_real_data_home_ptr= mysql_real_data_home;
-  SYSVAR_AUTOSIZE(lower_case_file_system,
-                  test_if_case_insensitive(mysql_real_data_home_ptr));
+  if (!opt_help && !opt_syntax_checker)
+    SYSVAR_AUTOSIZE(lower_case_file_system,
+                    test_if_case_insensitive(mysql_real_data_home_ptr));
   if (!lower_case_table_names && lower_case_file_system == 1)
   {
     if (lower_case_table_names_used)
@@ -4971,6 +4973,22 @@ static int init_server_components()
   if (tdc_init() || hostname_cache_init())
     unireg_abort(1);
 
+  if (opt_syntax_checker)
+  {
+    /* Disable components not needed by syntax checked */
+    opt_bin_log= opt_bin_log_used= binlog_format_used= 0;
+    opt_log_slave_updates= 0;
+    log_output_options= LOG_NONE;
+    default_storage_engine= 0;
+    default_tmp_storage_engine= 0;
+    enforced_storage_engine= 0;
+    opt_use_ssl= 0;
+    wsrep_recovery= 0;
+    opt_noacl= 1;
+    opt_silent_startup= 1;
+    global_system_variables.log_warnings= 0;
+  }
+
   query_cache_set_min_res_unit(query_cache_min_res_unit);
   query_cache_result_size_limit(query_cache_limit);
   /* if we set size of QC non zero in config then probably we want it ON */
@@ -4988,10 +5006,13 @@ static int init_server_components()
   init_thr_lock();
   backup_init();
 
-  if (init_thr_timer(thread_scheduler->max_threads + extra_max_connections))
+  if (!opt_syntax_checker)
   {
-    fprintf(stderr, "Can't initialize timers\n");
-    unireg_abort(1);
+    if (init_thr_timer(thread_scheduler->max_threads + extra_max_connections))
+    {
+      fprintf(stderr, "Can't initialize timers\n");
+      unireg_abort(1);
+    }
   }
 
   my_uuid_init((ulong) (my_rnd(&sql_rand))*12345,12345);
@@ -5057,7 +5078,7 @@ static int init_server_components()
     Print source revision hash, as one of the first lines, if not the
     first in error log, for troubleshooting and debugging purposes
   */
-  if (!opt_help)
+  if (!opt_help && !opt_syntax_checker)
     sql_print_information("Starting MariaDB %s source revision %s "
                           "server_uid %s as process %lu",
                           server_version, SOURCE_REVISION, server_uid,
@@ -5210,7 +5231,7 @@ static int init_server_components()
 
   if (WSREP_ON && !wsrep_recovery && !opt_abort)
   {
-    if (opt_bootstrap) // bootsrap option given - disable wsrep functionality
+    if (opt_bootstrap) // bootstrap option given - disable wsrep functionality
     {
       wsrep_provider_init(WSREP_NONE);
       if (wsrep_init())
@@ -5304,7 +5325,7 @@ static int init_server_components()
 
   tc_log= 0; // ha_initialize_handlerton() needs that
 
-  if (!opt_abort)
+  if (!opt_abort && !opt_syntax_checker)
   {
     if (ddl_log_initialize())
       unireg_abort(1);
@@ -5322,9 +5343,12 @@ static int init_server_components()
     done and nothing else, and definitely not anything assuming that
     all plugins have been initialised.
   */
+
   if (plugin_init(&remaining_argc, remaining_argv,
-                  (opt_noacl ? PLUGIN_INIT_SKIP_PLUGIN_TABLE : 0) |
-                  (opt_abort ? PLUGIN_INIT_SKIP_INITIALIZATION : 0)))
+                  (opt_noacl | opt_syntax_checker ?
+                   PLUGIN_INIT_SKIP_PLUGIN_TABLE : 0) |
+                  (opt_abort | opt_syntax_checker ?
+                   PLUGIN_INIT_SKIP_INITIALIZATION : 0)))
   {
     sql_print_error("Failed to initialize plugins.");
     unireg_abort(1);
@@ -5465,8 +5489,8 @@ static int init_server_components()
       my_getopt_skip_unknown= TRUE;
 #endif
 
-    if ((ho_error= handle_options(&remaining_argc, &remaining_argv, removed_opts,
-                                  mysqld_get_one_option))) {
+    if ((ho_error= handle_options(&remaining_argc, &remaining_argv,
+                                  removed_opts, mysqld_get_one_option))) {
 #ifdef WITH_WSREP
       Wsrep_server_state::instance().disable_node_reset();
 #endif
@@ -5505,7 +5529,7 @@ static int init_server_components()
     unireg_abort(1);  
 
   /* We have to initialize the storage engines before CSV logging */
-  if (ha_init())
+  if (!opt_syntax_checker && ha_init())
   {
     sql_print_error("Can't init databases");
     unireg_abort(1);
@@ -5513,7 +5537,7 @@ static int init_server_components()
 
   if (opt_bootstrap)
     log_output_options= LOG_FILE;
-  else
+  else if (!opt_syntax_checker)
     logger.init_log_tables();
 
   if (log_output_options & LOG_NONE)
@@ -5566,7 +5590,8 @@ static int init_server_components()
     unireg_abort(1);
 
 #ifdef USE_ARIA_FOR_TMP_TABLES
-  if (!ha_storage_engine_is_enabled(maria_hton) && !opt_bootstrap)
+  if (!ha_storage_engine_is_enabled(maria_hton) && !opt_bootstrap &&
+      !opt_syntax_checker)
   {
     sql_print_error("Aria engine is not enabled or did not start. The Aria engine must be enabled to continue as server was configured with --with-aria-tmp-tables");
     unireg_abort(1);
@@ -5594,21 +5619,25 @@ static int init_server_components()
 #endif
 
 #ifndef EMBEDDED_LIBRARY
-  start_handle_manager();
+  if (!opt_syntax_checker)
+    start_handle_manager();
 #endif
 
-  tc_log= get_tc_log_implementation();
-
-  if (tc_log->open(opt_bin_log ? opt_bin_logname : opt_tc_log_file))
+  if (!opt_syntax_checker)
   {
-    sql_print_error("Can't init tc log");
-    unireg_abort(1);
+    tc_log= get_tc_log_implementation();
+
+    if (tc_log->open(opt_bin_log ? opt_bin_logname : opt_tc_log_file))
+    {
+      sql_print_error("Can't init tc log");
+      unireg_abort(1);
+    }
+
+    if (ha_recover(0))
+      unireg_abort(1);
+
+    ha_signal_tc_log_recovery_done();
   }
-
-  if (ha_recover(0))
-    unireg_abort(1);
-
-  ha_signal_tc_log_recovery_done();
 
   if (opt_bin_log)
   {
@@ -5648,12 +5677,15 @@ static int init_server_components()
   }
 #endif
 
-  if (ddl_log_execute_recovery() > 0)
-    unireg_abort(1);
-  ha_signal_ddl_recovery_done();
+  if (!opt_syntax_checker)
+  {
+    if (ddl_log_execute_recovery() > 0)
+      unireg_abort(1);
+    ha_signal_ddl_recovery_done();
+    if (opt_myisam_log)
+      (void) mi_log(1);
+  }
 
-  if (opt_myisam_log)
-    (void) mi_log(1);
 
 #if defined(HAVE_MLOCKALL) && defined(MCL_CURRENT) && !defined(EMBEDDED_LIBRARY)
   if (locked_in_memory)
@@ -5698,7 +5730,7 @@ static int init_server_components()
   init_max_user_conn();
   init_global_user_stats();
   init_global_client_stats();
-  if (!opt_bootstrap)
+  if (!opt_bootstrap && !opt_syntax_checker)
     servers_init(0);
   init_status_vars();
   Item_false= new (&read_only_root) Item_bool_static("FALSE", 0);
@@ -5946,7 +5978,8 @@ int mysqld_main(int argc, char **argv)
   if (init_common_variables())
     unireg_abort(1);				// Will do exit
 
-  init_signals();
+  if (!opt_syntax_checker)
+    init_signals();
 
   ulonglong new_thread_stack_size;
   new_thread_stack_size= my_setstacksize(&connection_attrib,
@@ -6027,8 +6060,11 @@ int mysqld_main(int argc, char **argv)
   if (init_server_components())
     unireg_abort(1);
 
-  init_ssl();
-  network_init();
+  if (!opt_syntax_checker)
+  {
+    init_ssl();
+    network_init();
+  }
 
 #ifdef WITH_WSREP
   // Recover and exit.
@@ -6046,11 +6082,15 @@ int mysqld_main(int argc, char **argv)
     init signals
     After this we can't quit by a simple unireg_abort
   */
-  start_signal_handler();				// Creates pidfile
+  if (!opt_syntax_checker)
+    start_signal_handler();				// Creates pidfile
 
-  if (mysql_rm_tmp_tables() || acl_init(opt_noacl) ||
-      my_tz_init((THD *)0, default_tz_name, opt_bootstrap))
-    unireg_abort(1);
+  if (!opt_syntax_checker)
+  {
+    if (mysql_rm_tmp_tables() || acl_init(opt_noacl) ||
+        my_tz_init((THD *)0, default_tz_name, opt_bootstrap))
+      unireg_abort(1);
+  }
 
   if (!opt_noacl)
     (void) grant_init();
@@ -6107,10 +6147,17 @@ int mysqld_main(int argc, char **argv)
   /* Protect read_only_root against writes */
   protect_root(&read_only_root, PROT_READ);
 
+  if (opt_syntax_checker)
+  {
+    int error= syntax_checker(mysql_stdin);
+    unireg_abort(error);
+  }
+
   if (opt_bootstrap)
   {
     int bootstrap_error= bootstrap(mysql_stdin);
     if (!abort_loop)
+
       unireg_abort(bootstrap_error);
     else
     {
@@ -6646,6 +6693,9 @@ struct my_option my_long_options[]=
   {"character-set-server", 'C', "Set the default character set",
    &default_character_set_name, &default_character_set_name,
    0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
+  {"check_syntax", 0, "Check syntax of queries on stdin",
+   &opt_syntax_checker, &opt_syntax_checker, 0, GET_BOOL, NO_ARG, 0, 0, 0, 0,
+   0, 0},
   {"chroot", 'r', "Chroot mariadbd process during startup",
    &mysqld_chroot, &mysqld_chroot, 0, GET_STR, REQUIRED_ARG,
    0, 0, 0, 0, 0, 0},

@@ -1,0 +1,49 @@
+# Test of syntax checker
+
+--write_file $MYSQLTEST_VARDIR/tmp/syntax_checker.tmp
+-- ok queries
+select 1;
+select '1', '''1''';
+select `a`, ```a```;
+select "a""b", "a\"b";
+select 1+1; -- hello
+/* Hello ; Hello again ; */ select 2;
+/* Hello
+Hello again
+*/
+select 2
+;
+select -- hello ; there
+1;
+select 3 ; select 4;
+
+--errors
+foo;
+foo2;
+select */ +1;
+select '1;
+'+;
+select 1+;
+select 10 ; select 3+ ; select 11;
+EOF
+
+--error 1
+--exec cat $MYSQLTEST_VARDIR/tmp/syntax_checker.tmp | $MYSQLD --no-defaults --check-syntax
+--remove_file $MYSQLTEST_VARDIR/tmp/syntax_checker.tmp
+
+--echo #
+--echo # Check DELIMITER
+--echo #
+
+--write_file $MYSQLTEST_VARDIR/tmp/syntax_checker2.tmp
+select 1;
+DELIMITER ;;
+select 2;;
+select 3+4;;
+select 1+1 ;; select 2+2 ;;
+delimiter ;
+select 1;
+EOF
+
+--exec cat $MYSQLTEST_VARDIR/tmp/syntax_checker2.tmp | $MYSQLD --no-defaults --check-syntax
+--remove_file $MYSQLTEST_VARDIR/tmp/syntax_checker2.tmp
