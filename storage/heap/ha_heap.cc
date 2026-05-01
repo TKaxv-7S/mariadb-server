@@ -702,20 +702,19 @@ int heap_prepare_hp_create_info(TABLE *table_arg, bool internal_table,
 
       if (seg->flag & HA_BLOB_PART)
       {
+        /*
+          Blob key segment: 4-byte length + pointer to data.
+          Field_blob_key (GROUP BY) returns VARTEXT4/VARBINARY4.
+          Field_blob (DISTINCT/UNION) returns VARTEXT2/VARBINARY2.
+          Promote the latter to VARTEXT4 format so hp_create.c and the
+          hash functions handle them identically.
+        */
         if (seg->type == HA_KEYTYPE_VARBINARY2 ||
             seg->type == HA_KEYTYPE_VARTEXT2)
-        {
-          /* This is is a geometry field using VARCHAR packing */
-          seg->flag&= ~HA_BLOB_PART;
-        }
-        else
-        {
-          /* Blob key with a 4 byte length and a pointer to data */
-          DBUG_ASSERT(seg->length == 4 + portable_sizeof_char_ptr);
-          DBUG_ASSERT(field->key_type() == HA_KEYTYPE_VARBINARY4 ||
-                      field->key_type() == HA_KEYTYPE_VARTEXT4);
-          seg->bit_start= ((Field_blob*) field)->pack_length_no_ptr();
-        }
+          seg->type= (seg->type == HA_KEYTYPE_VARBINARY2) ?
+                      HA_KEYTYPE_VARBINARY4 : HA_KEYTYPE_VARTEXT4;
+        seg->bit_start= ((Field_blob*) field)->pack_length_no_ptr();
+        seg->length= 4 + portable_sizeof_char_ptr;
       }
 
       if (field->flags & (ENUM_FLAG | SET_FLAG))
