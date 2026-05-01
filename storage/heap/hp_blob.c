@@ -320,6 +320,7 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
         if (prev_pos && pos == prev_pos - recbuffer)
         {
           run_start= pos;
+          prev_pos= pos;
           run_count++;
           if (run_count < max_run)
             continue;
@@ -399,7 +400,7 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
 
     run_start= hp_alloc_from_tail(share, &run_rec_count);
     if (!run_start)
-      goto err;
+      break;
     DBUG_ASSERT(run_rec_count >= 1);
 
     if (is_only_run && run_rec_count == 1 && remaining <= visible)
@@ -431,6 +432,49 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
       first_run= run_start;
     prev_run_start= run_start;
   }
+
+  /*
+    Step 3: Free-list scavenge fallback.
+
+    When the tail is full but there are deleted records on the free list,
+    walk the entire free list accepting any contiguous group (even a
+    single slot).  This produces maximally fragmented chains (many short
+    runs, Case C), which are slower to read but correct.  Failing with
+    table-full when free slots exist is worse than a fragmented chain.
+  */
+  while (data_offset < data_len && share->del_link)
+  {
+    uchar *run_start= share->del_link;
+    uchar *prev_pos= run_start;
+    uchar *pos= *((uchar**) run_start);
+    uint16 run_count= 1;
+    uint32 remaining= data_len - data_offset;
+    uint32 remaining_records=
+      (remaining <= first_payload ? 1 :
+       1 + (remaining - first_payload + recbuffer - 1) / recbuffer);
+    uint32 max_run= MY_MIN(remaining_records, UINT_MAX16);
+
+    for (; pos; pos= *((uchar**) pos))
+    {
+      if (run_count >= max_run)
+        break;
+      if (pos == prev_pos - recbuffer)
+      {
+        run_start= pos;
+        prev_pos= pos;
+        run_count++;
+        continue;
+      }
+      break;
+    }
+
+    hp_unlink_and_write_run(share, data_ptr, data_len, run_start,
+                            run_count, &data_offset,
+                            &first_run, &prev_run_start);
+  }
+
+  if (data_offset < data_len)
+    goto err;
 
   *first_run_out= first_run;
   return 0;
