@@ -201,9 +201,10 @@ SELECT tmp_disk_table_size = @@session.tmp_disk_table_size;
 --echo #
 
 SET @@tmp_disk_table_size=16384;
+set @@max_heap_table_size=16384;
 CREATE VIEW v AS SELECT 'a';
 
---sorted_result
+--error ER_RECORD_FILE_FULL
 SELECT table_name FROM INFORMATION_SCHEMA.views;
 
 DROP VIEW v;

@@ -72,13 +72,14 @@ int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
     my_bool *blob_changed= (my_bool*)(saved_chains + share->blob_count);
     my_bool any_changed= FALSE;
     my_bool has_blob_data= FALSE;
+    HP_BLOB_DESC *desc;
+    uint32 new_len;
     uint i;
 
     /* Save old chain pointers and detect which blobs changed */
-    for (i= 0; i < share->blob_count; i++)
+    for (i= 0, desc= share->blob_descs; i < share->blob_count; i++, desc++)
     {
-      HP_BLOB_DESC *desc= &share->blob_descs[i];
-      uint32 old_len, new_len;
+      uint32 old_len, cur_len;
 
       saved_chains[i]= NULL;
       if (had_cont)
@@ -86,9 +87,9 @@ int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
                sizeof(saved_chains[i]));
 
       old_len= hp_blob_length(desc, old);
-      new_len= hp_blob_length(desc, heap_new);
+      cur_len= hp_blob_length(desc, heap_new);
 
-      if (old_len != new_len)
+      if (old_len != cur_len)
         blob_changed[i]= TRUE;
       else if (old_len == 0)
         blob_changed[i]= FALSE;
@@ -102,20 +103,21 @@ int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
         blob_changed[i]= (old_data != new_data &&
                            memcmp(old_data, new_data, old_len) != 0);
       }
-      if (blob_changed[i])
-        any_changed= TRUE;
+      any_changed|= blob_changed[i];
     }
 
     memcpy(pos, heap_new, (size_t) share->reclength);
 
     /* Write new chains for changed blobs, restore old pointers for unchanged */
-    for (i= 0; i < share->blob_count; i++)
+    for (i= 0, desc= share->blob_descs; i < share->blob_count; i++, desc++)
     {
-      HP_BLOB_DESC *desc= &share->blob_descs[i];
-
       if (!blob_changed[i])
       {
-        /* Restore old chain pointer that memcpy overwrote */
+        /*
+          Restore old chain pointer, from the old current_ptr, where the blob
+          data is in heap memory. This is not the same as the pointer in 'old'
+          as this may have been allocated from a segmented blob.
+        */
         if (saved_chains[i])
         {
           memcpy(pos + desc->offset + desc->packlength,
@@ -125,51 +127,47 @@ int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
         continue;
       }
 
+      new_len= hp_blob_length(desc, heap_new);
+      if (new_len == 0)
+        *((uchar**) (pos + desc->offset + desc->packlength))= NULL;
+      else
       {
-        uint32 new_len= hp_blob_length(desc, heap_new);
-        if (new_len == 0)
-        {
-          uchar *null_ptr= NULL;
-          memcpy(pos + desc->offset + desc->packlength,
-                 &null_ptr, sizeof(null_ptr));
-        }
-        else
-        {
-          const uchar *data_ptr;
-          uchar *first_run;
+        const uchar *data_ptr;
+        uchar *first_run;
 
-          has_blob_data= TRUE;
-          memcpy(&data_ptr, heap_new + desc->offset + desc->packlength,
-                 sizeof(data_ptr));
+        has_blob_data= TRUE;
+        memcpy(&data_ptr, heap_new + desc->offset + desc->packlength,
+               sizeof(data_ptr));
 
-          if (hp_write_one_blob(share, data_ptr, new_len, &first_run))
+        if (hp_write_one_blob(share, data_ptr, new_len, &first_run))
+        {
+          /* Rollback: free new chains already written, restore old record */
+          uint j;
+          for (j= 0; j < i; j++)
           {
-            /* Rollback: free new chains already written, restore old record */
-            uint j;
-            for (j= 0; j < i; j++)
-              if (blob_changed[j])
-              {
-                uchar *chain;
-                memcpy(&chain, pos + share->blob_descs[j].offset +
-                       share->blob_descs[j].packlength, sizeof(chain));
-                if (chain)
-                  hp_free_run_chain(share, chain);
-              }
-            memcpy(pos, old, (size_t) share->reclength);
-            if (had_cont)
+            if (blob_changed[j])
             {
-              for (j= 0; j < share->blob_count; j++)
-                memcpy(pos + share->blob_descs[j].offset +
-                       share->blob_descs[j].packlength,
-                       &saved_chains[j], sizeof(saved_chains[j]));
-              pos[share->visible]|= HP_ROW_HAS_CONT;
+              uchar *chain;
+              memcpy(&chain, pos + share->blob_descs[j].offset +
+                     share->blob_descs[j].packlength, sizeof(chain));
+              if (chain)
+                hp_free_run_chain(share, chain);
             }
-            my_safe_afree(saved_chains, alloc_size);
-            goto err;
           }
-          memcpy(pos + desc->offset + desc->packlength,
-                 &first_run, sizeof(first_run));
+          memcpy(pos, old, (size_t) share->reclength);
+          if (had_cont)
+          {
+            for (j= 0; j < share->blob_count; j++)
+              memcpy(pos + share->blob_descs[j].offset +
+                     share->blob_descs[j].packlength,
+                     &saved_chains[j], sizeof(saved_chains[j]));
+            pos[share->visible]|= HP_ROW_HAS_CONT;
+          }
+          my_safe_afree(saved_chains, alloc_size);
+          goto err;
         }
+        memcpy(pos + desc->offset + desc->packlength,
+               &first_run, sizeof(first_run));
       }
     }
 
@@ -198,16 +196,14 @@ int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
     */
     if (any_changed || info->has_zerocopy_blobs)
     {
-      uchar *new_rec= (uchar*) heap_new;
-      for (i= 0; i < share->blob_count; i++)
+      for (i= 0, desc= share->blob_descs; i < share->blob_count; i++, desc++)
       {
-        HP_BLOB_DESC *desc= &share->blob_descs[i];
         uchar *chain;
         memcpy(&chain, pos + desc->offset + desc->packlength, sizeof(chain));
-        memcpy(new_rec + desc->offset + desc->packlength, &chain,
+        memcpy((uchar*) heap_new + desc->offset + desc->packlength, &chain,
                sizeof(chain));
       }
-      hp_read_blobs(info, new_rec, pos);
+      hp_read_blobs(info, (uchar*) heap_new, pos);
     }
 
     my_safe_afree(saved_chains, alloc_size);

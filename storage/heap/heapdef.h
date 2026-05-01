@@ -33,6 +33,7 @@ C_MODE_START
 #define HP_MIN_RECORDS_IN_BLOCK 16
 #define HP_MAX_RECORDS_IN_BLOCK 8192
 
+/* Flags stored in the 'visible' byte at end of each record */
 #define HP_ROW_ACTIVE    1   /* Bit 0: record is active (not deleted) */
 #define HP_ROW_HAS_CONT  2   /* Bit 1: primary record has continuation chain(s) */
 #define HP_ROW_IS_CONT   4   /* Bit 2: this record IS a continuation record */
@@ -41,22 +42,11 @@ C_MODE_START
 
 /*
   Continuation run header: next_cont pointer + run_rec_count.
-  Stored at the beginning of the first record in each run.
+  Stored at the beginning of the first blob segment in each run.
 */
-#define HP_CONT_NEXT_PTR_SIZE  sizeof(uchar*)
 #define HP_CONT_REC_COUNT_SIZE sizeof(uint16)
-#define HP_CONT_HEADER_SIZE    (HP_CONT_NEXT_PTR_SIZE + HP_CONT_REC_COUNT_SIZE)
+#define HP_CONT_HEADER_SIZE    (sizeof(uchar*) + HP_CONT_REC_COUNT_SIZE)
 
-/*
-  Minimum contiguous run size parameters.
-  Runs smaller than this are not worth scavenging from the free list because
-  the per-run header overhead (10 bytes) becomes a significant fraction of
-  payload.  Skip them and allocate from the tail instead.
-
-  HP_CONT_MIN_RUN_BYTES: absolute floor for minimum run payload.
-  HP_CONT_RUN_FRACTION_NUM/DEN: minimum run size as a fraction of blob size.
-    min_run_bytes = MAX(blob_length * NUM / DEN, HP_CONT_MIN_RUN_BYTES)
-*/
 /*
   Row flags byte predicates.
   The flags byte is at offset 'visible' in each primary or run-header record.
@@ -87,13 +77,13 @@ static inline my_bool hp_is_cont(const uchar *rec, uint visible)
 static inline const uchar *hp_cont_next(const uchar *chain)
 {
   const uchar *next;
-  memcpy(&next, chain, HP_CONT_NEXT_PTR_SIZE);
+  memcpy(&next, chain, sizeof(uchar*));
   return next;
 }
 
 static inline uint16 hp_cont_rec_count(const uchar *chain)
 {
-  return uint2korr(chain + HP_CONT_NEXT_PTR_SIZE);
+  return uint2korr(chain + sizeof(uchar*));
 }
 
 /*
@@ -130,11 +120,31 @@ static inline enum hp_blob_format hp_blob_run_format(const uchar *chain,
   return HP_BLOB_CASE_C_MULTI_RUN;
 }
 
-/* Minimum acceptable contiguous run size in bytes for free list reuse */
+/*
+  Minimum contiguous run size parameters.
+  Runs smaller than this are not worth scavenging from the
+  delete list because the per-run header overhead (10 bytes)
+  becomes a significant fraction of payload.  Skip them and
+  allocate from the tail instead.
+
+  HP_CONT_MIN_RUN_BYTES: absolute floor for minimum run payload.
+  HP_CONT_RUN_FRACTION_NUM/DEN: minimum run size as a fraction
+    of blob size.
+    min_run_bytes = MAX(blob_length * NUM / DEN,
+                        HP_CONT_MIN_RUN_BYTES)
+*/
 #define HP_CONT_MIN_RUN_BYTES  128
-/* Minimum run size as a fraction of blob size: NUM/DEN = 1/10 */
 #define HP_CONT_RUN_FRACTION_NUM  1
 #define HP_CONT_RUN_FRACTION_DEN  10
+
+static inline uint32 hp_blob_min_run_bytes(uint32 blob_length)
+{
+  uint32 length= (blob_length / HP_CONT_RUN_FRACTION_DEN *
+                  HP_CONT_RUN_FRACTION_NUM);
+  set_if_bigger(length, HP_CONT_MIN_RUN_BYTES);
+  set_if_smaller(length, blob_length);
+  return length;
+}
 
 	/* Some extern variables */
 
@@ -210,8 +220,13 @@ extern ha_rows hp_rows_in_memory(size_t reclength, size_t index_size,
                           size_t memory_limit);
 extern size_t hp_memory_needed_per_row(size_t reclength);
 
+extern uchar *hp_alloc_from_tail(HP_SHARE *info);
 extern uchar *next_free_record_pos(HP_SHARE *info);
-extern uint32 hp_blob_length(const HP_BLOB_DESC *desc, const uchar *record);
+static inline uint32 hp_blob_length(const HP_BLOB_DESC *desc,
+                                    const uchar *record)
+{
+  return (uint32) read_lowendian(record + desc->offset, desc->packlength);
+}
 extern int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
                              uint32 data_len, uchar **first_run_out);
 extern int hp_write_blobs(HP_INFO *info, const uchar *record, uchar *pos);

@@ -706,4 +706,16 @@ C_MODE_START
 typedef void (* invalidator_by_filename)(const char * filename);
 C_MODE_END
 
+static inline longlong read_lowendian(const uchar *from, uint bytes)
+{
+  switch(bytes) {
+  case 1: return from[0];
+  case 2: return uint2korr(from);
+  case 3: return uint3korr(from);
+  case 4: return uint4korr(from);
+  case 8: return sint8korr(from);
+  default: DBUG_ASSERT(0); return 0;
+  }
+}
+
 #endif /* _my_base_h */

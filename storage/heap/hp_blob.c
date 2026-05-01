@@ -1,4 +1,4 @@
-/* Copyright (c) 2025, MariaDB Corporation.
+/* Copyright (c) 2026, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -33,70 +33,14 @@
 #include <string.h>
 
 
-/*
-  Read blob data length from the record buffer.
-*/
 
-uint32 hp_blob_length(const HP_BLOB_DESC *desc, const uchar *record)
-{
-  switch (desc->packlength)
-  {
-  case 1:
-    return (uint32) record[desc->offset];
-  case 2:
-    return uint2korr(record + desc->offset);
-  case 3:
-    return uint3korr(record + desc->offset);
-  case 4:
-    return uint4korr(record + desc->offset);
-  default:
-    DBUG_ASSERT(0);
-    return 0;
-  }
-}
-
-
-/*
-  Allocate one record from the HP_BLOCK tail, bypassing the free list.
-  Same accounting as next_free_record_pos() but never uses del_link.
-
-  Maintains the scan-boundary invariant:
-      total_records + deleted == block.last_allocated
-  by incrementing both last_allocated and total_records together.
-  heap_scan() relies on this invariant to know when to stop scanning.
-*/
-
-static uchar *hp_alloc_from_tail(HP_SHARE *share)
-{
-  int block_pos;
-  size_t length;
-
-  if (!(block_pos= (share->block.last_allocated %
-                     share->block.records_in_block)))
-  {
-    if ((share->block.last_allocated > share->max_records &&
-         share->max_records) ||
-        (share->data_length + share->index_length >= share->max_table_size))
-    {
-      my_errno= HA_ERR_RECORD_FILE_FULL;
-      return NULL;
-    }
-    if (hp_get_new_block(share, &share->block, &length))
-      return NULL;
-    share->data_length+= length;
-  }
-  share->block.last_allocated++;
-  share->total_records++;
-  return (uchar*) share->block.level_info[0].last_blocks +
-         block_pos * share->block.recbuffer;
-}
 
 
 /*
   Free one continuation chain of variable-length runs.
 
   Walks from the first run, reads run_rec_count from each, frees all
-  records individually to the free list, then follows next_cont to the
+  records individually to the delete list, then follows next_cont to the
   next run.
 
   Maintains the scan-boundary invariant:
@@ -128,8 +72,8 @@ void hp_free_run_chain(HP_SHARE *share, uchar *chain)
     else
     {
       /* Case B/C: header present with next_cont and run_rec_count */
-      memcpy(&next_run, chain, HP_CONT_NEXT_PTR_SIZE);
-      run_rec_count= uint2korr(chain + HP_CONT_NEXT_PTR_SIZE);
+      memcpy(&next_run, chain, sizeof(uchar*));
+      run_rec_count= uint2korr(chain + sizeof(uchar*));
     }
 
     for (j= 0; j < run_rec_count; j++)
@@ -194,19 +138,17 @@ static void hp_write_run_data(HP_SHARE *share, const uchar *data,
   }
 
   {
-    uchar *null_ptr= NULL;
     /* First record: run header + flags byte */
-    memcpy(run_start, &null_ptr, HP_CONT_NEXT_PTR_SIZE);
-    int2store(run_start + HP_CONT_NEXT_PTR_SIZE, run_rec_count);
+    *((uchar**) run_start)= NULL;
+    int2store(run_start + sizeof(uchar*), run_rec_count);
     run_start[visible]= HP_ROW_ACTIVE | HP_ROW_IS_CONT |
                          (format == HP_BLOB_CASE_B_ZEROCOPY
                           ? HP_ROW_CONT_ZEROCOPY : 0);
   }
 
   /*
-    Case B: skip data copy in rec 0.
-    All data goes into rec 1..N-1 contiguously for zero-copy reads.
-    Case C: data starts in rec 0 after header.
+    We come here when we need data in the initial run block.
+    In other words, we are not writing a multi-row zerocopy block.
   */
   if (format == HP_BLOB_CASE_C_MULTI_RUN)
   {
@@ -223,13 +165,19 @@ static void hp_write_run_data(HP_SHARE *share, const uchar *data,
     This makes data in inner records contiguous, enabling zero-copy reads
     for single-run blobs (Case B).
   */
-  for (rec= 1; rec < run_rec_count && remaining > 0; rec++)
+  run_start+= recbuffer;
+  for (rec= 1; rec < run_rec_count - 1; rec++, run_start+= recbuffer)
   {
-    uchar *rec_ptr= run_start + rec * recbuffer;
-    chunk= recbuffer;
-    if (chunk > remaining)
-      chunk= remaining;
-    memcpy(rec_ptr, data + off, chunk);
+    DBUG_ASSERT(remaining > recbuffer);
+    memcpy(run_start, data + off, recbuffer);
+    off+= recbuffer;
+    remaining-= recbuffer;
+  }
+  if (rec < run_rec_count)
+  {
+    DBUG_ASSERT(remaining != 0);
+    chunk= remaining < recbuffer ? remaining : recbuffer;
+    memcpy(run_start, data + off, chunk);
     off+= chunk;
     remaining-= chunk;
   }
@@ -239,26 +187,25 @@ static void hp_write_run_data(HP_SHARE *share, const uchar *data,
 
 
 /*
-  Unlink a contiguous group from the free list and write blob data into it.
+  Unlink a contiguous group from the delete list and write blob data into it.
+  Does not support zerocopy (always uses HP_BLOB_CASE_C_MULTI_RUN).
 
   @param share          Table share
   @param data_ptr       Blob data
   @param data_len       Total blob data length
   @param run_start      Lowest address of the contiguous group
   @param run_count      Number of contiguous records in the group
-  @param visible        share->visible
-  @param recbuffer      share->block.recbuffer
   @param data_offset    [in/out] Current offset into blob data
-  @param first_run      [in/out] Pointer to first run (NULL initially)
+  @param first_run      [out] Pointer to first run; undefined until return
   @param prev_run_start [in/out] Pointer to previous run's start
 */
 
 static void hp_unlink_and_write_run(HP_SHARE *share, const uchar *data_ptr,
                                     uint32 data_len, uchar *run_start,
-                                    uint16 run_count, uint visible,
-                                    uint recbuffer, uint32 *data_offset,
+                                    uint16 run_count, uint32 *data_offset,
                                     uchar **first_run, uchar **prev_run_start)
 {
+  uint recbuffer= share->block.recbuffer;
   DBUG_ASSERT(share->del_link == run_start + (run_count-1) * recbuffer);
   DBUG_ASSERT(share->del_link >= run_start &&
               share->del_link < run_start + run_count * recbuffer);
@@ -282,7 +229,7 @@ static void hp_unlink_and_write_run(HP_SHARE *share, const uchar *data_ptr,
 /*
   Write one blob column's data into a chain of continuation runs.
 
-  Allocates contiguous runs from the free list and/or block tail,
+  Allocates contiguous runs from the delete list and/or block tail,
   copies blob data into them, and returns the first run pointer.
   On failure, frees any partially allocated chain.
 
@@ -310,9 +257,9 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
      1 + (data_len - first_payload + recbuffer - 1) / recbuffer);
 
   /*
-    Calculate minimum acceptable contiguous run size for free-list reuse.
+    Calculate minimum acceptable contiguous run size for delete-list reuse.
 
-    The free-list walk (Step 1 below) rejects contiguous groups smaller
+    The delete-list walk (Step 1 below) rejects contiguous groups smaller
     than min_run_records, bailing to tail allocation instead.  This
     prevents excessive chain fragmentation for large blobs: accepting
     tiny fragments would produce long chains of many short runs, each
@@ -324,17 +271,12 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
       - 2 records minimum (a single-slot run is pure overhead)
 
     For small blobs whose total bytes or records needed is below this
-    threshold, the fragmentation concern doesn't apply -- the entire blob
+    threshold, the fragmentation concern doesn't apply - the entire blob
     fits in one short run.  Cap both min_run_bytes and min_run_records
-    so the free list can satisfy the allocation without falling through
+    so the delete list can satisfy the allocation without falling through
     to the tail unnecessarily.
   */
-  min_run_bytes= data_len / HP_CONT_RUN_FRACTION_DEN *
-                 HP_CONT_RUN_FRACTION_NUM;
-  if (min_run_bytes < HP_CONT_MIN_RUN_BYTES)
-    min_run_bytes= HP_CONT_MIN_RUN_BYTES;
-  if (min_run_bytes > data_len)
-    min_run_bytes= data_len;
+  min_run_bytes= hp_blob_min_run_bytes(data_len);
   min_run_records= (min_run_bytes + recbuffer - 1) / recbuffer;
   if (min_run_records < 2)
     min_run_records= 2;
@@ -343,10 +285,10 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
     min_run_records= total_records_needed;
 
   /*
-    Step 1: Try to allocate contiguous runs from the top of the free list.
+    Step 1: Try to allocate contiguous runs from the top of the delete list.
 
-    Peek at free list records by walking next pointers without unlinking.
-    Track contiguous groups (descending addresses -- LIFO order from
+    Peek at delete list records by walking next pointers without unlinking.
+    Track contiguous groups (descending addresses - LIFO order from
     hp_free_run_chain).  On discontinuity: if the group qualifies
     (>= min_run_records), unlink and use it; if it doesn't, the tail
     of the delete_link is too small. Instead of continue searching
@@ -369,7 +311,7 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
         /*
           Only check descending direction: hp_free_run_chain() frees records
           in ascending address order (j=0..N), so LIFO pushes them onto the
-          free list in reverse -- consecutive free list entries have descending
+          delete list in reverse - consecutive delete list entries have descending
           addresses.  Ascending adjacency from unrelated deletes is ignored
           intentionally; we only recover runs that were freed together.
         */
@@ -389,13 +331,13 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
 
       /*
         Discontinuity.  If the accumulated group qualifies, use it.
-        If not, the top of the free list is fragmented -- give up entirely.
+        If not, the top of the delete list is fragmented - give up entirely.
       */
         if (run_count < min_run_records)
           break;
         hp_unlink_and_write_run(share, data_ptr, data_len, run_start,
-                                run_count, visible, recbuffer,
-                                &data_offset, &first_run, &prev_run_start);
+                                run_count, &data_offset,
+                                &first_run, &prev_run_start);
 
         pos= share->del_link;
         total_records_needed-= run_count;
@@ -411,8 +353,8 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
       /* Handle the last group after the loop ends */
       if (run_count >= min_run_records && data_offset < data_len)
         hp_unlink_and_write_run(share, data_ptr, data_len, run_start,
-                                run_count, visible, recbuffer,
-                                &data_offset, &first_run, &prev_run_start);
+                                run_count, &data_offset,
+                                &first_run, &prev_run_start);
     }
   }
 
@@ -498,7 +440,7 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
     if (is_only_run && run_payload >= remaining)
     {
       /*
-        Single-run blob -- use zero-copy layout if possible.
+        Single-run blob - use zero-copy layout if possible.
         Case A: data fits in rec 0 payload (run_rec_count == 1).
         Case B: data in rec 1..N-1 only, contiguous for zero-copy reads.
       */
@@ -558,13 +500,13 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
                                 &data_offset);
             }
             else
-              /* Case B extension failed -- fall back to Case C */
+              /* Case B extension failed - fall back to Case C */
               hp_write_run_data(share, data_ptr, data_len, run_start,
                                 run_rec_count, HP_BLOB_CASE_C_MULTI_RUN,
                                 &data_offset);
           }
           else
-            /* At block boundary -- Case C */
+            /* At block boundary - Case C */
             hp_write_run_data(share, data_ptr, data_len, run_start,
                               run_rec_count, HP_BLOB_CASE_C_MULTI_RUN,
                               &data_offset);
@@ -615,13 +557,13 @@ err:
 int hp_write_blobs(HP_INFO *info, const uchar *record, uchar *pos)
 {
   HP_SHARE *share= info->s;
-  uint i;
+  HP_BLOB_DESC *desc, *desc_end;
   my_bool has_blob_data= FALSE;
   DBUG_ENTER("hp_write_blobs");
 
-  for (i= 0; i < share->blob_count; i++)
+  for (desc= share->blob_descs, desc_end= desc + share->blob_count;
+       desc < desc_end; desc++)
   {
-    HP_BLOB_DESC *desc= &share->blob_descs[i];
     uint32 data_len;
     const uchar *data_ptr;
     uchar *first_run;
@@ -630,8 +572,7 @@ int hp_write_blobs(HP_INFO *info, const uchar *record, uchar *pos)
 
     if (data_len == 0)
     {
-      uchar *null_ptr= NULL;
-      memcpy(pos + desc->offset + desc->packlength, &null_ptr, sizeof(null_ptr));
+      *((uchar**) (pos + desc->offset + desc->packlength))= NULL;
       continue;
     }
 
@@ -641,24 +582,16 @@ int hp_write_blobs(HP_INFO *info, const uchar *record, uchar *pos)
     if (hp_write_one_blob(share, data_ptr, data_len, &first_run))
     {
       /* Rollback: free all previously completed blob columns */
-      uint j;
-      for (j= 0; j < i; j++)
+      HP_BLOB_DESC *rd;
+      for (rd= share->blob_descs; rd < desc; rd++)
       {
-        HP_BLOB_DESC *rd= &share->blob_descs[j];
         uchar *chain;
         memcpy(&chain, pos + rd->offset + rd->packlength, sizeof(chain));
         if (chain)
           hp_free_run_chain(share, chain);
-        {
-          uchar *null_ptr= NULL;
-          memcpy(pos + rd->offset + rd->packlength, &null_ptr, sizeof(null_ptr));
-        }
+        *((uchar**) (pos + rd->offset + rd->packlength))= NULL;
       }
-      {
-        uchar *null_ptr= NULL;
-        memcpy(pos + desc->offset + desc->packlength, &null_ptr,
-               sizeof(null_ptr));
-      }
+      *((uchar**) (pos + desc->offset + desc->packlength))= NULL;
       DBUG_RETURN(my_errno);
     }
 
@@ -668,6 +601,57 @@ int hp_write_blobs(HP_INFO *info, const uchar *record, uchar *pos)
   pos[share->visible]= has_blob_data ?
     (HP_ROW_ACTIVE | HP_ROW_HAS_CONT) : HP_ROW_ACTIVE;
   DBUG_RETURN(0);
+}
+
+
+/*
+  Reassemble blob data from a Case C multi-run continuation chain
+  into a contiguous output buffer.
+
+  @param chain      First run pointer
+  @param data_len   Total blob data length
+  @param out        Output buffer (must be >= data_len bytes)
+  @param visible    share->visible
+  @param recbuffer  share->block.recbuffer
+*/
+
+static void hp_reassemble_chain(const uchar *chain, uint32 data_len,
+                                uchar *out, uint visible, uint recbuffer)
+{
+  uint32 remaining= data_len;
+  while (chain && remaining > 0)
+  {
+    uint16 rec;
+    uint16 run_rec_count;
+    uint32 chunk;
+    const uchar *next_cont;
+
+    next_cont= hp_cont_next(chain);
+    run_rec_count= hp_cont_rec_count(chain);
+
+    /* First record payload (after header) */
+    chunk= visible - HP_CONT_HEADER_SIZE;
+    if (chunk > remaining)
+      chunk= remaining;
+    memcpy(out, chain + HP_CONT_HEADER_SIZE, chunk);
+    out+= chunk;
+    remaining-= chunk;
+
+    /* Inner records: recbuffer stride, no flags byte */
+    for (rec= 1; rec < run_rec_count; rec++)
+    {
+      const uchar *rec_ptr= chain + rec * recbuffer;
+      DBUG_ASSERT(remaining != 0);
+      chunk= recbuffer;
+      if (chunk > remaining)
+        chunk= remaining;
+      memcpy(out, rec_ptr, chunk);
+      out+= chunk;
+      remaining-= chunk;
+    }
+
+    chain= next_cont;
+  }
 }
 
 
@@ -689,7 +673,7 @@ int hp_write_blobs(HP_INFO *info, const uchar *record, uchar *pos)
 int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
 {
   HP_SHARE *share= info->s;
-  uint i;
+  HP_BLOB_DESC *desc, *desc_end;
   uint visible= share->visible;
   uint recbuffer= share->block.recbuffer;
   uint32 total_copy_size= 0;
@@ -701,14 +685,15 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
   if (!hp_has_cont(pos, share->visible))
     DBUG_RETURN(0);
 
+  desc_end= share->blob_descs + share->blob_count;
+
   /*
     Pass 1: sum data_len for blobs that need reassembly (not zero-copy).
     Cases A and B (HP_ROW_CONT_ZEROCOPY set, or single-record run) use
     zero-copy pointers into HP_BLOCK, no blob_buff needed.
   */
-  for (i= 0; i < share->blob_count; i++)
+  for (desc= share->blob_descs; desc < desc_end; desc++)
   {
-    HP_BLOB_DESC *desc= &share->blob_descs[i];
     uint32 data_len;
     const uchar *chain;
 
@@ -718,7 +703,7 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
 
     memcpy(&chain, record + desc->offset + desc->packlength, sizeof(chain));
 
-    /* Case A and Case B are zero-copy -- need no reassembly buffer space */
+    /* Case A and Case B are zero-copy - need no reassembly buffer space */
     if (hp_blob_run_format(chain, visible) != HP_BLOB_CASE_C_MULTI_RUN)
     {
       info->has_zerocopy_blobs= TRUE;
@@ -745,9 +730,8 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
 
   /* Pass 2: process each blob column */
   buff_ptr= info->blob_buff;
-  for (i= 0; i < share->blob_count; i++)
+  for (desc= share->blob_descs; desc < desc_end; desc++)
   {
-    HP_BLOB_DESC *desc= &share->blob_descs[i];
     uint32 data_len;
     const uchar *chain;
 
@@ -761,7 +745,7 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
     {
     case HP_BLOB_CASE_A_SINGLE_REC:
     {
-      /* Case A: single-record single-run, no header -- zero-copy */
+      /* Case A: single-record single-run, no header - zero-copy */
       const uchar *blob_data= chain;
       memcpy(record + desc->offset + desc->packlength, &blob_data,
              sizeof(blob_data));
@@ -769,7 +753,7 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
     }
     case HP_BLOB_CASE_B_ZEROCOPY:
     {
-      /* Case B: data in rec 1..N-1, contiguous -- zero-copy */
+      /* Case B: data in rec 1..N-1, contiguous - zero-copy */
       const uchar *blob_data= chain + recbuffer;
       memcpy(record + desc->offset + desc->packlength, &blob_data,
              sizeof(blob_data));
@@ -778,43 +762,12 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
     case HP_BLOB_CASE_C_MULTI_RUN:
     {
       /* Case C: reassemble into blob_buff */
-      uint32 remaining= data_len;
-      const uchar *next_cont;
-      while (chain && remaining > 0)
-      {
-        uint16 rec;
-        uint16 run_rec_count;
-        uint32 chunk;
-
-        next_cont= hp_cont_next(chain);
-        run_rec_count= hp_cont_rec_count(chain);
-
-        /* First record payload (after header) */
-        chunk= visible - HP_CONT_HEADER_SIZE;
-        if (chunk > remaining)
-          chunk= remaining;
-        memcpy(buff_ptr, chain + HP_CONT_HEADER_SIZE, chunk);
-        buff_ptr+= chunk;
-        remaining-= chunk;
-
-        /* Inner records: recbuffer stride, no flags byte */
-        for (rec= 1; rec < run_rec_count && remaining > 0; rec++)
-        {
-          const uchar *rec_ptr= chain + rec * recbuffer;
-          chunk= recbuffer;
-          if (chunk > remaining)
-            chunk= remaining;
-          memcpy(buff_ptr, rec_ptr, chunk);
-          buff_ptr+= chunk;
-          remaining-= chunk;
-        }
-
-        chain= next_cont;
-      }
+      uchar *blob_data= buff_ptr;
+      hp_reassemble_chain(chain, data_len, buff_ptr, visible, recbuffer);
+      buff_ptr+= data_len;
 
       /* Update blob pointer to reassembly buffer */
       {
-        uchar *blob_data= buff_ptr - data_len;
         memcpy(record + desc->offset + desc->packlength, &blob_data,
                sizeof(blob_data));
       }
@@ -850,10 +803,6 @@ const uchar *hp_materialize_one_blob(HP_INFO *info,
   HP_SHARE *share= info->s;
   uint visible= share->visible;
   uint recbuffer= share->block.recbuffer;
-  uint32 remaining;
-  uchar *buff_ptr;
-  const uchar *next_cont;
-  uint16 run_rec_count;
 
   if (data_len == 0 || !chain)
     return chain;
@@ -881,39 +830,7 @@ const uchar *hp_materialize_one_blob(HP_INFO *info,
     info->blob_buff_len= data_len;
   }
 
-  buff_ptr= info->blob_buff;
-  remaining= data_len;
-  while (chain && remaining > 0)
-  {
-    uint16 rec;
-    uint32 chunk;
-
-    next_cont= hp_cont_next(chain);
-    run_rec_count= hp_cont_rec_count(chain);
-
-    /* First record payload (after header) */
-    chunk= visible - HP_CONT_HEADER_SIZE;
-    if (chunk > remaining)
-      chunk= remaining;
-    memcpy(buff_ptr, chain + HP_CONT_HEADER_SIZE, chunk);
-    buff_ptr+= chunk;
-    remaining-= chunk;
-
-    /* Inner records: recbuffer stride, no flags byte */
-    for (rec= 1; rec < run_rec_count && remaining > 0; rec++)
-    {
-      const uchar *rec_ptr= chain + rec * recbuffer;
-      chunk= recbuffer;
-      if (chunk > remaining)
-        chunk= remaining;
-      memcpy(buff_ptr, rec_ptr, chunk);
-      buff_ptr+= chunk;
-      remaining-= chunk;
-    }
-
-    chain= next_cont;
-  }
-
+  hp_reassemble_chain(chain, data_len, info->blob_buff, visible, recbuffer);
   return info->blob_buff;
 }
 
@@ -922,7 +839,7 @@ const uchar *hp_materialize_one_blob(HP_INFO *info,
   Free continuation run chains for all blob columns of a row.
 
   Walks each blob column's run chain and adds all records back to the
-  free list.
+  delete list.
 
   @param share  Table share
   @param pos    Primary record pointer in HP_BLOCK
@@ -930,15 +847,15 @@ const uchar *hp_materialize_one_blob(HP_INFO *info,
 
 void hp_free_blobs(HP_SHARE *share, uchar *pos)
 {
-  uint i;
+  HP_BLOB_DESC *desc, *desc_end;
   DBUG_ENTER("hp_free_blobs");
 
   if (!hp_has_cont(pos, share->visible))
     DBUG_VOID_RETURN;
 
-  for (i= 0; i < share->blob_count; i++)
+  for (desc= share->blob_descs, desc_end= desc + share->blob_count;
+       desc < desc_end; desc++)
   {
-    HP_BLOB_DESC *desc= &share->blob_descs[i];
     uchar *chain;
 
     memcpy(&chain, pos + desc->offset + desc->packlength, sizeof(chain));

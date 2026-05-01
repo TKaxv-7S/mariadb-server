@@ -21218,12 +21218,10 @@ bool Create_tmp_table::finalize(THD *thd,
   share->stored_rec_length= share->reclength;
   /*
     HEAP-specific: skip packed row format.
-    HEAP uses fixed-width base records (blob data is stored separately
-    in continuation chains), so use packed rows only for disk-based
-    engines when there are blobs or enough space to gain.
+    HEAP does not use recinfo->type, so this is harmless for HEAP
+    and ensures correct packing when converting to Aria.
   */
-  if (share->db_type() != heap_hton &&
-      (share->blob_fields ||
+  if ((share->blob_fields ||
        (string_total_length() >= STRING_TOTAL_LENGTH_TO_PACK_ROWS &&
         (share->reclength / string_total_length() <= RATIO_TO_PACK_ROWS ||
          string_total_length() / string_count() >= AVG_STRING_LENGTH_TO_PACK_ROWS))))
@@ -21434,10 +21432,12 @@ bool Create_tmp_table::finalize(THD *thd,
         }
 
         /*
-          For blob/geometry GROUP BY keys, field->key_length() returns
-          0 (blobs) or packlength (geometry), both too small to hold
-          actual data.  Use the item's max_length capped to
-          MAX_BLOB_WIDTH so new_key_field gets a usable size.
+          For blob/geometry GROUP BY keys,
+          m_key_part_info->length, set from field->key_length(),
+          contains 0 (blobs) or packlength (geometry), both too
+          small to hold actual data. Use the item's max_length
+          capped to MAX_BLOB_WIDTH so new_key_field gets a
+          usable size.
         */
         uint32 key_field_length= m_key_part_info->length;
         if ((field->flags & BLOB_FLAG) &&
@@ -21448,7 +21448,7 @@ bool Create_tmp_table::finalize(THD *thd,
                                             HA_KEY_BLOB_LENGTH));
           /*
             Check that the group buffer has room for this blob key field.
-            calc_group_buffer() may have sized the buffer before the field
+            calc_group_buffer() may have calculated the size of the buffer before the field
             was promoted to blob in the tmp table.  If the promoted blob
             doesn't fit, fall back to m_using_unique_constraint.
           */
@@ -28037,6 +28037,8 @@ void calc_group_buffer(TMP_TABLE_PARAM *param, ORDER *group)
     if (field)
     {
       enum_field_types type;
+      DBUG_ASSERT((bool) (field->flags & BLOB_FLAG) ==
+                  is_any_blob_field_type(field->type()));
       if (is_any_blob_field_type(type= field->type()))
 	key_length+=MAX_BLOB_WIDTH;		// Can't be used as a key
       else if (type == MYSQL_TYPE_VARCHAR || type == MYSQL_TYPE_VAR_STRING)

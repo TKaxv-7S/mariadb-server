@@ -523,7 +523,9 @@ inline bool is_temporal_type_with_date(enum_field_types type)
 
 
 /*
-  Check for blob field types, including GEOMETRY (which extends Field_blob).
+  Only needed for calc_group_buffer(), where we have an
+  enum_field_types but no Field object.
+  In all other cases use field->flags & BLOB_FLAG.
 */
 static inline bool is_any_blob_field_type(enum_field_types type)
 {
@@ -4388,18 +4390,6 @@ static inline void store_lowendian(ulonglong num, uchar *to, uint bytes)
   case 4: int4store(to, num); break;
   case 8: int8store(to, num); break;
   default: DBUG_ASSERT(0);
-  }
-}
-
-static inline longlong read_lowendian(const uchar *from, uint bytes)
-{
-  switch(bytes) {
-  case 1: return from[0];
-  case 2: return uint2korr(from);
-  case 3: return uint3korr(from);
-  case 4: return uint4korr(from);
-  case 8: return sint8korr(from);
-  default: DBUG_ASSERT(0); return 0;
   }
 }
 

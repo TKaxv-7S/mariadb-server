@@ -1,5 +1,10 @@
 #
-# Test BLOB/TEXT column support in HEAP (MEMORY) tables.
+# MDEV-38975: HEAP engine BLOB/TEXT/JSON/GEOMETRY column support
+#
+# Tests basic CRUD, multiple blob types, large blobs, free list reuse,
+# fragmentation, max_heap_table_size overflow, zero-copy edge cases
+# (Case A single-rec, Case B zerocopy, Case B->C transition), and
+# blob preservation during non-blob column updates.
 #
 
 --disable_warnings

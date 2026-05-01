@@ -28,11 +28,7 @@ hp_charpos(CHARSET_INFO *cs, const uchar *b, const uchar *e, size_t num)
 }
 
 
-#ifdef HEAP_UNIT_TESTS
 ulong hp_hashnr(HP_KEYDEF *keydef, const uchar *key);
-#else
-static ulong hp_hashnr(HP_KEYDEF *keydef, const uchar *key);
-#endif
 
 
 /*
@@ -42,15 +38,9 @@ static ulong hp_hashnr(HP_KEYDEF *keydef, const uchar *key);
 /* Size of a pointer, for use in memcpy to avoid -Wsizeof-pointer-memaccess */
 #define HP_PTR_SIZE sizeof(void*)
 
-static size_t hp_blob_key_length(uint packlength, const uchar *pos)
+static inline size_t hp_blob_key_length(uint packlength, const uchar *pos)
 {
-  switch (packlength) {
-  case 1: return (size_t) pos[0];
-  case 2: return uint2korr(pos);
-  case 3: return uint3korr(pos);
-  case 4: return uint4korr(pos);
-  }
-  return 0;
+  return (size_t) read_lowendian(pos, packlength);
 }
 
 
@@ -256,11 +246,7 @@ void hp_movelink(HASH_INFO *pos, HASH_INFO *next_link, HASH_INFO *newlink)
 
 	/* Calc hashvalue for a key */
 
-#ifdef HEAP_UNIT_TESTS
 ulong hp_hashnr(HP_KEYDEF *keydef, const uchar *key)
-#else
-static ulong hp_hashnr(HP_KEYDEF *keydef, const uchar *key)
-#endif
 {
   /*register*/ 
   ulong nr=1, nr2=4;
@@ -317,7 +303,7 @@ static ulong hp_hashnr(HP_KEYDEF *keydef, const uchar *key)
        uint32 blob_len= uint4korr(pos);
        const uchar *blob_data;
        memcpy(&blob_data, pos + 4, HP_PTR_SIZE);
-       if (blob_data && blob_len > 0)
+       if (blob_len > 0)
          my_ci_hash_sort(cs, blob_data, blob_len, &nr, &nr2);
     }
     else
@@ -394,7 +380,7 @@ ulong hp_rec_hashnr(register HP_KEYDEF *keydef, register const uchar *rec)
       size_t blob_len= hp_blob_key_length(packlength, pos);
       const uchar *blob_data;
       memcpy(&blob_data, pos + packlength, HP_PTR_SIZE);
-      if (blob_data && blob_len > 0)
+      if (blob_len > 0)
         my_ci_hash_sort(cs, blob_data, blob_len, &nr, &nr2);
     }
     else
@@ -426,12 +412,12 @@ ulong hp_rec_hashnr(register HP_KEYDEF *keydef, register const uchar *rec)
   Compare two records using key segments.
 
   @param keydef   Key definition
-  @param rec1     First record (input) -- blob fields contain direct data
+  @param rec1     First record (input) - blob fields contain direct data
                   pointers to caller-owned memory
-  @param rec2     Second record -- when @a info is non-NULL, blob fields
+  @param rec2     Second record - when info is non-NULL, blob fields
                   contain continuation chain pointers (stored format) that
                   are materialized via hp_materialize_one_blob().
-                  When @a info is NULL, treated same as rec1.
+                  When info is NULL, treated same as rec1.
   @param info     When non-NULL, enables stored-blob materialization for rec2.
                   Must be NULL when both records are input records.
 

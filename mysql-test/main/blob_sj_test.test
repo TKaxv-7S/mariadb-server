@@ -1,3 +1,9 @@
+#
+# MDEV-38975: Test semi-join materialization with BLOB columns in HEAP
+# temp tables.  Added to cover a bug where HA_BLOB_PART in
+# key_part_flag was uninitialized in SJ weedout temp tables, causing
+# incorrect blob key handling.
+#
 set optimizer_switch='materialization=on,in_to_exists=off,semijoin=off';
 set @blob_len = 16;
 set @prefix_len = 6;

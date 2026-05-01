@@ -7,8 +7,8 @@
 
 CREATE TABLE t1 (id INT AUTO_INCREMENT PRIMARY KEY, k INT, text_col TEXT);
 INSERT INTO t1 (k, text_col) VALUES
-  (1, 'alpha'), (1, 'alpha'), (1, 'beta'),
-  (2, 'gamma'), (2, 'gamma'), (2, 'delta'),
+  (1, 'alpha'), (1, 'alpha '), (1, 'beta'),
+  (2, 'gamma'), (2, 'gamma '), (2, 'delta'),
   (3, 'alpha'), (3, 'epsilon'), (3, NULL),
   (4, NULL), (4, NULL), (4, 'beta');
 
@@ -56,7 +56,7 @@ FROM t1 WHERE k <= 2 ORDER BY id;
 --echo # RANK with blob column
 --echo #
 SELECT text_col, k, RANK() OVER (ORDER BY text_col) AS rnk
-FROM t1 WHERE text_col IS NOT NULL ORDER BY text_col, k;
+FROM t1 WHERE text_col IS NOT NULL ORDER BY text_col, k, id;
 
 --echo #
 --echo # Non-recursive CTE materializing blob column

@@ -134,7 +134,10 @@ int hp_delete_key(HP_INFO *info, register HP_KEYDEF *keyinfo,
 
   while (pos->ptr_to_rec != recpos)
   {
-    /* Hash pre-check avoids expensive blob materialization for non-matching entries */
+    /*
+      Hash pre-check avoids expensive blob materialization
+      for non-matching entries.
+    */
     if (flag && pos->hash_of_key == rec_hash &&
         !hp_rec_key_cmp(keyinfo, record, pos->ptr_to_rec, info))
       last_ptr=pos;				/* Previous same key */

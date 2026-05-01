@@ -56,7 +56,24 @@ int heap_write(HP_INFO *info, const uchar *record)
   if (share->blob_count)
   {
     if (hp_write_blobs(info, record, pos))
-      goto err_blob;
+    {
+      /*
+        Blob write failed after all keys were written successfully.
+        Roll back all keys - unlike err: below, no key needs to be skipped.
+
+        Do NOT call hp_free_blobs() here: hp_write_blobs() is self-cleaning
+        on failure - hp_write_one_blob() frees its own partial chain, and
+        hp_write_blobs() frees all previously completed columns (0..i-1) and
+        NULLs every chain pointer in pos.
+      */
+      info->errkey= -1;
+      for (keydef= end - 1; keydef >= share->keydef; keydef--)
+      {
+        if ((*keydef->delete_key)(info, keydef, record, pos, 0))
+          break;
+      }
+      goto err_common;
+    }
   }
   else
     pos[share->visible]= 1;                   /* Mark record as not deleted */
@@ -70,33 +87,6 @@ int heap_write(HP_INFO *info, const uchar *record)
   if (share->auto_key)
     heap_update_auto_increment(info, record);
   DBUG_RETURN(0);
-
-err_blob:
-  /*
-    Blob write failed after all keys were written successfully.
-    Roll back all keys -- unlike err: below, no key needs to be skipped.
-
-    Do NOT call hp_free_blobs() here: hp_write_blobs() is self-cleaning
-    on failure -- hp_write_one_blob() frees its own partial chain, and
-    hp_write_blobs() frees all previously completed columns (0..i-1) and
-    NULLs every chain pointer in pos.  Calling hp_free_blobs() after this
-    would be both redundant and dangerous:
-    - The visibility byte pos[share->visible] has not been set yet (it is
-      only written on hp_write_blobs() success at line 493), so it may
-      contain uninitialized data from tail allocation with HP_ROW_HAS_CONT
-      bit set.
-    - Blob columns after the failed one (i+1..blob_count-1) still have the
-      SQL layer's original data pointers in pos (from memcpy at line 55),
-      not continuation chain pointers.  hp_free_run_chain() would interpret
-      those as chain headers and crash.
-  */
-  info->errkey= -1;
-  for (keydef= end - 1; keydef >= share->keydef; keydef--)
-  {
-    if ((*keydef->delete_key)(info, keydef, record, pos, 0))
-      break;
-  }
-  goto err_common;
 
 err:
   if (my_errno == HA_ERR_FOUND_DUPP_KEY)
@@ -123,9 +113,7 @@ err:
     Do NOT call hp_free_blobs here: the err: label is reached when a key
     write fails (line 52), which is BEFORE memcpy(pos, record, reclength)
     and hp_write_blobs(). The slot at pos still contains stale data from the
-    free list, so hp_free_blobs would chase garbage chain pointers.
-    Only err_blob: (above) needs hp_free_blobs, since blobs may have been
-    partially written there.
+    delete list, so hp_free_blobs would chase garbage chain pointers.
   */
 
 err_common:
@@ -182,23 +170,26 @@ int hp_rb_write_key(HP_INFO *info, HP_KEYDEF *keyinfo, const uchar *record,
   matching the new slot).  heap_scan() relies on this sum to detect EOF.
 */
 
-uchar *next_free_record_pos(HP_SHARE *info)
+/*
+  Allocate one record from the HP_BLOCK tail, bypassing the
+  delete list.  Used by next_free_record_pos() when no deleted
+  records are available, and by hp_write_one_blob() for blob
+  continuation chain allocation.
+
+  Maintains the scan-boundary invariant:
+      total_records + deleted == block.last_allocated
+  by incrementing both last_allocated and total_records together.
+  heap_scan() relies on this invariant to know when to stop.
+*/
+
+uchar *hp_alloc_from_tail(HP_SHARE *info)
 {
   int block_pos;
-  uchar *pos;
   size_t length;
-  DBUG_ENTER("next_free_record_pos");
+  DBUG_ENTER("hp_alloc_from_tail");
 
-  if (info->del_link)
-  {
-    pos=info->del_link;
-    info->del_link= *((uchar**) pos);
-    info->deleted--;
-    info->total_records++;
-    DBUG_PRINT("exit",("Used old position: %p", pos));
-    DBUG_RETURN(pos);
-  }
-  if (!(block_pos=(info->block.last_allocated % info->block.records_in_block)))
+  if (!(block_pos=(info->block.last_allocated %
+                    info->block.records_in_block)))
   {
     if ((info->block.last_allocated > info->max_records &&
          info->max_records) ||
@@ -226,6 +217,24 @@ uchar *next_free_record_pos(HP_SHARE *info)
                       block_pos * info->block.recbuffer)));
   DBUG_RETURN((uchar*) info->block.level_info[0].last_blocks+
 	      block_pos*info->block.recbuffer);
+}
+
+
+uchar *next_free_record_pos(HP_SHARE *info)
+{
+  uchar *pos;
+  DBUG_ENTER("next_free_record_pos");
+
+  if (info->del_link)
+  {
+    pos=info->del_link;
+    info->del_link= *((uchar**) pos);
+    info->deleted--;
+    info->total_records++;
+    DBUG_PRINT("exit",("Used old position: %p", pos));
+    DBUG_RETURN(pos);
+  }
+  DBUG_RETURN(hp_alloc_from_tail(info));
 }
 
 
