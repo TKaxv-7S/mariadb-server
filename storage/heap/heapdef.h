@@ -39,6 +39,7 @@ C_MODE_START
 #define HP_ROW_IS_CONT   4   /* Bit 2: this record IS a continuation record */
 #define HP_ROW_CONT_ZEROCOPY 8 /* Bit 3: zero-copy layout (data in rec 1..N-1) */
 #define HP_ROW_SINGLE_REC   16 /* Bit 4: single-record run, no header — data at offset 0 */
+#define HP_ROW_MULTIPLE_REC  32 /* Bit 5: multi-run chain, data needs reassembly */
 
 /*
   Continuation run header: next_cont pointer + run_rec_count.
@@ -70,6 +71,24 @@ static inline my_bool hp_is_cont(const uchar *rec, uint visible)
   return (rec[visible] & HP_ROW_IS_CONT) != 0;
 }
 
+/* Case A: single-record run, no header — data at offset 0 */
+static inline my_bool hp_is_single_rec(const uchar *rec, uint visible)
+{
+  return (rec[visible] & HP_ROW_SINGLE_REC) != 0;
+}
+
+/* Case B: single run, data in rec 1..N-1 — zero-copy read */
+static inline my_bool hp_is_zerocopy(const uchar *rec, uint visible)
+{
+  return (rec[visible] & HP_ROW_CONT_ZEROCOPY) != 0;
+}
+
+/* Case C: multi-run chain — data needs reassembly into blob_buff */
+static inline my_bool hp_is_multi_run(const uchar *rec, uint visible)
+{
+  return (rec[visible] & HP_ROW_MULTIPLE_REC) != 0;
+}
+
 /*
   Continuation run header accessors.
   Read next_cont pointer and run_rec_count from the first record of a run.
@@ -89,36 +108,21 @@ static inline uint16 hp_cont_rec_count(const uchar *chain)
 /*
   Blob continuation run storage format.
 
-  Case A (HP_BLOB_CASE_A_SINGLE_REC):  Single-record run, no header.
+  Case A (HP_ROW_SINGLE_REC):     Single-record run, no header.
       Data starts at offset 0, full `visible` bytes available for
-      payload.  Detected by HP_ROW_SINGLE_REC flag.
+      payload.  Detected by hp_is_single_rec().
       Zero-copy: blob pointer → chain.
 
-  Case B (HP_BLOB_CASE_B_ZEROCOPY):    Single run, multiple records.
+  Case B (HP_ROW_CONT_ZEROCOPY):  Single run, multiple records.
       Header in rec 0, data contiguous in rec 1..N-1.  Detected by
-      HP_ROW_CONT_ZEROCOPY flag.
+      hp_is_zerocopy().
       Zero-copy: blob pointer → chain + recbuffer.
 
-  Case C (HP_BLOB_CASE_C_MULTI_RUN):   One or more runs linked via
+  Case C (HP_ROW_MULTIPLE_REC):   One or more runs linked via
       next_cont.  Header in each run's rec 0, data in rec 0 (after
-      header) + rec 1..N-1.  Requires reassembly into blob_buff.
+      header) + rec 1..N-1.  Detected by hp_is_multi_run().
+      Requires reassembly into blob_buff.
 */
-enum hp_blob_format {
-  HP_BLOB_CASE_A_SINGLE_REC,
-  HP_BLOB_CASE_B_ZEROCOPY,
-  HP_BLOB_CASE_C_MULTI_RUN
-};
-
-static inline enum hp_blob_format hp_blob_run_format(const uchar *chain,
-                                                     uint visible)
-{
-  uchar flags= chain[visible];
-  if (flags & HP_ROW_SINGLE_REC)
-    return HP_BLOB_CASE_A_SINGLE_REC;
-  if (flags & HP_ROW_CONT_ZEROCOPY)
-    return HP_BLOB_CASE_B_ZEROCOPY;
-  return HP_BLOB_CASE_C_MULTI_RUN;
-}
 
 /*
   Minimum contiguous run size parameters.

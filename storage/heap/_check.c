@@ -82,11 +82,10 @@ int heap_check_heap(const HP_INFO *info, my_bool print_status)
     else if (hp_is_cont(current_ptr, share->visible))
     {
       /*
-        Case A (HP_BLOB_CASE_A_SINGLE_REC): single record, no header.
+        Case A (HP_ROW_SINGLE_REC): single record, no header.
         Case B/C: read run_rec_count from header and skip the entire run.
       */
-      if (hp_blob_run_format(current_ptr, share->visible) ==
-          HP_BLOB_CASE_A_SINGLE_REC)
+      if (hp_is_single_rec(current_ptr, share->visible))
       {
         cont_count++;
       }
