@@ -21217,9 +21217,8 @@ bool Create_tmp_table::finalize(THD *thd,
     share->reclength= 1;                // Dummy select
   share->stored_rec_length= share->reclength;
   /*
-    HEAP-specific: skip packed row format.
-    HEAP does not use recinfo->type, so this is harmless for HEAP
-    and ensures correct packing when converting to Aria.
+    HEAP does not use recinfo->type, so packed format is harmless for HEAP.
+    It is needed for correct packing when converting to Aria.
   */
   if ((share->blob_fields ||
        (string_total_length() >= STRING_TOTAL_LENGTH_TO_PACK_ROWS &&
@@ -27068,10 +27067,10 @@ JOIN_TAB::remove_duplicates()
 
   /*
     remove_dup_with_hash_index() copies field data into a flat key buffer
-    via field->make_sort_key() and compares with memcmp.  Blob fields
-    store only a pointer in the record, so memcmp would compare pointer
-    values instead of blob content.  Fall back to the row-by-row compare
-    path for tables with blobs.
+    via make_sort_key_part() and compares with memcmp.  For LONGBLOB
+    fields, sort_length() returns UINT_MAX32, making the key buffer
+    impractically large.  Fall back to the row-by-row compare path
+    for tables with blobs.
   */
   if (!table->s->blob_fields &&
       (table->s->db_type() == heap_hton ||

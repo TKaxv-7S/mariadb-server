@@ -156,8 +156,7 @@ static void test_hash_consistency(void)
   hp_make_key(&keydef, key_buf, rec);
   /* Now hash the pre-built key */
   {
-    /* hp_hashnr is static, so we test via hp_make_key + hp_rec_hashnr.
-       But we can verify the key format is correct. */
+    /* Verify the key format produced by hp_make_key is correct. */
     uint32 key_blob_len= uint4korr(key_buf);
     const uchar *key_blob_data;
     memcpy(&key_blob_data, key_buf + 4, PTR_SIZE);
@@ -720,10 +719,10 @@ extern ulong hp_hashnr(HP_KEYDEF *keydef, const uchar *key);
 
 /*
   Record layout for mixed varchar + blob table:
-    byte 0:       null bitmap (bit 2 = city null, bit 4 = libname null)
-    bytes 1:      varchar length_bytes=1 (city: VARCHAR(21))
+    byte 0:       null bitmap (null_bit 4 = city null, null_bit 8 = libname null)
+    bytes 1:      varchar length_bytes=1 (libname: VARCHAR(21))
     bytes 2-22:   varchar data (21 bytes)
-    bytes 23-24:  blob packlength=2 (libname: TEXT)
+    bytes 23-24:  blob packlength=2 (city: TEXT)
     bytes 25-32:  blob data pointer (8 bytes on x86_64)
     byte 33:      flags byte (visible offset)
   Total reclength: 34, recbuffer: ALIGN(MAX(34,8)+1, 8) = 40
@@ -758,6 +757,7 @@ static void setup_mixed_keydef(HP_KEYDEF *keydef, HA_KEYSEG *segs)
   segs[1].start=     MIX_VARCHAR_OFFSET;
   segs[1].length=    MIX_VARCHAR_LEN;
   segs[1].bit_start= MIX_VARCHAR_LENBYTES;  /* 1-byte length prefix */
+  segs[1].bit_length= 2;                   /* key uses 2-byte length prefix */
   segs[1].charset=   &my_charset_latin1;
   segs[1].null_bit=  8;   /* bit 3 in null bitmap */
   segs[1].null_pos=  MIX_NULL_OFFSET;
@@ -893,11 +893,228 @@ static void test_key_vs_rec_hash_consistency(void)
 }
 
 
+/*
+  Build a record with a blob field using an arbitrary packlength (1-4).
+  Record layout for packlength P:
+    byte 0:             null bitmap
+    bytes 1-4:          int4 field
+    bytes 5..(5+P-1):   blob length (little-endian, P bytes)
+    bytes (5+P)..(5+P+PTR_SIZE-1): blob data pointer
+  Total reclength: 5 + P + PTR_SIZE
+*/
+static void build_record_packN(uchar *rec, size_t rec_len, uint packlength,
+                               int32 int_val,
+                               const uchar *blob_data, size_t blob_len)
+{
+  memset(rec, 0, rec_len);
+  int4store(rec + REC_INT_OFFSET, int_val);
+  switch (packlength)
+  {
+  case 1:
+    rec[REC_BLOB_OFFSET]= (uchar) blob_len;
+    break;
+  case 2:
+    int2store(rec + REC_BLOB_OFFSET, blob_len);
+    break;
+  case 3:
+    int3store(rec + REC_BLOB_OFFSET, blob_len);
+    break;
+  case 4:
+    int4store(rec + REC_BLOB_OFFSET, blob_len);
+    break;
+  }
+  memcpy(rec + REC_BLOB_OFFSET + packlength, &blob_data, PTR_SIZE);
+}
+
+
+/*
+  Test 12: Packlength variants (1, 3, 4).
+
+  The existing tests only exercise packlength=2.  The HEAP engine supports
+  packlengths 1-4 via seg->bit_start.  Verify that hp_rec_hashnr(),
+  hp_rec_key_cmp(), and hp_make_key() work correctly for each.
+*/
+static void test_packlength_variants(void)
+{
+  static const uint packlengths[]= {1, 3, 4};
+  uint i;
+
+  for (i= 0; i < array_elements(packlengths); i++)
+  {
+    uint pl= packlengths[i];
+    /*
+      Record size: 5 (null + int4) + pl + PTR_SIZE, rounded up.
+      Use a generous buffer.
+    */
+    uchar rec1[32], rec2[32];
+    uchar key_buf[KEY_BUF_SIZE];
+    HA_KEYSEG seg;
+    HP_KEYDEF keydef;
+    ulong hash1;
+    uint32 key_blob_len;
+
+    uchar data_same[]= "packlength_test_data_ABCDEFGHIJ";
+    size_t data_len= 30;  /* well within all packlength maxima */
+    uchar data_diff[]= "DIFFERENT_data_XYZXYZXYZXYZXYZ";
+
+    /* Set up keyseg for this packlength */
+    memset(&seg, 0, sizeof(seg));
+    seg.type=      HA_KEYTYPE_VARTEXT4;
+    seg.flag=      HA_BLOB_PART | HA_VAR_LENGTH_PART;
+    seg.start=     REC_BLOB_OFFSET;
+    seg.length=    4 + portable_sizeof_char_ptr;
+    seg.bit_start= pl;
+    seg.charset=   &my_charset_latin1;
+    seg.null_bit=  0;
+    setup_keydef(&keydef, &seg, 1);
+
+    /* Build record and compute hash */
+    build_record_packN(rec1, sizeof(rec1), pl, 1, data_same, data_len);
+    hash1= hp_rec_hashnr(&keydef, rec1);
+
+    ok(hash1 != 0,
+       "packlen=%u: hp_rec_hashnr produces non-zero hash (%lu)", pl, hash1);
+
+    /* Same data must compare equal */
+    build_record_packN(rec2, sizeof(rec2), pl, 2, data_same, data_len);
+    ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) == 0,
+       "packlen=%u: same blob data compares equal", pl);
+
+    /* Different data must compare unequal */
+    build_record_packN(rec2, sizeof(rec2), pl, 2, data_diff, data_len);
+    ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) != 0,
+       "packlen=%u: different blob data compares unequal", pl);
+
+    /* hp_make_key must produce correct blob length */
+    hp_make_key(&keydef, key_buf, rec1);
+    key_blob_len= uint4korr(key_buf);
+    ok(key_blob_len == data_len,
+       "packlen=%u: hp_make_key blob length = %u (expected %u)",
+       pl, (uint) key_blob_len, (uint) data_len);
+  }
+}
+
+
+/*
+  Record layout for a two-blob table:
+    byte 0:       null bitmap
+    bytes 1-4:    int4 field (padding, not keyed)
+    bytes 5-6:    blob1 packlength=2
+    bytes 7-14:   blob1 data pointer (8 bytes)
+    bytes 15-16:  blob2 packlength=2
+    bytes 17-24:  blob2 data pointer (8 bytes)
+    byte 25:      flags byte (visible offset)
+  Total reclength: 26, recbuffer: ALIGN(MAX(26,8)+1, 8) = 32
+*/
+#define BB_INT_OFFSET    1
+#define BB_BLOB1_OFFSET  5
+#define BB_BLOB2_OFFSET  15
+#define BB_BLOB_PACKLEN  2
+#define BB_REC_LENGTH    26
+#define BB_REC_BUFFER    32
+
+
+static void build_two_blob_record(uchar *rec, int32 int_val,
+                                  const uchar *blob1_data, size_t blob1_len,
+                                  const uchar *blob2_data, size_t blob2_len)
+{
+  memset(rec, 0, BB_REC_LENGTH);
+  int4store(rec + BB_INT_OFFSET, int_val);
+  int2store(rec + BB_BLOB1_OFFSET, blob1_len);
+  memcpy(rec + BB_BLOB1_OFFSET + BB_BLOB_PACKLEN, &blob1_data, PTR_SIZE);
+  int2store(rec + BB_BLOB2_OFFSET, blob2_len);
+  memcpy(rec + BB_BLOB2_OFFSET + BB_BLOB_PACKLEN, &blob2_data, PTR_SIZE);
+}
+
+
+/*
+  Test 13: Multi-segment key with two blob segments.
+
+  Verifies hash, comparison, and hp_make_key() when a key has two
+  HA_KEYTYPE_VARTEXT4 (blob) segments.
+*/
+static void test_blob_blob_multi_segment(void)
+{
+  HA_KEYSEG segs[2];
+  HP_KEYDEF keydef;
+  uchar rec1[BB_REC_BUFFER], rec2[BB_REC_BUFFER];
+  uchar key_buf[KEY_BUF_SIZE];
+  ulong h1, h2;
+
+  LEX_CUSTRING data_a1= { USTRING_WITH_LEN("first_blob_data_alpha") };
+  LEX_CUSTRING data_a2= { USTRING_WITH_LEN("second_blob_data_beta") };
+  LEX_CUSTRING data_b1= { USTRING_WITH_LEN("CHANGED_first_blob!!!") };
+  LEX_CUSTRING data_b2= { USTRING_WITH_LEN("CHANGED_second_blob!!") };
+
+  /* Segment 0: blob1 at BB_BLOB1_OFFSET */
+  memset(&segs[0], 0, sizeof(segs[0]));
+  segs[0].type=      HA_KEYTYPE_VARTEXT4;
+  segs[0].flag=      HA_BLOB_PART | HA_VAR_LENGTH_PART;
+  segs[0].start=     BB_BLOB1_OFFSET;
+  segs[0].length=    4 + portable_sizeof_char_ptr;
+  segs[0].bit_start= BB_BLOB_PACKLEN;
+  segs[0].charset=   &my_charset_latin1;
+  segs[0].null_bit=  0;
+
+  /* Segment 1: blob2 at BB_BLOB2_OFFSET */
+  memset(&segs[1], 0, sizeof(segs[1]));
+  segs[1].type=      HA_KEYTYPE_VARTEXT4;
+  segs[1].flag=      HA_BLOB_PART | HA_VAR_LENGTH_PART;
+  segs[1].start=     BB_BLOB2_OFFSET;
+  segs[1].length=    4 + portable_sizeof_char_ptr;
+  segs[1].bit_start= BB_BLOB_PACKLEN;
+  segs[1].charset=   &my_charset_latin1;
+  segs[1].null_bit=  0;
+
+  setup_keydef(&keydef, segs, 2);
+
+  /* Same data in both blobs: hash consistency */
+  build_two_blob_record(rec1, 1, data_a1.str, data_a1.length,
+                        data_a2.str, data_a2.length);
+  build_two_blob_record(rec2, 2, data_a1.str, data_a1.length,
+                        data_a2.str, data_a2.length);
+  h1= hp_rec_hashnr(&keydef, rec1);
+  h2= hp_rec_hashnr(&keydef, rec2);
+  ok(h1 == h2,
+     "blob+blob: same data in both blobs hashes equal (%lu == %lu)", h1, h2);
+
+  /* Same data: comparison must be equal */
+  ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) == 0,
+     "blob+blob: same data compares equal");
+
+  /* Change blob1 only: must compare unequal */
+  build_two_blob_record(rec2, 2, data_b1.str, data_b1.length,
+                        data_a2.str, data_a2.length);
+  ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) != 0,
+     "blob+blob: different blob1 compares unequal");
+
+  /* Change blob2 only: must compare unequal */
+  build_two_blob_record(rec2, 2, data_a1.str, data_a1.length,
+                        data_b2.str, data_b2.length);
+  ok(hp_rec_key_cmp(&keydef, rec1, rec2, NULL) != 0,
+     "blob+blob: different blob2 compares unequal");
+
+  /* hp_make_key: verify both blob lengths in the key */
+  hp_make_key(&keydef, key_buf, rec1);
+  {
+    uint32 key_blob1_len= uint4korr(key_buf);
+    uint32 key_blob2_len= uint4korr(key_buf + 4 + PTR_SIZE);
+
+    ok(key_blob1_len == data_a1.length,
+       "blob+blob: hp_make_key blob1 length = %u (expected %u)",
+       (uint) key_blob1_len, (uint) data_a1.length);
+    ok(key_blob2_len == data_a2.length,
+       "blob+blob: hp_make_key blob2 length = %u (expected %u)",
+       (uint) key_blob2_len, (uint) data_a2.length);
+  }
+}
+
+
 int main(int argc __attribute__((unused)),
          char **argv __attribute__((unused)))
 {
   MY_INIT("hp_test_hash");
-  plan(49);
+  plan(67);
 
   diag("Test 1: Hash consistency between record and key formats");
   test_hash_consistency();
@@ -931,6 +1148,12 @@ int main(int argc __attribute__((unused)),
 
   diag("Test 11: hp_hashnr vs hp_rec_hashnr consistency");
   test_key_vs_rec_hash_consistency();
+
+  diag("Test 12: Packlength variants (1, 3, 4)");
+  test_packlength_variants();
+
+  diag("Test 13: Multi-segment key with two blob segments");
+  test_blob_blob_multi_segment();
 
   my_end(0);
   return exit_status();

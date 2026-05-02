@@ -1150,7 +1150,7 @@ public:
     DBUG_ENTER("Field::pack_length_from_metadata");
     DBUG_RETURN(field_metadata);
   }
-  /* Length of row data inc record not including packed length */
+  /* Length of row data in a record, not including packed length prefix */
   virtual uint row_pack_length() const { return pack_length(); }
 
   /* Return the current size of data stored in the record */

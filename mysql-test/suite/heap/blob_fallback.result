@@ -32,15 +32,15 @@ a	blob_len	prefix
 10000	200	AAAAA
 10001	500	BBBBB
 10002	50	CCCCC
-select a, md5(b) from t1 where a=10000;
-a	md5(b)
-10000	16bf06b3717d1f238252870e699c2a2e
-select a, md5(b) from t1 where a=10001;
-a	md5(b)
-10001	f05df5898d087fc01bd25737b2b85788
-select a, md5(b) from t1 where a=10002;
-a	md5(b)
-10002	4aec7e49aeea73fdd3e1e5c565fc126a
+select a, b = repeat('A', 200) as intact from t1 where a=10000;
+a	intact
+10000	1
+select a, b = repeat('B', 500) as intact from t1 where a=10001;
+a	intact
+10001	1
+select a, b = repeat('C', 50)  as intact from t1 where a=10002;
+a	intact
+10002	1
 #
 # Verify scan still works correctly
 #

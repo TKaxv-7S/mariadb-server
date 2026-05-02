@@ -1,10 +1,11 @@
 #
-# MDEV-38975: Test semi-join materialization with BLOB columns in HEAP
-# temp tables.  Added to cover a bug where HA_BLOB_PART in
-# key_part_flag was uninitialized in SJ weedout temp tables, causing
-# incorrect blob key handling.
+# MDEV-38975: Test semi-join with BLOB columns in HEAP temp tables.
+# Covers a bug where HA_BLOB_PART in key_part_flag was uninitialized
+# in SJ weedout temp tables, causing incorrect blob key handling.
+# Force DuplicateWeedout by disabling other SJ strategies.
 #
-set optimizer_switch='materialization=on,in_to_exists=off,semijoin=off';
+set @save_optimizer_switch=@@optimizer_switch;
+set optimizer_switch='semijoin=on,firstmatch=off,loosescan=off';
 set @blob_len = 16;
 set @prefix_len = 6;
 set @suffix_len = @blob_len - @prefix_len;
@@ -30,3 +31,4 @@ explain extended select left(a1,7), left(a2,7) from t1 where a1 in (select b1 fr
 select left(a1,7), left(a2,7) from t1 where a1 in (select b1 from t2 where b1 > '0');
 
 drop table t1, t2;
+set optimizer_switch=@save_optimizer_switch;

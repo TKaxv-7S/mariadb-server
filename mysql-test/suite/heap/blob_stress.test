@@ -112,6 +112,14 @@ begin
         where id = (i - 2) * 5 + 3;
 
       update t1 set v = v + 100 where id = (i - 1) * 5 + 1;
+
+      # NULL -> non-NULL: update rows that had NULL b2 to have data
+      update t1 set b2 = repeat(char(74 + (i % 26)), 3000 + (i % 5) * 500)
+        where id = (i - 2) * 5 + 2 and b2 is null;
+
+      # non-NULL -> NULL: set b1 to NULL for some rows
+      update t1 set b1 = null
+        where id = (i - 1) * 5 + 3 and b1 is not null;
     end if;
 
     # Inline integrity check every 50 iterations
@@ -135,7 +143,7 @@ call blob_stress(200);
 --enable_query_log
 
 --echo # Phase 1 verification
-check table t1;
+--echo # (HEAP does not support CHECK TABLE)
 
 select (select count(*) from t1) = (select count(*) from t_verify)
   as row_counts_match;
@@ -209,7 +217,7 @@ while ($i < 260)
 --enable_query_log
 
 --echo # Phase 2 verification after fragmented reinsert
-check table t1;
+--echo # (HEAP does not support CHECK TABLE)
 
 select count(*) as corrupted from t1
   where b is not null and length(b) > 0
@@ -228,7 +236,7 @@ while ($i < 380)
 --enable_query_log
 
 --echo # Phase 2 verification after full-delete reinsert
-check table t1;
+--echo # (HEAP does not support CHECK TABLE)
 
 select count(*) as final_rows from t1;
 
@@ -285,7 +293,7 @@ while ($cycle < 20)
 --enable_query_log
 
 --echo # Phase 3 verification
-check table t1;
+--echo # (HEAP does not support CHECK TABLE)
 
 select count(*) as row_count from t1;
 

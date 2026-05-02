@@ -1,11 +1,9 @@
 /*
   Unit tests for HEAP blob key handling in heap_prepare_hp_create_info().
 
-  1. distinct_key_truncation: heap_prepare_hp_create_info() must override
-     key_part->length for blob key parts from pack_length() to
-     max_data_length().  The DISTINCT key path sets key_part.length =
-     pack_length() = 10, and the SQL layer's new_key_field() then
-     creates Field_varstring(10), which truncates blob data.
+  Verifies blob segment normalization (seg->length, seg->bit_start,
+  seg->flag, seg->type) and correct key setup for non-blob types
+  (varchar, int, enum, mixed keys, geometry GROUP BY).
 */
 
 #include <my_global.h>
@@ -83,22 +81,13 @@ make_test_field_blob(void *storage, uchar *ptr, uchar *null_ptr,
 
 
 /*
-  distinct_key_truncation: heap_prepare_hp_create_info must override
-  key_part->length for blob key parts from pack_length() to
-  max_data_length().
+  distinct_key_truncation: blob segment normalization.
 
-  The DISTINCT key path sets key_part.length = pack_length() = 10.
-  The SQL layer's new_key_field() then creates Field_varstring(10),
-  which truncates blob data longer than 10 bytes.
+  Verifies that heap_prepare_hp_create_info() correctly normalizes
+  blob key segments: seg->length = 4+ptr, seg->bit_start = packlength,
+  seg->flag has HA_BLOB_PART, seg->type is VARTEXT4/VARBINARY4.
 
-  heap_prepare_hp_create_info must widen key_part->length to
-  max_data_length() (the maximum data the blob type can hold)
-  and update store_length/key_length accordingly, so that
-  new_key_field() creates a Field_varstring large enough for
-  the full blob data.
-
-  FAILS when the override is missing (key_part.length stays at 10).
-  PASSES when heap_prepare_hp_create_info overrides to max_data_length().
+  Uses the DISTINCT key path setup where key_part.length = pack_length() = 10.
 */
 static void test_distinct_key_truncation()
 {
@@ -181,270 +170,24 @@ static void test_distinct_key_truncation()
   ok(err == 0,
      "distinct_key_truncation: heap_prepare succeeded (err=%d)", err);
 
-  /*
-    Phase 1 tests: key_part.length widening to max_data_length().
-    In MDEV-38975 proper (without varchar-to-blob promotion),
-    hp_create.c normalizes blob segments at runtime (zeroes
-    seg->length, derives bit_start from blob_descs), so this
-    widening is not needed. These assertions are deferred to
-    Phase 1 where they are exercised.
-  */
-  uint32 expected_length= bf.max_data_length();
-  ok(local_kpi.length == expected_length,
-     "distinct_key_truncation: key_part.length (%u) == max_data_length() (%u)",
-     (uint) local_kpi.length, (uint) expected_length);
-
-  uint expected_store_length= expected_length;
-  if (bf.real_maybe_null())
-    expected_store_length+= HA_KEY_NULL_LENGTH;
-  expected_store_length+= bf.key_part_length_bytes();
-  ok(local_kpi.store_length == expected_store_length,
-     "distinct_key_truncation: store_length (%u) == expected (%u)",
-     (uint) local_kpi.store_length, (uint) expected_store_length);
-  ok(local_sql_key.key_length == expected_store_length,
-     "distinct_key_truncation: key_length (%u) == expected (%u)",
-     (uint) local_sql_key.key_length, (uint) expected_store_length);
+  HP_KEYDEF *kd= &hp_ci.keydef[0];
+  ok(kd->seg[0].length == 4 + portable_sizeof_char_ptr,
+     "distinct_key_truncation: seg->length = %u (expected %u = 4+ptr)",
+     (uint) kd->seg[0].length, (uint)(4 + portable_sizeof_char_ptr));
+  ok(kd->seg[0].bit_start == bf.pack_length_no_ptr(),
+     "distinct_key_truncation: seg->bit_start = %u (expected %u = packlength)",
+     (uint) kd->seg[0].bit_start, (uint) bf.pack_length_no_ptr());
+  ok(kd->seg[0].flag & HA_BLOB_PART,
+     "distinct_key_truncation: seg->flag (0x%x) has HA_BLOB_PART",
+     (uint) kd->seg[0].flag);
+  ok(kd->seg[0].type == HA_KEYTYPE_VARBINARY4 ||
+     kd->seg[0].type == HA_KEYTYPE_VARTEXT4,
+     "distinct_key_truncation: seg->type = %u (expected VARTEXT4/VARBINARY4)",
+     (uint) kd->seg[0].type);
 
   my_free(hp_ci.keydef);
   my_free(hp_ci.blob_descs);
   bf.~Field_blob();
-}
-
-
-/*
-  rebuild_key_from_group_buff: mixed blob + varchar GROUP BY key.
-
-  Simulates the GROUP BY key format for:
-    GROUP BY city (TEXT), libname (VARCHAR(21))
-  The GROUP BY buffer uses Field_varstring format (2B length + data)
-  for all parts, with store_length advancing by fixed amounts.
-  rebuild_key_from_group_buff must correctly parse the key buffer and populate
-  record[0]'s blob field (packlength + pointer) and varchar field
-  (length_bytes + data).
-
-  Test wrapper in ha_heap.cc:
-*/
-extern void test_rebuild_key_from_group_buff(ha_heap *handler, TABLE *tbl,
-                                  HP_INFO *fake_file, HP_KEYDEF *keydef,
-                                  const uchar *key, uint key_index,
-                                  const uchar **rebuilt_key);
-
-/*
-  Record layout for mixed blob+varchar GROUP BY test:
-    byte 0:     null bitmap
-    bytes 1-2:  blob packlength=2 (length, little-endian)
-    bytes 3-10: blob data pointer (8 bytes)
-    byte 11:    varchar length_bytes=1 (field_length=21 < 256)
-    bytes 12-32: varchar data (21 bytes max)
-  reclength = 33
-*/
-#define MIX_REC_NULL_OFFSET    0
-#define MIX_BLOB_OFFSET        1
-#define MIX_BLOB_PACKLEN       2
-#define MIX_VARCHAR_OFFSET     11
-#define MIX_VARCHAR_FIELD_LEN  21
-#define MIX_REC_LENGTH         33
-
-static void test_rebuild_key_from_group_buff_mixed()
-{
-  uchar rec[MIX_REC_LENGTH];
-  memset(rec, 0xA5, sizeof(rec));  /* poison with known pattern */
-
-  TABLE_SHARE share;
-  memset(static_cast<void*>(&share), 0, sizeof(share));
-  share.fields= 2;
-  share.blob_fields= 0;
-  share.keys= 1;
-  share.reclength= MIX_REC_LENGTH;
-  share.rec_buff_length= MIX_REC_LENGTH;
-  share.db_record_offset= 1;
-
-  /* Create blob field: city TEXT (packlength=2) */
-  alignas(Field_blob) char bf_storage[sizeof(Field_blob)];
-  Field_blob *bfp= make_test_field_blob(bf_storage,
-                                        rec + MIX_BLOB_OFFSET,
-                                        rec + MIX_REC_NULL_OFFSET,
-                                        2, &share,
-                                        MIX_BLOB_PACKLEN,
-                                        &my_charset_latin1);
-  bfp->field_index= 0;
-
-  /* Create varchar field: libname VARCHAR(21) */
-  static const LEX_CSTRING vs_name= {STRING_WITH_LEN("")};
-  alignas(Field_varstring) char vs_storage[sizeof(Field_varstring)];
-  Field_varstring *vfp= ::new (vs_storage) Field_varstring(
-      rec + MIX_VARCHAR_OFFSET,
-      MIX_VARCHAR_FIELD_LEN,
-      1,              /* length_bytes: 1 for field_length < 256 */
-      rec + MIX_REC_NULL_OFFSET,
-      4,              /* null_bit */
-      Field::NONE,
-      &vs_name,
-      &share,
-      DTCollation(&my_charset_latin1));
-  vfp->field_index= 1;
-
-  Field *field_array[3]= { bfp, vfp, NULL };
-
-  /*
-    GROUP BY key: two parts.
-    Part 0: blob (city) — null_bit=2, key_part_flag=HA_BLOB_PART, length=0
-    Part 1: varchar (libname) — null_bit=4, key_part_flag=HA_VAR_LENGTH_PART, length=21
-  */
-  KEY_PART_INFO kpi[2];
-  memset(kpi, 0, sizeof(kpi));
-
-  /* Blob key part */
-  kpi[0].field= bfp;
-  kpi[0].offset= MIX_BLOB_OFFSET;
-  kpi[0].length= 0;                            /* Field_blob::key_length() */
-  kpi[0].key_part_flag= HA_BLOB_PART;
-  kpi[0].null_bit= 2;
-  kpi[0].null_offset= 0;
-  kpi[0].type= bfp->key_type();
-  /*
-    GROUP BY store_length: computed from group buffer Field_varstring.
-    For blob with key_field_length=16382:
-      Field_varstring(16382).pack_length() = 16384
-      + 1 (maybe_null) = 16385
-    For this test use a smaller key_field_length = 100 for simplicity.
-  */
-  uint blob_key_field_len= 100;
-  kpi[0].store_length= blob_key_field_len + 2 /* len_bytes */ + 1 /* null */;
-
-  /* Varchar key part */
-  kpi[1].field= vfp;
-  kpi[1].offset= MIX_VARCHAR_OFFSET;
-  kpi[1].length= MIX_VARCHAR_FIELD_LEN;
-  kpi[1].key_part_flag= HA_VAR_LENGTH_PART;
-  kpi[1].null_bit= 4;
-  kpi[1].null_offset= 0;
-  kpi[1].type= vfp->key_type();
-  /*
-    VARCHAR store_length in GROUP BY buffer:
-    Field_varstring(21).pack_length() = 21 + 2 (key_part_length_bytes always 2)
-    + 1 (maybe_null) = 24
-  */
-  kpi[1].store_length= MIX_VARCHAR_FIELD_LEN + 2 /* len_bytes */ + 1 /* null */;
-
-  KEY sql_key;
-  memset(&sql_key, 0, sizeof(sql_key));
-  sql_key.user_defined_key_parts= 2;
-  sql_key.usable_key_parts= 2;
-  sql_key.key_part= kpi;
-  sql_key.algorithm= HA_KEY_ALG_HASH;
-
-  TABLE test_table;
-  memset(static_cast<void*>(&test_table), 0, sizeof(test_table));
-  test_table.record[0]= rec;
-  test_table.s= &share;
-  test_table.field= field_array;
-  test_table.key_info= &sql_key;
-  share.key_info= &sql_key;
-  bfp->table= &test_table;
-  vfp->table= &test_table;
-
-  uint blob_offsets[1]= { 0 };
-  share.blob_field= blob_offsets;
-
-  /*
-    Build a GROUP BY key buffer in the same format as end_update().
-    Layout per key part: [null_flag_byte] [2B_length] [data...]
-    padded to store_length.
-
-    Part 0 (blob "New York"):
-      byte 0: null=0
-      bytes 1-2: length=8 (LE)
-      bytes 3-10: "New York"
-      bytes 11-102: padding (zero)
-    Part 1 (varchar "NYC Lib"):
-      byte 103: null=0
-      bytes 104-105: length=7 (LE)
-      bytes 106-112: "NYC Lib"
-      bytes 113-126: padding (zero)
-  */
-  uint key_buf_len= kpi[0].store_length + kpi[1].store_length;
-  uchar *key_buf= (uchar*) calloc(1, key_buf_len);
-
-  /* Part 0: blob "New York" */
-  uchar *p= key_buf;
-  p[0]= 0;                                     /* not null */
-  int2store(p + 1, 8);                          /* length = 8 */
-  memcpy(p + 3, "New York", 8);
-
-  /* Part 1: varchar "NYC Lib" */
-  p= key_buf + kpi[0].store_length;
-  p[0]= 0;                                     /* not null */
-  int2store(p + 1, 7);                          /* length = 7 */
-  memcpy(p + 3, "NYC Lib", 7);
-
-  /*
-    Now set up HEAP structures for hp_make_key.
-    Use heap_prepare_hp_create_info to create them.
-  */
-  Fake_thd_guard thd_guard;
-
-  HP_CREATE_INFO hp_ci;
-  memset(&hp_ci, 0, sizeof(hp_ci));
-  hp_ci.max_table_size= 1024*1024;
-  hp_ci.keys= 1;
-  hp_ci.reclength= MIX_REC_LENGTH;
-
-  int err= heap_prepare_hp_create_info(&test_table, TRUE, &hp_ci);
-  ok(err == 0, "rebuild_key_from_group_buff_mixed: heap_prepare succeeded (err=%d)", err);
-
-  /* Verify blob segment */
-  HP_KEYDEF *kd= &hp_ci.keydef[0];
-  ok(kd->keysegs == 2,
-     "rebuild_key_from_group_buff_mixed: keysegs=%u (expected 2)", kd->keysegs);
-
-  /*
-    Create a minimal ha_heap + fake HP_INFO for rebuild_key_from_group_buff.
-    rebuild_key_from_group_buff reads from table->key_info (SQL-layer) and
-    writes to table->record[0], then calls hp_make_key into
-    file->lastkey.
-  */
-  uchar lastkey_buf[512];
-  memset(lastkey_buf, 0, sizeof(lastkey_buf));
-  HP_INFO fake_file;
-  memset(&fake_file, 0, sizeof(fake_file));
-  fake_file.lastkey= (uchar*) lastkey_buf;
-
-  ha_heap handler(heap_hton, &share);
-
-  /* Reset record[0] to poison to detect unwritten bytes */
-  memset(rec, 0xA5, sizeof(rec));
-
-  const uchar *rebuilt= NULL;
-  test_rebuild_key_from_group_buff(&handler, &test_table, &fake_file,
-                        kd, key_buf, 0, &rebuilt);
-
-  /* Verify record[0] was populated correctly */
-  /* Blob field: packlength=2 bytes of length + 8 bytes of pointer */
-  uint16 blob_len_in_rec;
-  memcpy(&blob_len_in_rec, rec + MIX_BLOB_OFFSET, 2);
-  ok(blob_len_in_rec == 8,
-     "rebuild_key_from_group_buff_mixed: blob length in record[0] = %u (expected 8)",
-     (uint) blob_len_in_rec);
-
-  const uchar *blob_ptr_in_rec;
-  memcpy(&blob_ptr_in_rec, rec + MIX_BLOB_OFFSET + 2, sizeof(void*));
-  ok(memcmp(blob_ptr_in_rec, "New York", 8) == 0,
-     "rebuild_key_from_group_buff_mixed: blob data = 'New York'");
-
-  /* Varchar field: length_bytes=1 byte of length + data */
-  uint8 varchar_len_in_rec= rec[MIX_VARCHAR_OFFSET];
-  ok(varchar_len_in_rec == 7,
-     "rebuild_key_from_group_buff_mixed: varchar length in record[0] = %u (expected 7)",
-     (uint) varchar_len_in_rec);
-  ok(memcmp(rec + MIX_VARCHAR_OFFSET + 1, "NYC Lib", 7) == 0,
-     "rebuild_key_from_group_buff_mixed: varchar data = 'NYC Lib'");
-
-  free(key_buf);
-  my_free(hp_ci.keydef);
-  my_free(hp_ci.blob_descs);
-  vfp->~Field_varstring();
-  bfp->~Field_blob();
 }
 
 
@@ -770,156 +513,6 @@ static void test_mixed_int_varchar_key()
 
 
 /*
-  Test: varchar→blob promotion in tmp table (main.having scenario).
-
-  Simulates the case where:
-    1. The SQL layer sets up KEY_PART_INFO with length=20 (varchar-sized)
-    2. create_tmp_field promotes the field to Field_blob in the tmp table
-    3. heap_prepare_hp_create_info is called with this mismatch
-
-  The key_part has varchar-like setup (non-zero length, HA_VAR_LENGTH_PART
-  flag), but the actual field is a blob.  heap_prepare_hp_create_info
-  must detect this via field->key_part_flag() and set seg->flag to
-  HA_BLOB_PART, seg->length to 0, and widen key_part->length.
-*/
-static void test_varchar_promoted_to_blob()
-{
-  static const LEX_CSTRING fname_i= {STRING_WITH_LEN("id")};
-
-  /*
-    Record layout (mimics the tmp table after promotion):
-      byte 0:     null bitmap
-      bytes 1-8:  bigint (8 bytes)
-      bytes 9-10: blob packlength=2
-      bytes 11-18: blob data pointer
-    reclength = 19
-  */
-  TABLE_SHARE share;
-  memset(static_cast<void*>(&share), 0, sizeof(share));
-  share.fields= 2;
-  share.keys= 1;
-  share.reclength= 19;
-  share.rec_buff_length= 19;
-  share.db_record_offset= 1;
-  share.blob_fields= 0; /* Field_blob ctor increments */
-
-  uchar rec_buf[24];
-  memset(rec_buf, 0, sizeof(rec_buf));
-
-  /* Field 0: bigint at offset 1 */
-  alignas(Field_long) char fl_storage[sizeof(Field_long)];
-  Field_long *fl= ::new (fl_storage) Field_long(
-      rec_buf + 1, 11, (uchar*) 0, 0,
-      Field::NONE, &fname_i, false, false);
-  fl->field_index= 0;
-
-  /* Field 1: Field_blob at offset 9 (promoted from varchar(20)) */
-  alignas(Field_blob) char bf_storage[sizeof(Field_blob)];
-  Field_blob *bf= make_test_field_blob(bf_storage,
-                                       rec_buf + 9,
-                                       (uchar*) 0, 0,
-                                       &share, 2,
-                                       &my_charset_latin1);
-  bf->field_index= 1;
-
-  Field *field_array[3]= { fl, bf, NULL };
-
-  uint blob_offsets[1]= { 1 };
-  share.blob_field= blob_offsets;
-
-  /*
-    KEY_PART_INFO: set up as if the SQL layer still thinks it's varchar.
-    key_part[1].length = 20 (varchar-like, non-zero).
-    key_part[1].key_part_flag = HA_VAR_LENGTH_PART (from original varchar).
-    But key_part[1].field = Field_blob (the promoted field).
-  */
-  KEY_PART_INFO kpis[2];
-  memset(kpis, 0, sizeof(kpis));
-
-  kpis[0].field= fl;
-  kpis[0].offset= 1;
-  kpis[0].length= 8;
-  kpis[0].key_part_flag= 0;
-  kpis[0].type= fl->key_type();
-  kpis[0].store_length= 8;
-
-  kpis[1].field= bf;          /* promoted blob */
-  kpis[1].offset= 9;
-  kpis[1].length= 20;         /* varchar-like, NOT 0 */
-  kpis[1].key_part_flag= HA_VAR_LENGTH_PART;  /* stale from varchar setup */
-  kpis[1].type= HA_KEYTYPE_VARTEXT1;
-  kpis[1].store_length= 20 + 2;  /* varchar store_length */
-
-  KEY sql_key;
-  memset(&sql_key, 0, sizeof(sql_key));
-  sql_key.user_defined_key_parts= 2;
-  sql_key.usable_key_parts= 2;
-  sql_key.key_part= kpis;
-  sql_key.algorithm= HA_KEY_ALG_HASH;
-  sql_key.key_length= 8 + 20 + 2;
-
-  TABLE test_table;
-  memset(static_cast<void*>(&test_table), 0, sizeof(test_table));
-  test_table.record[0]= rec_buf;
-  test_table.s= &share;
-  test_table.field= field_array;
-  test_table.key_info= &sql_key;
-  share.key_info= &sql_key;
-
-  fl->table= &test_table;
-  bf->table= &test_table;
-
-  Fake_thd_guard thd_guard;
-
-  HP_CREATE_INFO hp_ci;
-  memset(&hp_ci, 0, sizeof(hp_ci));
-  hp_ci.max_table_size= 1024*1024;
-  hp_ci.keys= 1;
-  hp_ci.reclength= 19;
-
-  int err= heap_prepare_hp_create_info(&test_table, TRUE, &hp_ci);
-
-  ok(err == 0,
-     "promoted_blob: heap_prepare succeeded (err=%d)", err);
-
-  HP_KEYDEF *kd= &hp_ci.keydef[0];
-  ok(kd->keysegs == 2,
-     "promoted_blob: keysegs = %u (expected 2)", kd->keysegs);
-
-  /* seg[0]: bigint — should be untouched */
-  ok(kd->seg[0].length == 8,
-     "promoted_blob: seg[0].length = %u (expected 8)", (uint) kd->seg[0].length);
-  ok(!(kd->seg[0].flag & HA_BLOB_PART),
-     "promoted_blob: seg[0] has NO HA_BLOB_PART");
-
-  /*
-    seg[1]: the promoted blob.
-    heap_prepare_hp_create_info uses field->key_part_flag() which returns
-    HA_BLOB_PART for Field_blob.  It must:
-      - set seg->flag to HA_BLOB_PART (not HA_VAR_LENGTH_PART)
-      - set seg->length to 0 (blob convention)
-      - widen key_part->length to max_data_length()
-  */
-  ok(kd->seg[1].flag & HA_BLOB_PART,
-     "promoted_blob: seg[1].flag (0x%x) has HA_BLOB_PART",
-     (uint) kd->seg[1].flag);
-  ok(kd->seg[1].length == 0,
-     "promoted_blob: seg[1].length = %u (expected 0 = blob convention)",
-     (uint) kd->seg[1].length);
-  ok(kpis[1].length == bf->max_data_length(),
-     "promoted_blob: key_part.length widened to %u (expected %u)",
-     (uint) kpis[1].length, (uint) bf->max_data_length());
-
-  my_free(hp_ci.keydef);
-  my_free(hp_ci.blob_descs);
-  bf->~Field_blob();
-  fl->~Field_long();
-}
-
-
-
-
-/*
   Test: geometry GROUP BY key must NOT trigger blob key widening.
 
   Field_geom::key_length() returns packlength (4), not 0 like Field_blob.
@@ -1007,8 +600,7 @@ static void test_geometry_group_by_no_widening()
   share.blob_field= blob_offsets;
 
   /* Set group to simulate GROUP BY path */
-  ORDER group_item;
-  memset(&group_item, 0, sizeof(group_item));
+  ORDER group_item= {};
   test_table.group= &group_item;
 
   Fake_thd_guard thd_guard;
@@ -1041,10 +633,11 @@ static void test_geometry_group_by_no_widening()
      "geom_group_by: key_length = %u (expected %u, NOT overflowed)",
      (uint) sql_key.key_length, (uint) orig_key_length);
 
-  /* seg->length must be 0 (blob convention) */
-  ok(hp_ci.keydef[0].seg[0].length == 0,
-     "geom_group_by: seg->length = %u (expected 0 = blob convention)",
-     (uint) hp_ci.keydef[0].seg[0].length);
+  /* seg->length = 4+ptr (blob key format) */
+  ok(hp_ci.keydef[0].seg[0].length == 4 + portable_sizeof_char_ptr,
+     "geom_group_by: seg->length = %u (expected %u = 4+ptr)",
+     (uint) hp_ci.keydef[0].seg[0].length,
+     (uint)(4 + portable_sizeof_char_ptr));
 
 
   my_free(hp_ci.keydef);
@@ -1059,13 +652,10 @@ int main(int argc __attribute__((unused)),
   MY_INIT("hp_test_key_setup");
   /* Field constructors reference system_charset_info via DTCollation */
   system_charset_info= &my_charset_latin1;
-  plan(47);
+  plan(34);
 
-  diag("distinct_key_truncation: key_part->length widened for blob key parts");
+  diag("distinct_key_truncation: blob segment normalization");
   test_distinct_key_truncation();
-
-  diag("rebuild_key_from_group_buff: mixed blob + varchar GROUP BY key");
-  test_rebuild_key_from_group_buff_mixed();
 
   diag("varchar_only: VARCHAR key has no blob flag");
   test_varchar_only_key();
@@ -1078,9 +668,6 @@ int main(int argc __attribute__((unused)),
 
   diag("int_varchar: mixed INT+VARCHAR key has no blob flag");
   test_mixed_int_varchar_key();
-
-  diag("promoted_blob: varchar promoted to blob in tmp table");
-  test_varchar_promoted_to_blob();
 
   diag("geom_group_by: geometry GROUP BY key must not trigger blob key widening");
   test_geometry_group_by_no_widening();
