@@ -900,37 +900,65 @@ int ha_heap::find_unique_row(uchar *record, uint unique_idx)
   HASH_INFO *pos= hp_find_hash(&keyinfo->block,
                                hp_mask(rec_hash,
                                        share->blength, share->records));
+
+  if (!share->blob_count)
+  {
+    /* Non-blob path: compare then copy */
+    do
+    {
+      if (pos->hash_of_key == rec_hash &&
+          !hp_rec_key_cmp(keyinfo, record, pos->ptr_to_rec, file))
+      {
+        file->current_hash_ptr= pos;
+        file->current_ptr= pos->ptr_to_rec;
+        file->update= HA_STATE_AKTIV;
+        memcpy(record, file->current_ptr, (size_t) share->reclength);
+        DBUG_RETURN(0);
+      }
+    } while ((pos= pos->next_key));
+    DBUG_RETURN(1);
+  }
+
+  /*
+    Blob path: materialize-then-compare.
+    Pre-materialize all blobs via hp_read_blobs() before comparison,
+    then compare with info=NULL since both records have direct data
+    pointers. This avoids the double reassembly that would occur if
+    hp_rec_key_cmp() materialized each blob individually and then
+    hp_read_blobs() re-walked the same chains.
+  */
+  uchar *input_copy= (uchar*) my_safe_alloca(share->reclength);
+  if (!input_copy)
+    DBUG_RETURN(-1);
+  memcpy(input_copy, record, (size_t) share->reclength);
+
+  int result= 1;
   do
   {
-    /*
-      Hash pre-check avoids expensive blob materialization
-      for non-matching entries.
-    */
-    if (pos->hash_of_key == rec_hash &&
-        !hp_rec_key_cmp(keyinfo, record, pos->ptr_to_rec, file))
+    if (pos->hash_of_key != rec_hash)
+      continue;
+
+    memcpy(record, pos->ptr_to_rec, (size_t) share->reclength);
+    if (hp_read_blobs(file, record, pos->ptr_to_rec))
+    {
+      result= -1;
+      break;
+    }
+    if (!hp_rec_key_cmp(keyinfo, input_copy, record, NULL))
     {
       file->current_hash_ptr= pos;
       file->current_ptr= pos->ptr_to_rec;
-      file->update = HA_STATE_AKTIV;
-      /*
-        We compare it only by record in the index, so better to read all
-        records.
-      */
-      memcpy(record, file->current_ptr, (size_t) share->reclength);
-      /*
-        TODO: hp_rec_key_cmp() above already materialized blobs
-        via hp_materialize_one_blob(). A future optimization could
-        concatenate all non-zero-copy blobs into blob_buff during
-        comparison, avoiding this second materialization pass.
-      */
-      if (share->blob_count && hp_read_blobs(file, record, file->current_ptr))
-        DBUG_RETURN(-1);
-
-      DBUG_RETURN(0); // found and position set
+      file->update= HA_STATE_AKTIV;
+      result= 0;
+      break;
     }
-  }
-  while ((pos= pos->next_key));
-  DBUG_RETURN(1); // not found
+    memcpy(record, input_copy, (size_t) share->reclength);
+  } while ((pos= pos->next_key));
+
+  if (result)
+    memcpy(record, input_copy, (size_t) share->reclength);
+  my_safe_afree(input_copy, share->reclength);
+  DBUG_RETURN(result);
 }
 
 struct st_mysql_storage_engine heap_storage_engine=
