@@ -42,6 +42,8 @@ INSERT INTO t1 (a, b, v)
 # Sanity: 100 rows, 50 distinct a values, total v = 1+...+50 + 101+...+150 = 7550
 SELECT COUNT(*), COUNT(DISTINCT a), SUM(v) FROM t1;
 
+set @save_max_sort_length=@@max_sort_length;
+set @save_sort_buffer_size=@@sort_buffer_size;
 set @@max_sort_length=65536;
 set @@sort_buffer_size=1024*1024*128;
 
@@ -115,7 +117,7 @@ SHOW STATUS LIKE 'Created_tmp%';
 
 --echo # --- GROUP_CONCAT(DISTINCT text_col) ---
 --echo # GROUP_CONCAT uses blob_storage for blob values; the HEAP key part is
---echo # tiny (12 bytes/row). Expect Created_tmp_disk_tables=0 in both runs.
+--echo # tiny (12 bytes/row). Expect Created_tmp_disk_tables=0 when HEAP is used.
 FLUSH STATUS;
 SELECT LENGTH(GROUP_CONCAT(DISTINCT LEFT(a, 4) ORDER BY a)) AS gc_len FROM t1;
 SHOW STATUS LIKE 'Created_tmp%';
@@ -141,6 +143,9 @@ SELECT COUNT(*), SUM(gv) FROM (
 SHOW STATUS LIKE 'Created_tmp%';
 
 DROP TABLE t1;
+
+set @@max_sort_length=@save_max_sort_length;
+set @@sort_buffer_size=@save_sort_buffer_size;
 
 --enable_ps2_protocol
 --enable_ps_protocol

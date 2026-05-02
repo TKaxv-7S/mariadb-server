@@ -125,7 +125,7 @@ int heap_create(const char *name, HP_CREATE_INFO *create_info,
         case HA_KEYTYPE_VARTEXT1:
           keyinfo->flag|= HA_VAR_LENGTH_KEY;
           /*
-            Real blob fields always enter as VARTEXT2/VARBINARY2, never
+            Real blob fields always enter as VARTEXT4/VARBINARY4, never
             as VARTEXT1/VARBINARY1. Strip any spurious HA_BLOB_PART
             (e.g. from uninitialized key_part_flag in SJ weedout tables).
           */
@@ -140,7 +140,7 @@ int heap_create(const char *name, HP_CREATE_INFO *create_info,
           else
             length+= 2;
           keyseg->bit_start= 1;         /* Packlength for records */
-          keyseg->bit_length= 2;        /* Paclength for key */
+          keyseg->bit_length= 2;        /* Packlength for key */
           break;
         case HA_KEYTYPE_VARBINARY4:
           /* fall through */
@@ -153,13 +153,8 @@ int heap_create(const char *name, HP_CREATE_INFO *create_info,
           DBUG_ASSERT(keyseg->bit_length == 0);
 
           /*
-            Save number of bytes used to store length.
-            For blob segments, bit_start holds the actual blob packlength
-            (1-4). Some SQL layer paths (DISTINCT) set it explicitly;
-            others (UNION) leave it 0 and set seg->length to pack_length
-            (= packlength + sizeof(uchar*)). Derive it when missing.
-            Also normalize seg->length to 0 ("whole blob") for blob
-            segments where the SQL layer set it to pack_length.
+            bit_start holds the actual blob packlength (1-4), set by
+            heap_prepare_hp_create_info().
           */
           keyinfo->flag|= HA_VAR_LENGTH_KEY;
           keyseg->type= HA_KEYTYPE_VARTEXT4;

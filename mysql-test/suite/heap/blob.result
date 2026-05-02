@@ -422,7 +422,7 @@ short1
 short2
 drop table t1;
 #
-# Table-full error with blob data
+# Table-full error with blob data (no partial rows from failed inserts)
 #
 set @save_max= @@max_heap_table_size;
 set @@max_heap_table_size= 65536;
@@ -432,9 +432,20 @@ insert into t1 values (2, repeat('y', 30000));
 ERROR HY000: The table 't1' is full
 insert into t1 values (3, repeat('z', 30000));
 ERROR HY000: The table 't1' is full
+select count(*) as row_count from t1;
+row_count
+1
 select a, length(b) from t1 where a=1;
 a	length(b)
 1	30000
+select count(*) as corrupted from t1
+where b is not null and length(b) > 0
+and b != repeat(left(b, 1), length(b));
+corrupted
+0
+select count(*) as scan_count from t1;
+scan_count
+1
 set @@max_heap_table_size= @save_max;
 drop table t1;
 #
@@ -633,4 +644,167 @@ delete from t1 where a=2;
 select * from t1 order by a;
 a	b
 1	changed
+drop table t1;
+#
+# INSERT ON DUPLICATE KEY UPDATE with blobs
+#
+create table t1 (a int not null, b blob, c blob, primary key(a)) engine=memory;
+insert into t1 values (1, repeat('A', 5000), repeat('B', 3000));
+insert into t1 values (2, repeat('C', 8000), repeat('D', 12000));
+insert into t1 values (1, repeat('X', 10000), repeat('Y', 7000))
+on duplicate key update b=values(b), c=values(c);
+select a, length(b), left(b,3), length(c), left(c,3) from t1 order by a;
+a	length(b)	left(b,3)	length(c)	left(c,3)
+1	10000	XXX	7000	YYY
+2	8000	CCC	12000	DDD
+select a from t1 where b=repeat('X', 10000) and c=repeat('Y', 7000);
+a
+1
+insert into t1 values (3, repeat('M', 6000), repeat('N', 4000))
+on duplicate key update b=values(b);
+select a, length(b), left(b,3) from t1 where a=3;
+a	length(b)	left(b,3)
+3	6000	MMM
+insert into t1 values (2, NULL, NULL)
+on duplicate key update b=NULL, c=NULL;
+select a, b, c from t1 where a=2;
+a	b	c
+2	NULL	NULL
+insert into t1 values (2, repeat('R', 15000), repeat('S', 20000))
+on duplicate key update b=values(b), c=values(c);
+select a, length(b), length(c) from t1 where a=2;
+a	length(b)	length(c)
+2	15000	20000
+select a from t1 where b=repeat('R', 15000) and c=repeat('S', 20000);
+a
+2
+drop table t1;
+#
+# JSON column on MEMORY table
+#
+create table t1 (a int not null, j json, primary key(a)) engine=memory;
+insert into t1 values (1, '{"key": "value", "num": 42}');
+insert into t1 values (2, json_array(1, 2, 3, repeat('x', 5000)));
+select a, json_value(j, '$.key') as k, json_value(j, '$.num') as n from t1 where a=1;
+a	k	n
+1	value	42
+select a, json_value(j, '$[0]') as first_elem, length(j) from t1 where a=2;
+a	first_elem	length(j)
+2	1	5013
+update t1 set j=json_object('updated', true, 'data', repeat('y', 8000)) where a=1;
+select a, json_value(j, '$.updated') as upd, length(j) from t1 where a=1;
+a	upd	length(j)
+1	1	8029
+delete from t1 where a=2;
+select count(*) from t1;
+count(*)
+1
+drop table t1;
+#
+# LONGBLOB at uint16 run_rec_count split boundary
+#
+# With recbuffer=16, visible=15, a single run's max payload is
+# (15-10) + 65534*16 = 1,048,549 bytes.  Blobs near this boundary
+# exercise the run-splitting logic at the uint16 cap.
+#
+set @save_max= @@max_heap_table_size;
+set @@max_heap_table_size= 128*1024*1024;
+create table t1 (a int not null, b longblob, primary key(a)) engine=memory;
+insert into t1 values (1, repeat('A', 1048549));
+select a, length(b), left(b,3), right(b,3) from t1 where a=1;
+a	length(b)	left(b,3)	right(b,3)
+1	1048549	AAA	AAA
+select a from t1 where b=repeat('A', 1048549);
+a
+1
+insert into t1 values (2, repeat('B', 1048550));
+select a, length(b), left(b,3), right(b,3) from t1 where a=2;
+a	length(b)	left(b,3)	right(b,3)
+2	1048550	BBB	BBB
+select a from t1 where b=repeat('B', 1048550);
+a
+2
+insert into t1 values (3, repeat('C', 2097152));
+select a, length(b), left(b,3), right(b,3) from t1 where a=3;
+a	length(b)	left(b,3)	right(b,3)
+3	2097152	CCC	CCC
+select a from t1 where b=repeat('C', 2097152);
+a
+3
+delete from t1;
+insert into t1 values (4, repeat('D', 1048550));
+select a from t1 where b=repeat('D', 1048550);
+a
+4
+set @@max_heap_table_size= @save_max;
+drop table t1;
+#
+# Case A/B/C exact boundary blob sizes
+#
+# (int, blob) table: recbuffer=16, visible=15, header=10
+# Case A max: 5 bytes (fits in rec 0 payload area)
+# Case B approx max: ~16325 bytes (single run, zero-copy)
+# Case C: anything larger than one run
+#
+create table t1 (a int not null, b blob, primary key(a)) engine=memory;
+insert into t1 values (1, repeat('A', 5));
+select a, length(b), b from t1 where a=1;
+a	length(b)	b
+1	5	AAAAA
+select a from t1 where b=repeat('A', 5);
+a
+1
+insert into t1 values (2, repeat('B', 6));
+select a, length(b), b from t1 where a=2;
+a	length(b)	b
+2	6	BBBBBB
+select a from t1 where b=repeat('B', 6);
+a
+2
+insert into t1 values (3, repeat('C', 10000));
+select a, length(b), left(b,3) from t1 where a=3;
+a	length(b)	left(b,3)
+3	10000	CCC
+select a from t1 where b=repeat('C', 10000);
+a
+3
+insert into t1 values (4, repeat('D', 50000));
+select a, length(b), left(b,3) from t1 where a=4;
+a	length(b)	left(b,3)
+4	50000	DDD
+select a from t1 where b=repeat('D', 50000);
+a
+4
+select a, length(b) from t1 order by a;
+a	length(b)
+1	5
+2	6
+3	10000
+4	50000
+update t1 set b=repeat('E', 30000) where a=1;
+select a, length(b), left(b,3) from t1 where a=1;
+a	length(b)	left(b,3)
+1	30000	EEE
+select a from t1 where b=repeat('E', 30000);
+a
+1
+update t1 set b='tiny' where a=4;
+select a, length(b), b from t1 where a=4;
+a	length(b)	b
+4	4	tiny
+drop table t1;
+#
+# BTREE index on blob column is rejected
+#
+create table t1 (a int, b blob, key b_idx using btree (b)) engine=memory;
+ERROR 42000: BLOB column `b` can't be used in key specification in the MEMORY table
+# HASH index on explicit blob key is also rejected (user tables)
+create table t1 (a int, b blob, key b_idx using hash (b)) engine=memory;
+ERROR 42000: BLOB column `b` can't be used in key specification in the MEMORY table
+# But BTREE on non-blob column with blob data column works
+create table t1 (a int not null, b blob, key a_idx using btree (a)) engine=memory;
+insert into t1 values (1, repeat('x', 5000)), (2, repeat('y', 8000));
+select a, length(b) from t1 where a=2;
+a	length(b)
+2	8000
 drop table t1;

@@ -66,9 +66,9 @@ insert into t1 values (10002, repeat('C', 50));
 select a, length(b) as blob_len, left(b, 5) as prefix from t1
   where a >= 10000 order by a;
 
-select a, md5(b) from t1 where a=10000;
-select a, md5(b) from t1 where a=10001;
-select a, md5(b) from t1 where a=10002;
+select a, b = repeat('A', 200) as intact from t1 where a=10000;
+select a, b = repeat('B', 500) as intact from t1 where a=10001;
+select a, b = repeat('C', 50)  as intact from t1 where a=10002;
 
 --echo #
 --echo # Verify scan still works correctly
