@@ -107,8 +107,7 @@ retry:
   */
   if (hp_is_cont(info->current_ptr, share->visible))
   {
-    if (hp_blob_run_format(info->current_ptr, share->visible)
-        != HP_BLOB_CASE_A_SINGLE_REC)
+    if (!hp_is_single_rec(info->current_ptr, share->visible))
     {
       uint16 run_rec_count= hp_cont_rec_count(info->current_ptr);
       if (run_rec_count > 1)

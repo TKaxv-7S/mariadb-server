@@ -131,7 +131,7 @@ void hp_free_run_chain(HP_SHARE *share, uchar *chain)
     uint16 run_rec_count;
     uint16 j;
 
-    if (hp_blob_run_format(chain, visible) == HP_BLOB_CASE_A_SINGLE_REC)
+    if (hp_is_single_rec(chain, visible))
     {
       /* Case A: single record, no header */
       next_run= NULL;
@@ -171,7 +171,7 @@ void hp_free_run_chain(HP_SHARE *share, uchar *chain)
   @param data_len      Total blob data length
   @param run_start     Pointer to first record of the run
   @param run_rec_count Number of consecutive records in this run
-  @param format        Storage format (Case A / Case B / Case C)
+  @param format        Storage format bit (HP_ROW_SINGLE_REC / HP_ROW_CONT_ZEROCOPY / HP_ROW_MULTIPLE_REC)
   @param offset        [in/out] Current offset into blob data
 
   @note Caller must link runs by overwriting next_cont in the previous run.
@@ -180,7 +180,7 @@ void hp_free_run_chain(HP_SHARE *share, uchar *chain)
 static void hp_write_run_data(HP_SHARE *share, const uchar *data,
                               uint32 data_len, uchar *run_start,
                               uint16 run_rec_count,
-                              enum hp_blob_format format,
+                              uchar format,
                               uint32 *offset)
 {
   uint visible= share->visible;
@@ -190,7 +190,7 @@ static void hp_write_run_data(HP_SHARE *share, const uchar *data,
   uint32 chunk;
   uint16 rec;
 
-  if (format == HP_BLOB_CASE_A_SINGLE_REC)
+  if (format & HP_ROW_SINGLE_REC)
   {
     /*
       Case A: single-record run, no header.  Data starts at offset 0,
@@ -210,15 +210,14 @@ static void hp_write_run_data(HP_SHARE *share, const uchar *data,
     *((uchar**) run_start)= NULL;
     int2store(run_start + sizeof(uchar*), run_rec_count);
     run_start[visible]= HP_ROW_ACTIVE | HP_ROW_IS_CONT |
-                         (format == HP_BLOB_CASE_B_ZEROCOPY
-                          ? HP_ROW_CONT_ZEROCOPY : 0);
+                         (format & (HP_ROW_CONT_ZEROCOPY | HP_ROW_MULTIPLE_REC));
   }
 
   /*
     We come here when we need data in the initial run block.
     In other words, we are not writing a multi-row zerocopy block.
   */
-  if (format == HP_BLOB_CASE_C_MULTI_RUN)
+  if (format & HP_ROW_MULTIPLE_REC)
   {
     chunk= visible - HP_CONT_HEADER_SIZE;
     if (chunk > remaining)
@@ -256,7 +255,7 @@ static void hp_write_run_data(HP_SHARE *share, const uchar *data,
 
 /*
   Unlink a contiguous group from the delete list and write blob data into it.
-  Does not support zerocopy (always uses HP_BLOB_CASE_C_MULTI_RUN).
+  Does not support zerocopy (always uses HP_ROW_MULTIPLE_REC format).
 
   @param share          Table share
   @param data_ptr       Blob data
@@ -284,7 +283,7 @@ static void hp_unlink_and_write_run(HP_SHARE *share, const uchar *data_ptr,
   share->total_records+= run_count;
 
   hp_write_run_data(share, data_ptr, data_len, run_start,
-                    run_count, HP_BLOB_CASE_C_MULTI_RUN, data_offset);
+                    run_count, HP_ROW_MULTIPLE_REC, data_offset);
 
   if (*prev_run_start)
     memcpy(*prev_run_start, &run_start, sizeof(run_start));
@@ -476,7 +475,7 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
     {
       /* Case A: single record, no header */
       hp_write_run_data(share, data_ptr, data_len, run_start,
-                        (uint16) run_rec_count, HP_BLOB_CASE_A_SINGLE_REC,
+                        (uint16) run_rec_count, HP_ROW_SINGLE_REC,
                         &data_offset);
     }
     else if (is_only_run &&
@@ -484,14 +483,14 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
     {
       /* Case B: data in rec 1..N-1, contiguous for zero-copy reads */
       hp_write_run_data(share, data_ptr, data_len, run_start,
-                        (uint16) run_rec_count, HP_BLOB_CASE_B_ZEROCOPY,
+                        (uint16) run_rec_count, HP_ROW_CONT_ZEROCOPY,
                         &data_offset);
     }
     else
     {
       /* Case C: multi-run or partial run */
       hp_write_run_data(share, data_ptr, data_len, run_start,
-                        (uint16) run_rec_count, HP_BLOB_CASE_C_MULTI_RUN,
+                        (uint16) run_rec_count, HP_ROW_MULTIPLE_REC,
                         &data_offset);
     }
 
@@ -729,7 +728,7 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
     memcpy(&chain, record + desc->offset + desc->packlength, sizeof(chain));
 
     /* Case A and Case B are zero-copy - need no reassembly buffer space */
-    if (hp_blob_run_format(chain, visible) != HP_BLOB_CASE_C_MULTI_RUN)
+    if (!hp_is_multi_run(chain, visible))
     {
       info->has_zerocopy_blobs= TRUE;
       continue;
@@ -766,9 +765,7 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
 
     memcpy(&chain, record + desc->offset + desc->packlength, sizeof(chain));
 
-    switch (hp_blob_run_format(chain, visible))
-    {
-    case HP_BLOB_CASE_A_SINGLE_REC:
+    if (hp_is_single_rec(chain, visible))
     {
       /* Case A: single-record single-run, no header - zero-copy */
       const uchar *blob_data= chain;
@@ -776,7 +773,7 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
              sizeof(blob_data));
       continue;
     }
-    case HP_BLOB_CASE_B_ZEROCOPY:
+    if (hp_is_zerocopy(chain, visible))
     {
       /* Case B: data in rec 1..N-1, contiguous - zero-copy */
       const uchar *blob_data= chain + recbuffer;
@@ -784,21 +781,15 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
              sizeof(blob_data));
       continue;
     }
-    case HP_BLOB_CASE_C_MULTI_RUN:
     {
       /* Case C: reassemble into blob_buff */
       uchar *blob_data= buff_ptr;
       hp_reassemble_chain(chain, data_len, buff_ptr, visible, recbuffer);
       buff_ptr+= data_len;
 
-      /* Update blob pointer to reassembly buffer */
-      {
-        memcpy(record + desc->offset + desc->packlength, &blob_data,
-               sizeof(blob_data));
-      }
-      break;
+      memcpy(record + desc->offset + desc->packlength, &blob_data,
+             sizeof(blob_data));
     }
-    } /* switch */
   }
 
   DBUG_RETURN(0);
@@ -832,15 +823,10 @@ const uchar *hp_materialize_one_blob(HP_INFO *info,
   if (data_len == 0 || !chain)
     return chain;
 
-  switch (hp_blob_run_format(chain, visible))
-  {
-  case HP_BLOB_CASE_A_SINGLE_REC:
+  if (hp_is_single_rec(chain, visible))
     return chain;                         /* Case A: no header, data at offset 0 */
-  case HP_BLOB_CASE_B_ZEROCOPY:
+  if (hp_is_zerocopy(chain, visible))
     return chain + recbuffer;             /* Case B: data in rec 1..N-1 */
-  case HP_BLOB_CASE_C_MULTI_RUN:
-    break;                                /* Case C: fall through to reassembly */
-  }
 
   /* Case C: multiple runs, reassemble into blob_buff */
   if (data_len > info->blob_buff_len)
