@@ -26,16 +26,25 @@ SET(CMAKE_CXX_FLAGS_DEBUG
 # Fetch the DuckDB engine plugin sources at configure time.
 # Replaces the former git submodule at storage/duckdb/duckdb.
 INCLUDE(FetchContent)
-SET(DUCKDB_ENGINE_GIT_REPO "https://github.com/drrtuy/duckdb-engine"
+SET(DUCKDB_ENGINE_GIT_REPO "https://github.com/MariaDB/duckdb-engine"
     CACHE STRING "DuckDB engine plugin git repository")
-SET(DUCKDB_ENGINE_GIT_TAG  "a1749287decd7262ca6c26c3c32c8d693796791a"
+SET(DUCKDB_ENGINE_GIT_TAG  "e663297172af58e9c61f3ba636ae73471c753482"
     CACHE STRING "DuckDB engine plugin commit (full SHA)")
+
+SET(DUCKDB_ENGINE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/duckdb")
+
+IF(EXISTS "${DUCKDB_ENGINE_SOURCE_DIR}/CMakeLists.txt")
+  # Source tree already present — use it as-is, no git operations.
+  MESSAGE(STATUS "DuckDB engine: using existing sources in ${DUCKDB_ENGINE_SOURCE_DIR}")
+  SET(FETCHCONTENT_SOURCE_DIR_DUCKDB_ENGINE "${DUCKDB_ENGINE_SOURCE_DIR}"
+      CACHE PATH "Pre-populated DuckDB engine source" FORCE)
+ENDIF()
 
 FetchContent_Declare(duckdb_engine
   GIT_REPOSITORY "${DUCKDB_ENGINE_GIT_REPO}"
   GIT_TAG        "${DUCKDB_ENGINE_GIT_TAG}"
   GIT_SHALLOW    TRUE
-  SOURCE_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/duckdb"
+  SOURCE_DIR     "${DUCKDB_ENGINE_SOURCE_DIR}"
 )
 FetchContent_GetProperties(duckdb_engine)
 IF(NOT duckdb_engine_POPULATED)
