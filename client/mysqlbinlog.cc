@@ -312,13 +312,14 @@ class Load_log_processor
     @retval -1 Error (can't find new filename).
     @retval >=0 Found file.
   */
-  File create_unique_file(char *filename, char *file_name_end)
+  File create_unique_file(char *filename, char *file_name_end,
+                          size_t buf_remaining)
     {
       File res;
       /* If we have to try more than 1000 times, something is seriously wrong */
       for (uint version= 0; version<1000; version++)
       {
-	sprintf(file_name_end,"-%x",version);
+	snprintf(file_name_end, buf_remaining, "-%x", version);
 	if ((res= my_create(filename,0,
 			    O_CREAT|O_EXCL|O_BINARY|O_WRONLY,MYF(0)))!=-1)
 	  return res;
@@ -444,7 +445,8 @@ Exit_status Load_log_processor::process_first_event(const char *bname,
   //so the rest of fname has size full_len - target_dir_name_len
   ptr+= snprintf(ptr, full_len - target_dir_name_len, "-%x", file_id);
 
-  if ((file= create_unique_file(fname,ptr)) < 0)
+  if ((file= create_unique_file(fname, ptr,
+                                full_len - (size_t) (ptr - fname))) < 0)
   {
     error("Could not construct local filename %s%s.",
           target_dir_name,bname);
@@ -1226,7 +1228,6 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
             exit(1);
           }
 
-          memset(tmp_sql, 0, sizeof(tmp_sql));
           snprintf(tmp_sql, sizeof(tmp_sql), " "
                   "SELECT Group_concat(cols) "
                   "FROM   (SELECT 'op_type char(1)' cols "
@@ -1273,11 +1274,9 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
             }
             else
             {
-              memset(tmp_sql, 0, sizeof(tmp_sql));
               snprintf(tmp_sql, sizeof(tmp_sql), "__%s", map->get_table_name());
               ev->set_flashback_review_tablename(tmp_sql);
             }
-            memset(tmp_sql, 0, sizeof(tmp_sql));
             tmp_sql_offset= snprintf(tmp_sql, sizeof(tmp_sql), "CREATE TABLE IF NOT EXISTS");
             tmp_sql_offset+= snprintf(tmp_sql + tmp_sql_offset, sizeof(tmp_sql) - (uint) tmp_sql_offset, " `%s`.`%s` (%s) %s",
                                      ev->get_flashback_review_dbname(),
@@ -1303,7 +1302,7 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
           else
           {
             memset(tmp_str, 0, sizeof(tmp_str));
-            snprintf(tmp_str, sizeof(tmp_sql), "__%s", map->get_table_name());
+            snprintf(tmp_str, sizeof(tmp_str), "__%s", map->get_table_name());
             ev->set_flashback_review_tablename(tmp_str);
           }
         }
@@ -2541,9 +2540,9 @@ static Exit_status check_master_version()
       char buf[256];
       rpl_gtid *start_gtid= &start_gtids[gtid_idx];
 
-      sprintf(buf, "%u-%u-%llu",
-              start_gtid->domain_id, start_gtid->server_id,
-              start_gtid->seq_no);
+      snprintf(buf, sizeof(buf), "%u-%u-%llu",
+               start_gtid->domain_id, start_gtid->server_id,
+               start_gtid->seq_no);
       query_str.append(buf, strlen(buf));
       if (gtid_idx < n_start_gtids - 1)
         query_str.append(',');
