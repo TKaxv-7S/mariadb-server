@@ -5641,6 +5641,10 @@ static Sys_var_have Sys_have_profiling(
        "otherwise will be set to NO. See SHOW PROFILES and SHOW PROFILE",
        READ_ONLY GLOBAL_VAR(have_profiling), NO_CMD_LINE);
 
+static Sys_var_have Sys_have_snapshot_cloning(
+       "have_snapshot_cloning", "have_snapshot_cloning",
+       READ_ONLY GLOBAL_VAR(have_snapshot_cloning), NO_CMD_LINE);
+
 static Sys_var_have Sys_have_query_cache(
        "have_query_cache", "If the server supports the query cache, will be set to "
        "YES, otherwise will be set to NO",

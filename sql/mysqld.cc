@@ -722,6 +722,7 @@ SHOW_COMP_OPTION have_geometry, have_rtree_keys;
 SHOW_COMP_OPTION have_crypt, have_compress;
 SHOW_COMP_OPTION have_profiling;
 SHOW_COMP_OPTION have_openssl;
+SHOW_COMP_OPTION have_snapshot_cloning;
 
 #ifndef EMBEDDED_LIBRARY
 static std::atomic<char*> shutdown_user;
@@ -8380,6 +8381,7 @@ static int mysql_init_variables(void)
 #else
   have_compress= SHOW_OPTION_NO;
 #endif
+  have_snapshot_cloning= SHOW_OPTION_YES;
 #ifdef HAVE_LIBWRAP
   libwrapName= NullS;
 #endif

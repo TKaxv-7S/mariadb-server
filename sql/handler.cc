@@ -30,6 +30,7 @@
 #include "key.h"     // key_copy, key_unpack, key_cmp_if_same, key_cmp
 #include "sql_table.h"                   // build_table_filename
 #include "sql_parse.h"                          // check_stack_overrun
+#include "sql_show.h"                           // find_thread_by_id
 #include "sql_base.h"           // TDC_element
 #include "discover.h"           // extension_based_table_discovery, etc
 #include "log_event.h"          // *_rows_log_event
@@ -3446,6 +3447,79 @@ int ha_release_savepoint(THD *thd, SAVEPOINT *sv)
   DBUG_RETURN(error);
 }
 
+static my_bool clone_snapshot_handlerton(THD *thd, plugin_ref plugin,
+                                         void *arg)
+{
+  handlerton *hton= plugin_data(plugin, handlerton *);
+
+  if (hton->clone_consistent_snapshot)
+    hton->clone_consistent_snapshot(hton, thd, (THD *) arg);
+  else if (hton->start_consistent_snapshot)
+  {
+    /*
+      start_consistent_snapshot is implemented for this handler
+      while clone_consistent_snapshot is not
+    */
+    my_error(ER_NOT_SUPPORTED_YET, MYF(0),
+             "Cloning a snapshot from an engine that does not support it");
+    return TRUE;  /* abort plugin_foreach */
+  }
+
+  return FALSE;
+}
+
+static int ha_clone_consistent_snapshot(THD *thd)
+{
+  THD *from_thd;
+  Item *val;
+
+  DBUG_ASSERT(!thd->lex->value_list.is_empty());
+
+  val= (Item *) thd->lex->value_list.head();
+
+  if (thd->lex->table_or_sp_used())
+  {
+    my_error(ER_NOT_SUPPORTED_YET, MYF(0), "Usage of subqueries or stored "
+             "function calls as part of this statement");
+    goto error;
+  }
+
+  if ((!val->fixed() && val->fix_fields(thd, &val)) || val->check_cols(1))
+  {
+    my_error(ER_SET_CONSTANTS_ONLY, MYF(0));
+    goto error;
+  }
+
+  /* find_thread_by_id() returns with from_thd->LOCK_thd_kill held */
+  from_thd= find_thread_by_id(val->val_int());
+
+  if (!from_thd || from_thd == thd)
+  {
+    if (from_thd)
+      mysql_mutex_unlock(&from_thd->LOCK_thd_kill);
+    my_error(ER_NO_SUCH_THREAD, MYF(0), (ulong) val->val_int());
+    goto error;
+  }
+
+  mysql_mutex_lock(&from_thd->LOCK_thd_data);
+  mysql_mutex_unlock(&from_thd->LOCK_thd_kill);
+
+  //  Blocking commits ensures that we get the same snapshot for all engines.
+  mysql_mutex_lock(&LOCK_commit_ordered);
+
+  plugin_foreach(thd, clone_snapshot_handlerton, MYSQL_STORAGE_ENGINE_PLUGIN,
+                 from_thd);
+
+  mysql_mutex_unlock(&LOCK_commit_ordered);
+  mysql_mutex_unlock(&from_thd->LOCK_thd_data);
+
+  return 0;
+
+error:
+
+  return 1;
+}
+
 static bool snapshot_handlerton(THD *thd, transaction_participant *hton, void *arg)
 {
   if (hton->start_consistent_snapshot)
@@ -3459,6 +3533,9 @@ static bool snapshot_handlerton(THD *thd, transaction_participant *hton, void *a
 
 int ha_start_consistent_snapshot(THD *thd)
 {
+  if (!thd->lex->value_list.is_empty())
+    return ha_clone_consistent_snapshot(thd);
+
   bool err, warn= true;
 
   /*

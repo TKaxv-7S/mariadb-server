@@ -154,6 +154,18 @@ loop:
     if (m_low_limit_id > limit)
       m_low_limit_id= limit;
   }
+
+  /**
+    Copy state from another view.
+    @param other  view to copy from
+  */
+  void copy_from(const ReadViewBase &other)
+  {
+    m_low_limit_id= other.m_low_limit_id;
+    m_up_limit_id= other.m_up_limit_id;
+    m_ids= other.m_ids;
+    m_low_limit_no= other.m_low_limit_no;
+  }
 };
 
 
@@ -182,6 +194,13 @@ class ReadView: public ReadViewBase
   */
   trx_id_t m_creator_trx_id;
 
+  /**
+    Whether this view was cloned from another transaction's view.
+    When true, set_creator_trx_id() is a no-op so that the cloned view
+    retains the donor's m_creator_trx_id through cascading clones.
+  */
+  bool m_cloned;
+
 public:
   ReadView()
   {
@@ -204,12 +223,29 @@ public:
 
 
   /**
+    Clones the read view from a donor transaction's open view.
+
+    Copies all view state from from_trx->read_view to this view, making
+    this transaction see the same snapshot as the donor. The donor's
+    read_view.m_mutex must be held by the caller.
+
+    @param from_trx  donor transaction (must have an open read view)
+    @return whether the clone succeeded
+  */
+  bool clone_from(const trx_t *from_trx);
+
+
+  /**
     Closes the view.
 
     View becomes not visible to purge thread. Intended to be called by the
     ReadView owner thread.
   */
-  void close() { m_open.store(false, std::memory_order_relaxed); }
+  void close()
+  {
+    m_open.store(false, std::memory_order_relaxed);
+    m_cloned= false;
+  }
 
 
   /** Returns true if view is open. */
@@ -224,10 +260,10 @@ public:
   */
   void set_creator_trx_id(trx_id_t id)
   {
-    ut_ad(m_creator_trx_id == 0);
-    m_creator_trx_id= id;
+    ut_ad(m_creator_trx_id == 0 || m_cloned);
+    if (!m_cloned)
+      m_creator_trx_id= id;
   }
-
 
   /**
     Writes the limits to the file.

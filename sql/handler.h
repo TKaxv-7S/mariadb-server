@@ -1354,6 +1354,7 @@ struct transaction_participant
   */
   void (*signal_tc_log_recovery_done)();
   int (*start_consistent_snapshot)(THD *thd);
+  int (*clone_consistent_snapshot)(handlerton *hton, THD *thd, THD *from_thd);
   /*
     The commit_ordered() method is called prior to the commit() method, after
     the transaction manager has decided to commit (not rollback) the

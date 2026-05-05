@@ -731,7 +731,7 @@ struct transaction_participant MHNSW_Trx::tp=
   nullptr, nullptr,               /* commit/rollback_by_xid */
   nullptr, nullptr,               /* recover_rollback_by_xid/recovery_done */
   nullptr, nullptr, nullptr,      /* snapshot, commit/prepare_ordered */
-  nullptr, nullptr                /* checkpoint, versioned */
+  nullptr, nullptr, nullptr       /* clone_snapshot, checkpoint, versioned */
 };
 
 int MHNSW_Trx::do_savepoint_rollback(THD *thd, void *)

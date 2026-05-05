@@ -249,6 +249,33 @@ void ReadView::open(trx_t *trx)
 
 
 /**
+  Clones the read view from a donor transaction's open view.
+
+  @param from_trx  donor transaction (must be locked by the caller)
+  @return false - the clone succeeded
+          true  - donor has no open view
+*/
+bool ReadView::clone_from(const trx_t *from_trx)
+{
+  ut_ad(from_trx->mutex_is_owner());
+
+  if (from_trx->state != TRX_STATE_ACTIVE ||
+      !from_trx->read_view.is_open())
+    return true;
+
+  m_mutex.wr_lock();
+  from_trx->read_view.m_mutex.wr_lock();
+  copy_from(from_trx->read_view);
+  m_creator_trx_id= from_trx->read_view.m_creator_trx_id;
+  from_trx->read_view.m_mutex.wr_unlock();
+  m_cloned= true;
+  m_open.store(true, std::memory_order_relaxed);
+  m_mutex.wr_unlock();
+  return false;
+}
+
+
+/**
   Clones the oldest view and stores it in view.
 
   No need to call ReadView::close(). The caller owns the view that is passed
