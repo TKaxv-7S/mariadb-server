@@ -5602,8 +5602,8 @@ void mark_join_nest_as_const(JOIN *join,
 
   @detail
     Figure out which condition we can use:
-    - For INNER JOIN, we use the WHERE,
-    - "t1 LEFT JOIN t2 ON ..." uses t2's ON expression
+    - For INNER JOIN, we use the WHERE.
+    - "t1 LEFT JOIN t2 ON ..." uses t2's ON expression.
     - "t1 LEFT JOIN (...) ON ..." uses the join nest's ON expression.
 */
 
@@ -5623,7 +5623,7 @@ static Item **get_sargable_cond(JOIN *join, TABLE *table)
   {
     /*
       This is the inner side of a multi-table outer join. Use the
-      appropriate ON expression.
+      ON expression from the nested join containing the table.
     */
     retval= &(table->pos_in_table_list->embedding->on_expr);
   }
@@ -5658,7 +5658,9 @@ make_join_statistics(JOIN *join, List<TABLE_LIST> &tables_list,
   TABLE **table_vector;
   JOIN_TAB *stat,*stat_end,*s,**stat_ref, **stat_vector;
   KEYUSE *keyuse,*start_keyuse;
+
   table_map outer_join=0;
+
   table_map no_rows_const_tables= 0;
   SARGABLE_PARAM *sargables= 0;
   List_iterator<TABLE_LIST> ti(tables_list);
@@ -5872,6 +5874,7 @@ make_join_statistics(JOIN *join, List<TABLE_LIST> &tables_list,
   join->const_table_map= no_rows_const_tables;
   join->const_tables= const_count;
   eliminate_tables(join);
+
   join->const_table_map &= ~no_rows_const_tables;
   const_count= join->const_tables;
   found_const_table_map= join->const_table_map;
@@ -14241,7 +14244,7 @@ make_outerjoin_info(JOIN *join)
     }
     else if (!embedding)
       tab->table->reginfo.not_exists_optimize= 0;
-          
+
     for ( ; embedding ; embedding= embedding->embedding)
     {
       if (embedding->is_active_sjm())
@@ -19786,35 +19789,35 @@ propagate_cond_constants(THD *thd, I_List<COND_CMP> *save_list,
   Simplify joins replacing outer joins by inner joins whenever it's
   possible.
 
-    The function, during a retrieval of join_list,  eliminates those
-    outer joins that can be converted into inner join, possibly nested.
-    It also moves the on expressions for the converted outer joins
-    and from inner joins to conds.
+    The function, during a retrieval of join_list, eliminates those
+    OUTER JOINs that can be converted into INNER JOIN, possibly nested.
+    It also moves the ON expressions for the converted OUTER JOINs
+    and from INNER JOINs to conds.
     The function also calculates some attributes for nested joins:
-    - used_tables    
-    - not_null_tables
-    - dep_tables.
-    - on_expr_dep_tables
-    The first two attributes are used to test whether an outer join can
-    be substituted for an inner join. The third attribute represents the
+      - used_tables
+      - not_null_tables
+      - dep_tables.
+      - on_expr_dep_tables
+    used_tables and not_null_tables are used to test whether an outer join can
+    be substituted for an INNER JOIN. dep_tables represents the
     relation 'to be dependent on' for tables. If table t2 is dependent
     on table t1, then in any evaluated execution plan table access to
     table t2 must precede access to table t2. This relation is used also
-    to check whether the query contains  invalid cross-references.
-    The forth attribute is an auxiliary one and is used to calculate
+    to check whether the query contains invalid cross-references.
+    on_expr_dep_tables is an auxiliary one and is used to calculate
     dep_tables.
     As the attribute dep_tables qualifies possible orders of tables in the
-    execution plan, the dependencies required by the straight join
+    execution plan, the dependencies required by the STRAIGHT JOIN
     modifiers are reflected in this attribute as well.
     The function also removes all braces that can be removed from the join
     expression without changing its meaning.
 
   @note
-    An outer join can be replaced by an inner join if the where condition
-    or the on expression for an embedding nested join contains a conjunctive
-    predicate rejecting null values for some attribute of the inner tables.
+    An OUTER JOIN can be replaced by an INNER JOIN if the WHERE condition
+    or the ON expression for an embedding nested join contains a conjunctive
+    predicate rejecting NULL values for some attribute of the inner tables.
 
-    E.g. in the query:    
+    E.g. in the query:
     @code
       SELECT * FROM t1 LEFT JOIN t2 ON t2.a=t1.a WHERE t2.b < 5
     @endcode
@@ -19832,12 +19835,11 @@ propagate_cond_constants(THD *thd, I_List<COND_CMP> *save_list,
     Similarly the following query:
     @code
       SELECT * from t1 LEFT JOIN (t2, t3) ON t2.a=t1.a t3.b=t1.b
-        WHERE t2.c < 5  
+        WHERE t2.c < 5
     @endcode
     is converted to:
     @code
-      SELECT * FROM t1, (t2, t3) WHERE t2.c < 5 AND t2.a=t1.a t3.b=t1.b 
-
+      SELECT * FROM t1, (t2, t3) WHERE t2.c < 5 AND t2.a=t1.a t3.b=t1.b
     @endcode
 
     One conversion might trigger another:
@@ -19846,10 +19848,10 @@ propagate_cond_constants(THD *thd, I_List<COND_CMP> *save_list,
                        LEFT JOIN t3 ON t3.b=t2.b
         WHERE t3 IS NOT NULL =>
       SELECT * FROM t1 LEFT JOIN t2 ON t2.a=t1.a, t3
-        WHERE t3 IS NOT NULL AND t3.b=t2.b => 
+        WHERE t3 IS NOT NULL AND t3.b=t2.b =>
       SELECT * FROM t1, t2, t3
         WHERE t3 IS NOT NULL AND t3.b=t2.b AND t2.a=t1.a
-  @endcode
+    @endcode
 
     The function removes all unnecessary braces from the expression
     produced by the conversions.
@@ -19857,10 +19859,9 @@ propagate_cond_constants(THD *thd, I_List<COND_CMP> *save_list,
     @code
       SELECT * FROM t1, (t2, t3) WHERE t2.c < 5 AND t2.a=t1.a AND t3.b=t1.b
     @endcode
-    finally is converted to: 
+    finally is converted to:
     @code
       SELECT * FROM t1, t2, t3 WHERE t2.c < 5 AND t2.a=t1.a AND t3.b=t1.b
-
     @endcode
 
 
@@ -19870,27 +19871,28 @@ propagate_cond_constants(THD *thd, I_List<COND_CMP> *save_list,
       SELECT * from (t1, (t2,t3)) WHERE t1.a=t2.a AND t2.b=t3.b.
     @endcode
 
-    The benefit of this simplification procedure is that it might return 
+
+    The benefit of this simplification procedure is that it might return
     a query for which the optimizer can evaluate execution plan with more
-    join orders. With a left join operation the optimizer does not
+    join orders. With a LEFT JOIN operation the optimizer does not
     consider any plan where one of the inner tables is before some of outer
     tables.
 
   IMPLEMENTATION
     The function is implemented by a recursive procedure.  On the recursive
-    ascent all attributes are calculated, all outer joins that can be
+    ascent all attributes are calculated, all OUTER JOINs that can be
     converted are replaced and then all unnecessary braces are removed.
     As join list contains join tables in the reverse order sequential
     elimination of outer joins does not require extra recursive calls.
 
   SEMI-JOIN NOTES
-    Remove all semi-joins that have are within another semi-join (i.e. have
+    Remove all semi-joins that are within another semi-join (i.e. have
     an "ancestor" semi-join nest)
 
   EXAMPLES
     Here is an example of a join query with invalid cross references:
     @code
-      SELECT * FROM t1 LEFT JOIN t2 ON t2.a=t3.a LEFT JOIN t3 ON t3.b=t1.b 
+      SELECT * FROM t1 LEFT JOIN t2 ON t2.a=t3.a LEFT JOIN t3 ON t3.b=t1.b
     @endcode
 
   @param join        reference to the query info
@@ -19899,7 +19901,7 @@ propagate_cond_constants(THD *thd, I_List<COND_CMP> *save_list,
   @param in_sj       TRUE <=> processing semi-join nest's children
   @return
     - The new condition, if success
-    - 0, otherwise
+    - nullptr otherwise
 */
 
 static COND *
@@ -19912,9 +19914,9 @@ simplify_joins(JOIN *join, List<TABLE_LIST> *join_list, COND *conds, bool in_sj)
   bool straight_join= MY_TEST(join->select_options & SELECT_STRAIGHT_JOIN);
   DBUG_ENTER("simplify_joins");
 
-  /* 
+  /*
     Try to simplify join operations from join_list.
-    The most outer join operation is checked for conversion first. 
+    The most outer join operation is checked for conversion first.
   */
   while ((table= li++))
   {
@@ -19930,14 +19932,14 @@ simplify_joins(JOIN *join, List<TABLE_LIST> *join_list, COND *conds, bool in_sj)
       if (table->on_expr)
       {
         Item *expr= table->on_expr;
-        /* 
-           If an on expression E is attached to the table, 
+        /*
+           If an on expression E is attached to the table,
            check all null rejected predicates in this expression.
            If such a predicate over an attribute belonging to
            an inner table of an embedded outer join is found,
            the outer join is converted to an inner join and
-           the corresponding on expression is added to E. 
-	*/ 
+           the corresponding on expression is added to E.
+        */
         expr= simplify_joins(join, &nested_join->join_list,
                              expr, in_sj || table->sj_on_expr);
 
@@ -19966,7 +19968,7 @@ simplify_joins(JOIN *join, List<TABLE_LIST> *join_list, COND *conds, bool in_sj)
       if (conds)
         not_null_tables= conds->not_null_tables();
     }
-      
+
     if (table->embedding)
     {
       table->embedding->nested_join->used_tables|= used_tables;
@@ -20168,7 +20170,7 @@ simplify_joins(JOIN *join, List<TABLE_LIST> *join_list, COND *conds, bool in_sj)
         continue;
       join->select_lex->sj_nests.push_back(table, join->thd->mem_root);
 
-      /* 
+      /*
         Also, walk through semi-join children and mark those that are now
         top-level
       */
@@ -20184,7 +20186,7 @@ simplify_joins(JOIN *join, List<TABLE_LIST> *join_list, COND *conds, bool in_sj)
     {
       TABLE_LIST *tbl;
       List_iterator<TABLE_LIST> it(nested_join->join_list);
-      List<TABLE_LIST> repl_list;  
+      List<TABLE_LIST> repl_list;
       while ((tbl= it++))
       {
         tbl->embedding= table->embedding;
@@ -20197,7 +20199,7 @@ simplify_joins(JOIN *join, List<TABLE_LIST> *join_list, COND *conds, bool in_sj)
       li.replace(repl_list);
     }
   }
-  DBUG_RETURN(conds); 
+  DBUG_RETURN(conds);
 }
 
 
@@ -31963,8 +31965,9 @@ static void print_table_array(THD *thd,
       str->append(STRING_WITH_LEN(" semi join "));
     else
       str->append(STRING_WITH_LEN(" join "));
-    
+
     curr->print(thd, eliminated_tables, str, query_type);
+
     if (curr->on_expr)
     {
       str->append(STRING_WITH_LEN(" on("));
