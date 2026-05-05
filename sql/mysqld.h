@@ -389,6 +389,7 @@ extern PSI_cond_key key_COND_rpl_thread, key_COND_rpl_thread_queue,
   key_COND_parallel_entry, key_COND_group_commit_orderer;
 extern PSI_cond_key key_COND_wait_gtid, key_COND_gtid_ignore_duplicates;
 extern PSI_cond_key key_TABLE_SHARE_COND_rotation;
+extern PSI_cond_key key_COND_pwt_new_message;
 
 extern PSI_thread_key key_thread_delayed_insert,
   key_thread_handle_manager, key_thread_main,

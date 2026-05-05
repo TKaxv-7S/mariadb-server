@@ -1137,6 +1137,7 @@ PSI_cond_key key_COND_rpl_thread_queue, key_COND_rpl_thread,
   key_COND_prepare_ordered, key_COND_slave_deadlock_handler;
 PSI_cond_key key_COND_wait_gtid, key_COND_gtid_ignore_duplicates;
 PSI_cond_key key_COND_ack_receiver;
+PSI_cond_key key_COND_pwt_new_message;
 
 static PSI_cond_info all_server_conds[]=
 {
@@ -1187,7 +1188,8 @@ static PSI_cond_info all_server_conds[]=
   { &key_COND_gtid_ignore_duplicates, "COND_gtid_ignore_duplicates", 0},
   { &key_COND_ack_receiver, "Ack_receiver::cond", 0},
   { &key_COND_binlog_send, "COND_binlog_send", 0},
-  { &key_TABLE_SHARE_COND_rotation, "TABLE_SHARE::COND_rotation", 0}
+  { &key_TABLE_SHARE_COND_rotation, "TABLE_SHARE::COND_rotation", 0},
+  { &key_COND_pwt_new_message, "COND_pwt_new_message", 0}
 };
 
 PSI_thread_key key_thread_delayed_insert,
@@ -10256,6 +10258,9 @@ static PSI_memory_info all_server_memory[]=
   { &key_memory_trace_ddl_info, "TRACE_DDL_INFO", 0}
 };
 
+
+extern void pwt_init_psi_keys(void);
+
 /**
   Initialise all the performance schema instrumentation points
   used by the server.
@@ -10342,6 +10347,7 @@ void init_server_psi_keys(void)
   stmt_info_rpl.m_flags= PSI_FLAG_MUTABLE;
   mysql_statement_register(category, &stmt_info_rpl, 1);
 #endif
+  pwt_init_psi_keys();
 }
 
 #endif /* HAVE_PSI_INTERFACE */
