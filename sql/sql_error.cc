@@ -46,6 +46,7 @@ This file contains the implementation of error and warnings related
 #include "unireg.h"
 #include "sql_error.h"
 #include "sp_rcontext.h"
+#include "sql_parallel_workers.h"
 
 /*
   Design notes about Sql_condition::m_message_text.
@@ -696,6 +697,10 @@ void Warning_info::reserve_space(THD *thd, uint count)
     m_warn_list.remove(m_warn_list.front());
 }
 
+extern bool Sql_condition_to_queue( THD *thd, pwt_queued_event **event,
+                             const Sql_condition_identity *value,
+                             const char *msg );
+
 Sql_condition *Warning_info::push_warning(THD *thd,
                                           const Sql_condition_identity *value,
                                           const char *msg,
@@ -708,10 +713,39 @@ Sql_condition *Warning_info::push_warning(THD *thd,
     if (m_allow_unlimited_warnings ||
         m_warn_list.elements() < thd->variables.max_error_count)
     {
-      cond= new (& m_warn_root) Sql_condition(& m_warn_root, *value, msg,
-                                              current_row_number);
-      if (cond)
-        m_warn_list.push_back(cond);
+      if (struct pwt_worker *worker= thd->pwt_worker_info)
+      {
+        // add an event to our queue
+        mysql_mutex_lock(&worker->manager->LOCK_pwt_thread);
+        if (worker->messages->event_queue)
+        {
+          pwt_queued_event *last= worker->messages->event_queue;
+
+          while( last->next )
+            last= last->next;
+
+          if (!Sql_condition_to_queue(thd, &last, value, msg))
+            return NULL;
+          worker->messages->last_in_queue= last->next;
+        }
+        else
+        {
+          if (!Sql_condition_to_queue(thd, &worker->messages->event_queue,
+                                      value, msg))
+            return NULL;
+          worker->messages->last_in_queue= worker->messages->event_queue;
+        }
+        mysql_mutex_unlock(&worker->manager->LOCK_pwt_thread);
+
+
+      }
+      else
+      {
+        cond= new (& m_warn_root) Sql_condition(& m_warn_root, *value, msg,
+                                                current_row_number);
+        if (cond)
+          m_warn_list.push_back(cond);
+      }
     }
     m_warn_count[(uint) value->get_level()]++;
   }

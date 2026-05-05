@@ -19,15 +19,6 @@
 #include "mysql/psi/psi.h"
 #include <stdio.h>
 
-#ifdef _WIN32
-#define MAX_THREAD_NAME 256
-typedef HRESULT (*func_SetThreadDescription)(HANDLE,PCWSTR);
-#elif defined(__linux__)
-#define MAX_THREAD_NAME 16
-#elif defined(__FreeBSD__) || defined(__OpenBSD__)
-#include <pthread_np.h>
-#endif
-
 #if defined(HAVE_PSI_THREAD_INTERFACE) && !defined DBUG_OFF
 /**
   Check that the name is consistent with PSI.
