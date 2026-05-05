@@ -840,7 +840,7 @@ public:
   */
   MEM_ROOT *dbug_mem_root;
   THD      *dbug_thd;
-#define _DBUG_HAVE_ITEM_THD
+#define _DBUG_HAVE_ITEM_THD  // this define appears to be new in this commit, can you please document it in the commit message?
   static void *operator new(size_t size, MEM_ROOT *mem_root) throw ()
   {
     void *item= alloc_root(mem_root, size);

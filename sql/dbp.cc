@@ -28,10 +28,10 @@ char dbug_print_row_buffer[DBUG_ROW_BUFFER_SIZE];
 
 // test if this is uninitialized/trash memory
 template<typename t>
-bool is_trash(t ptr)
+bool is_trash(t ptr)  // it's possible to assert that this is a pointer with std::is_pointer_v<T>, something like static_assert(std::is_pointer_v<t>, "Arg ptr must be a pointer");
 {
   uint s= sizeof(t);
-  uchar *m= (uchar *)&ptr;
+  uchar *m= (uchar *)&ptr;  // Takes the address of the stack-local copy of ptr, not the address of the value in the caller's context; is that what we want?
   for (uint i= 0; i < s; i++)
     if (m[i] != DBUG_TRASH_CHAR)
       return false;
@@ -196,7 +196,7 @@ static void dbug_add_print_items(List<Item> &list)
     }
   }
   end_obj_indent();
-  return;
+  return;  // this return's not needed
 }
 
 
@@ -219,14 +219,14 @@ static void dbug_add_print_items_o_r(List<Item_outer_ref> &list)
       DBUG_CAT("...");
       break;
     }
-    end_indent();
+    end_indent();  // should this be removed?  Or should a call to this be added between lines 196 and 197?
   }
   end_obj_indent();
-  return;
+  return;  // this return's not needed
 }
 
 
-#if 0
+#if 0  // can we remove this?
 // removed for now as it's taking precedence over dbp(Item)
 const char *dbp(Item_args *args)
 {
@@ -272,7 +272,7 @@ static void dbug_add_print_item(Item *item)
   do_obj_indent();
   if (item)
   {
-#ifdef _DBUG_HAVE_ITEM_THD
+#ifdef _DBUG_HAVE_ITEM_THD  // is this ifdef needed?
     if (item->dbug_mem_root == item->dbug_thd->stmt_arena->mem_root)
       DBUG_CAT("S:");
     else
@@ -339,7 +339,7 @@ static void dbug_add_print_item(Item *item)
         case Item_func::LE_FUNC: DBUG_SPRINTF_CAT("(Item_func_le*)%p", item); break;
         case Item_func::GE_FUNC: DBUG_SPRINTF_CAT("(Item_func_ge*)%p", item); break;
         case Item_func::GT_FUNC: DBUG_SPRINTF_CAT("(Item_func_gt*)%p", item); break;
-        case Item_func::FT_FUNC: DBUG_SPRINTF_CAT("(Item_func_match*)%p", item); break;
+        case Item_func::FT_FUNC: DBUG_SPRINTF_CAT("(Item_func_match*)%p", item); break;  // is FT for fulltext?  Is this line right?
         case Item_func::ISNOTNULL_FUNC: DBUG_SPRINTF_CAT("(Item_func_isnotnull*)%p", item); break;
         case Item_func::COND_AND_FUNC: DBUG_SPRINTF_CAT("(Item_cond_and*)%p", item); break;
         case Item_func::COND_OR_FUNC: DBUG_SPRINTF_CAT("(Item_cond_or*)%p", item); break;
@@ -348,7 +348,7 @@ static void dbug_add_print_item(Item *item)
         case Item_func::IN_FUNC: DBUG_SPRINTF_CAT("(IN_FUNC*)%p", item); break;
         case Item_func::INTERVAL_FUNC: DBUG_SPRINTF_CAT("(INTERVAL_FUNC*)%p", item); break;      // sir does not appear in this film
         case Item_func::ISNOTNULLTEST_FUNC: DBUG_SPRINTF_CAT("(Item_is_not_null_test*)%p", item); break;
-        case Item_func::SP_EQUALS_FUNC: DBUG_SPRINTF_CAT("(mbrequal*)%p", item); break;
+        case Item_func::SP_EQUALS_FUNC: DBUG_SPRINTF_CAT("(mbrequal*)%p", item); break;  // is this one correct?
         case Item_func::SP_RELATE_FUNC: DBUG_SPRINTF_CAT("(SP_RELATE_FUNC*)%p", item); break;
         case Item_func::NOT_FUNC: DBUG_SPRINTF_CAT("(Item_func_not*)%p", item); break;
         case Item_func::NOT_ALL_FUNC: DBUG_SPRINTF_CAT("(Item_func_not_all*)%p", item); break;
@@ -530,7 +530,7 @@ const char *dbug_print_trace(Json_writer *x)
   if (x)
   {
     String *s= const_cast<String *>(x->output.get_string());
-    return s->c_ptr();
+    return s->c_ptr();  // since this case returns, an explicit 'else' isn't needed
   }
   else
     return "NULL";
@@ -542,7 +542,7 @@ const char *dbug_print_trace()
   if (current_thd)
   {
     if (current_thd->opt_trace.is_started())
-      return dbug_print_trace(current_thd->opt_trace.get_current_json());
+      return dbug_print_trace(current_thd->opt_trace.get_current_json());  // same in this function, no explicit 'else' cases are needed since all branches return.
     else
       return "Trace empty";
   }
@@ -554,7 +554,7 @@ const char *dbug_print_trace()
 
 static void dbug_add_print_selects(st_select_lex *sl)
 {
-  if (sl)
+  if (sl) // can flip the logic here and return early, then keep the rest of the function more left.
   {
     char *buf= dbug_item_small_buffer;
     String str(buf, sizeof(dbug_item_small_buffer), &my_charset_bin);
@@ -1244,11 +1244,11 @@ const char *DBUG_PRINT_FUNCTION(KEY_PART_INFO *kp)
 
 void dbug_add_print_key(KEY *k)
 {
-  if (k)
+  if (k)  // Consider flipping this logic and out-denting the code.
   {
     if(k->name.str)
       DBUG_SPRINTF_CAT("Name:%s,", k->name.str);
-//    if(k->table && k->table->alias.ptr())
+//    if(k->table && k->table->alias.ptr())  // Can we delete these two lines?
 //      DBUG_SPRINTF_CAT("table:%s,", k->table->alias.ptr());
     DBUG_SPRINTF_CAT("length:%d,", k->key_length);
     DBUG_SPRINTF_CAT("usable parts:%d,", k->usable_key_parts);

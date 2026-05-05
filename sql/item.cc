@@ -11783,7 +11783,7 @@ const char *dbug_print_unit(SELECT_LEX_UNIT *un)
     return "Couldn't fit into buffer";
 }
 
-#if 0
+#if 0 // Can we delete this block?
 // these overloads now defined in dbp.cc
 const char *dbug_print(Item *x)            { return dbug_print_item(x);   }
 const char *dbug_print(SELECT_LEX *x)      { return dbug_print_select(x); }

@@ -37,7 +37,7 @@ extern const char *dbug_add_print_field(Field *field);
 #define DBUG_SPRINTF_CAT(...) dbug_sprintfcat(dbug_big_buffer,\
                                 DBUG_BIG_BUFFER_SIZE, __VA_ARGS__)
 
-#define DBUG_TRASH_CHAR      0xa5
+#define DBUG_TRASH_CHAR      0xa5  // I'm surprised that this isn't defined anywhere else.
 
 #define DBUG_BIG_BUFFER_SIZE 20480
 static char dbug_big_buffer[DBUG_BIG_BUFFER_SIZE];
