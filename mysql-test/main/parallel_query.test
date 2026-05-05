@@ -1,0 +1,52 @@
+#
+# Test KILL and KILL QUERY statements.
+#
+
+-- source include/count_sessions.inc
+-- source include/not_embedded.inc
+# this will be used in the future  -- source include/have_innodb.inc
+-- source include/have_sequence.inc
+
+--disable_service_connection
+
+--echo #
+--echo # MDEV-39492 Parallel Query: Study how to create worker threads
+--echo #
+
+connect (killee, localhost, root, , );
+
+--echo # check that kill query on a parallel worker is passed to the manager
+
+connection killee;
+let $id= `select connection_id()`;
+set session parallel_worker_threads=3;
+select seq from seq_1_to_2;
+connection default;
+let $name= "parallel worker $id";
+let $wait_condition= SELECT @kid:=ID from information_schema.processlist where info = $name limit 1;
+source include/wait_condition.inc;
+let $killID= `select @kid`;
+--replace_result $killID ID
+eval kill query $killID;
+connection killee;
+show warnings;
+
+--echo # check that kill on a parallel worker is passed to the manager
+--echo # doing this last so we don't need to restart default connection
+
+let $id= `select connection_id()`;
+set session parallel_worker_threads=3;
+select seq from seq_1_to_2;
+connection default;
+let $name= "parallel worker $id";
+let $wait_condition= SELECT @kid:=ID from information_schema.processlist where info = $name limit 1;
+source include/wait_condition.inc;
+let $killID= `select @kid`;
+--replace_result $killID ID
+eval kill $killID;
+connection killee;
+--error 1317,2013
+show warnings;
+
+connection default;
+--source include/wait_until_count_sessions.inc

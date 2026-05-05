@@ -1,0 +1,32 @@
+#
+# MDEV-39492 Parallel Query: Study how to create worker threads
+#
+connect  killee, localhost, root, , ;
+# check that kill query on a parallel worker is passed to the manager
+connection killee;
+set session parallel_worker_threads=3;
+select seq from seq_1_to_2;
+seq
+1
+2
+connection default;
+kill query ID;
+connection killee;
+show warnings;
+Level	Code	Message
+Error	1317	Query execution was interrupted
+Error	1317	Query execution was interrupted
+Error	1317	Query execution was interrupted
+# check that kill on a parallel worker is passed to the manager
+# doing this last so we don't need to restart default connection
+set session parallel_worker_threads=3;
+select seq from seq_1_to_2;
+seq
+1
+2
+connection default;
+kill ID;
+connection killee;
+show warnings;
+Got one of the listed errors
+connection default;

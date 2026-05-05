@@ -10256,6 +10256,9 @@ static PSI_memory_info all_server_memory[]=
   { &key_memory_trace_ddl_info, "TRACE_DDL_INFO", 0}
 };
 
+
+extern void pwt_init_psi_keys(void);
+
 /**
   Initialise all the performance schema instrumentation points
   used by the server.
@@ -10342,6 +10345,7 @@ void init_server_psi_keys(void)
   stmt_info_rpl.m_flags= PSI_FLAG_MUTABLE;
   mysql_statement_register(category, &stmt_info_rpl, 1);
 #endif
+  pwt_init_psi_keys();
 }
 
 #endif /* HAVE_PSI_INTERFACE */

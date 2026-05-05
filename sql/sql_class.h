@@ -872,6 +872,7 @@ typedef struct system_variables
   ulong server_id;
   ulong session_track_transaction_info;
   ulong threadpool_priority;
+  ulong parallel_worker_threads;
   ulong vers_alter_history;
 
   /* deadlock detection */
@@ -3154,7 +3155,7 @@ enum class THD_WHERE
 
 
 const char *thd_where(THD *thd);
-
+class pwt_worker;
 
 /**
   @class THD
@@ -3198,6 +3199,8 @@ public:
   rpl_group_info* rgi_fake;
   /* Slave applier execution context */
   rpl_group_info* rgi_slave;
+
+  pwt_worker *pwt_worker_info;
 
   union {
     rpl_io_thread_info *rpl_io_info;
