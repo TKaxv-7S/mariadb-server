@@ -1779,9 +1779,10 @@ static void sst_disable_innodb_writes()
   fil_crypt_set_thread_cnt(0);
   srv_n_fil_crypt_threads= old_count;
 
-  wsrep_sst_disable_writes= true;
   dict_stats_shutdown();
+  fts_optimize_pause();
   purge_sys.stop();
+
   /* We are holding a global MDL thanks to FLUSH TABLES WITH READ LOCK.
 
   That will prevent any writes from arriving into InnoDB, but it will
@@ -1793,10 +1794,12 @@ static void sst_disable_innodb_writes()
   possible during the snapshot, and to guarantee that no crash
   recovery will be necessary when starting up on the snapshot. */
   log_make_checkpoint();
+  wsrep_sst_disable_writes= true;
   /* If any FILE_MODIFY records were written by the checkpoint, an
   extra write of a FILE_CHECKPOINT record could still be invoked by
-  buf_flush_page_cleaner(). Let us prevent that by invoking another
-  checkpoint (which will write the FILE_CHECKPOINT record). */
+  buf_flush_page_cleaner(). Let us ensure that the page cleaner
+  is idle and will observe our above assignment (not write anything
+  further to the log). */
   log_make_checkpoint();
   ut_d(recv_no_log_write= true);
   /* If this were not a no-op, an assertion would fail due to
@@ -1811,6 +1814,8 @@ static void sst_enable_innodb_writes()
   dict_stats_start();
   purge_sys.resume();
   wsrep_sst_disable_writes= false;
+  /* Allow fts_optimize_callback() to assert that the flag is clear. */
+  fts_optimize_resume();
   const uint old_count= srv_n_fil_crypt_threads;
   srv_n_fil_crypt_threads= 0;
   fil_crypt_set_thread_cnt(old_count);
