@@ -2037,7 +2037,7 @@ SELECT JSON_VALUE('{"a":[1,2]}', '$.a[*]');
 --echo # MDEV-37640: Crash at String::append with json_normalize
 --echo #
 
-SELECT ( WITH x AS ( WITH x AS ( SELECT 1.000000 ) SELECT ( REPEAT ( ( json_normalize ( ' 	-1' ) ) , 357 ) ) x ) SELECT x FROM x WHERE x IN ( x , x ) );
+SELECT ( WITH x AS ( WITH x AS ( SELECT 1.000000 ) SELECT ( REPEAT ( ( json_normalize ( ' 	-1' ) ) , 357 ) ) x ) SELECT x FROM x WHERE x IN ( x , x ) ) x;
 
 --echo #
 --echo # MDEV-37640: Crash in JSON_KEYS
@@ -2068,6 +2068,20 @@ SELECT JSON_VALUE('{ "A": [5,] }', '$.A[-2]');
 SELECT JSON_VALUE('{ "A": [5] }', '$.A[-2]');
 SELECT JSON_LENGTH('{ "A": [0,] }', '$.A');
 SELECT JSON_VALID('{ "A": [0,] }');
+
+--echo #
+--echo # MDEV-35548 UBSAN: runtime error: index -1 out of bounds for type 'json_path_step_t[32]'
+--echo # (aka 'struct st_json_path_step_t[32]')
+--echo #
+
+SELECT JSON_EXTRACT('{a:true}','$.a')=TRUE;
+SELECT JSON_EXTRACT('0E+0','$');
+
+--echo #
+--echo # MDEV-26814: UBSAN: offset to nullptr in JSON_ARRAY_INSERT
+--echo #
+
+SELECT JSON_ARRAY_INSERT (0,NULL,1) as j;
 
 --echo # End of 10.11 Test
 
@@ -4293,6 +4307,17 @@ SELECT JSON_SCHEMA_VALID('{"properties": "a_string": {"pattern": "^[5-9]$"}}}', 
 --echo # MDEV-38356 JSON_SCHEMA_VALID() crashes with a long enum
 --echo #
 select json_schema_valid('{"enum":[0]}', sformat('"{:#>200}"','0'));
+
+--echo #
+--echo # MDEV-36808 json_array_intersect incorrect results after returning NULL in table scan
+--echo #
+
+CREATE TABLE t1 (full text, overlap text);
+INSERT INTO t1 VALUES ('["2"]', '["2"]'), ('["2"]', '["0"]'),  ('["2"]', '["2"]');
+
+SELECT full, overlap, json_array_intersect(full, overlap) as jai from t1;
+
+DROP TABLE t1;
 
 --echo # End of 11.4 Test
 

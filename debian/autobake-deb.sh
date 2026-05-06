@@ -19,6 +19,9 @@ export DEB_BUILD_OPTIONS="nocheck $DEB_BUILD_OPTIONS"
 # shellcheck source=/dev/null
 source ./VERSION
 
+architecture=$(dpkg-architecture -q DEB_BUILD_ARCH)
+uname_machine=$(uname -m)
+
 # Look up distro-version specific stuff
 #
 # Always keep the actual packaging as up-to-date as possible following the latest
@@ -69,9 +72,6 @@ remove_columnstore_boost_deps()
   # are columnstore, and it insists on 1.88+
   sed -e '/libboost-[^d]/d' -i debian/control
 }
-
-architecture=$(dpkg-architecture -q DEB_BUILD_ARCH)
-uname_machine=$(uname -m)
 
 # Parse release name and number from Linux standard base release
 # Example:

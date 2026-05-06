@@ -1434,6 +1434,8 @@ int Gis_line_string::is_closed(int *closed) const
 
 int Gis_line_string::num_points(uint32 *n_points) const
 {
+  if (no_data(m_data, 4))
+    return 1;
   *n_points= uint4korr(m_data);
   return 0;
 }
@@ -1649,6 +1651,7 @@ uint Gis_polygon::init_from_wkb(const char *wkb, uint len, wkbByteOrder bo,
     if (ls.is_closed(&closed) || !closed)
       return 0;
     wkb+= ls_len;
+    len-= ls_len;
   }
 
   return (uint) (wkb - wkb_orig);
@@ -2264,6 +2267,8 @@ bool Gis_multi_point::get_mbr(MBR *mbr, const char **end) const
 
 int Gis_multi_point::num_geometries(uint32 *num) const
 {
+  if (no_data(m_data, 4))
+    return 1;
   *num= uint4korr(m_data);
   return 0;
 }
@@ -2350,7 +2355,8 @@ int Gis_multi_point::spherical_distance_multipoints(Geometry *g, const double r,
      we are sure that there will be multiple points and we have to construct
      Point geometry and return the smallest result.
   */
-  num_geometries(&num_of_points1);
+  if (num_geometries(&num_of_points1))
+    return 1;
   DBUG_ASSERT(num_of_points1 >= 1);
   g->num_geometries(&num_of_points2);
   DBUG_ASSERT(num_of_points2 >= 1);
@@ -2673,6 +2679,8 @@ bool Gis_multi_line_string::get_mbr(MBR *mbr, const char **end) const
 
 int Gis_multi_line_string::num_geometries(uint32 *num) const
 {
+  if (no_data(m_data, 4))
+    return 1;
   *num= uint4korr(m_data);
   return 0;
 }
@@ -3110,6 +3118,8 @@ bool Gis_multi_polygon::get_mbr(MBR *mbr, const char **end) const
 
 int Gis_multi_polygon::num_geometries(uint32 *num) const
 {
+  if (no_data(m_data, 4))
+    return 1;
   *num= uint4korr(m_data);
   return 0;
 }
@@ -3335,10 +3345,9 @@ uint Gis_geometry_collection::init_from_opresult(String *bin,
                                                  const char *opres,
                                                  uint res_len)
 {
-  const char *opres_orig= opres;
   Geometry_buffer buffer;
   Geometry *geom;
-  int g_len;
+  uint g_len, result= 0;
   uint32 wkb_type;
   int no_pos= bin->length();
   uint32 n_objects= 0;
@@ -3350,7 +3359,7 @@ uint Gis_geometry_collection::init_from_opresult(String *bin,
   if (res_len == 0)
   {
     /* Special case of GEOMETRYCOLLECTION EMPTY. */
-    opres+= 1;
+    result= 1;
     goto empty_geom;
   }
   
@@ -3375,11 +3384,12 @@ uint Gis_geometry_collection::init_from_opresult(String *bin,
       return 0;
     opres+= g_len;
     res_len-= g_len;
+    result+= g_len;
     n_objects++;
   }
 empty_geom:
   bin->write_at_position(no_pos, n_objects);
-  return (uint) (opres - opres_orig);
+  return result;
 }
 
 

@@ -135,10 +135,11 @@ TABLE *find_fk_open_table(THD *thd, const char *db, size_t db_len,
 			  const char *table, size_t table_len);
 MYSQL_THD create_background_thd();
 void reset_thd(MYSQL_THD thd);
-TABLE *get_purge_table(THD *thd);
 TABLE *open_purge_table(THD *thd, const char *db, size_t dblen,
-			const char *tb, size_t tblen);
-void close_thread_tables(THD* thd);
+			const char *tb, size_t tblen,
+			MDL_ticket *mdl_ticket) noexcept;
+int close_thread_tables(THD* thd) noexcept;
+MDL_ticket *get_mdl_ticket(TABLE *table) noexcept;
 
 #ifdef MYSQL_DYNAMIC_PLUGIN
 #define tc_size  400
@@ -1692,25 +1693,6 @@ MYSQL_THD innobase_create_background_thd(const char* name)
 	thd_proc_info(thd, name);
 	THDVAR(thd, background_thread) = true;
 	return thd;
-}
-
-
-/** Close opened tables, free memory, delete items for a MYSQL_THD.
-@param[in]	thd	MYSQL_THD to reset */
-void
-innobase_reset_background_thd(MYSQL_THD thd)
-{
-	if (!thd) {
-		thd = current_thd;
-	}
-
-	ut_ad(thd);
-	ut_ad(THDVAR(thd, background_thread));
-
-	/* background purge thread */
-	const char *proc_info= thd_proc_info(thd, "reset");
-	reset_thd(thd);
-	thd_proc_info(thd, proc_info);
 }
 
 /******************************************************************//**
@@ -6057,9 +6039,7 @@ ha_innobase::open(const char* name, int, uint)
 	/* Index block size in InnoDB: used by MySQL in query optimization */
 	stats.block_size = static_cast<uint>(srv_page_size);
 
-	const my_bool for_vc_purge = THDVAR(thd, background_thread);
-
-	if (for_vc_purge || !m_prebuilt->table
+	if (!m_prebuilt->table
 	    || m_prebuilt->table->is_temporary()
 	    || m_prebuilt->table->persistent_autoinc
 	    || !m_prebuilt->table->is_readable()) {
@@ -6086,7 +6066,7 @@ ha_innobase::open(const char* name, int, uint)
 	ut_ad(!m_prebuilt->table
 	      || table->versioned() == m_prebuilt->table->versioned());
 
-	if (!for_vc_purge) {
+	if (!THDVAR(thd, background_thread)) {
 		info(HA_STATUS_NO_LOCK | HA_STATUS_VARIABLE | HA_STATUS_CONST
 		     | HA_STATUS_OPEN);
 	}
@@ -8466,7 +8446,7 @@ ATTRIBUTE_COLD bool wsrep_append_table_key(MYSQL_THD thd,
 {
   char db_buf[NAME_LEN + 1];
   char tbl_buf[NAME_LEN + 1];
-  ulint db_buf_len, tbl_buf_len;
+  size_t db_buf_len, tbl_buf_len;
 
   if (!table.parse_name(db_buf, tbl_buf, &db_buf_len, &tbl_buf_len))
   {
@@ -15226,7 +15206,7 @@ ha_innobase::check(
 	ulint		n_rows_in_table	= ULINT_UNDEFINED;
 	bool		is_ok		= true;
 	dberr_t		ret;
-        uint handler_flags= check_opt->handler_flags;
+	uint handler_flags= check_opt->handler_flags;
 
 	DBUG_ENTER("ha_innobase::check");
 	DBUG_ASSERT(thd == ha_thd());
@@ -15235,7 +15215,7 @@ ha_innobase::check(
 	ut_a(m_prebuilt->trx == thd_to_trx(thd));
 	ut_ad(m_prebuilt->trx->mysql_thd == thd);
 
-	if (handler_flags || check_for_upgrade(check_opt)) {
+	if (handler_flags) {
 		/* The file was already checked and fixed as part of open */
 		print_check_msg(thd, table->s->db.str, table->s->table_name.str,
 				"check", "note",
@@ -15244,9 +15224,10 @@ ha_innobase::check(
 				? "Auto_increment will be"
 				" checked on each open until"
 				" CHECK TABLE FOR UPGRADE is executed"
+				" when the server is not in a read-only state"
 				: "Auto_increment checked and"
 				" .frm file version updated", 1);
-		if (handler_flags && (check_opt->sql_flags & TT_FOR_UPGRADE)) {
+		if (check_opt->sql_flags & TT_FOR_UPGRADE) {
 			/*
 			  No other issues found (as handler_flags was only
 			  set if there as not other problems with the table
@@ -15462,7 +15443,7 @@ func_exit:
 }
 
 /**
-Check if we there is a problem with the InnoDB table.
+Check if there is a problem with the InnoDB table.
 @param check_opt     check options
 @retval HA_ADMIN_OK           if Table is ok
 @retval HA_ADMIN_NEEDS_ALTER  User should run ALTER TABLE FOR UPGRADE
@@ -15483,6 +15464,7 @@ int ha_innobase::check_for_upgrade(HA_CHECK_OPT *check_opt)
     if (m_prebuilt->table->get_index(*autoinc_col))
     {
       check_opt->handler_flags= 1;
+      // Prevent ha_check() from updating frm version if InnoDB (but not the server) is in a read-only state
       return (high_level_read_only && !opt_readonly)
         ? HA_ADMIN_FAILED : HA_ADMIN_NEEDS_CHECK;
     }
@@ -15939,7 +15921,7 @@ ha_innobase::extra(
 			handler::extra(HA_EXTRA_ALTER_COPY). */
 			log_buffer_flush_to_disk();
 		}
-		alter_stats_rebuild(m_prebuilt->table, trx);
+		alter_stats_rebuild(m_prebuilt->table, trx, true);
 		break;
 	}
 	case HA_EXTRA_ABORT_COPY:
@@ -20287,37 +20269,28 @@ ha_innobase::multi_range_read_explain_info(
 for purge thread */
 static TABLE* innodb_find_table_for_vc(THD* thd, dict_table_t* table)
 {
-	TABLE *mysql_table;
-	const bool  bg_thread = THDVAR(thd, background_thread);
-
-	if (bg_thread) {
-		if ((mysql_table = get_purge_table(thd))) {
-			return mysql_table;
-		}
-	} else {
-		if (table->vc_templ->mysql_table_query_id
-		    == thd_get_query_id(thd)) {
-			return table->vc_templ->mysql_table;
-		}
+	table->lock_mutex_lock();
+	TABLE *maria_table = table->vc_templ->mysql_table;
+	const uint64_t cached_id = table->vc_templ->mysql_table_query_id;
+	table->lock_mutex_unlock();
+	if (cached_id == thd_get_query_id(thd)) {
+		return maria_table;
 	}
 
+	TABLE *mysql_table;
 	char	db_buf[NAME_LEN + 1];
 	char	tbl_buf[NAME_LEN + 1];
-	ulint	db_buf_len, tbl_buf_len;
+	size_t	db_buf_len, tbl_buf_len;
 
 	if (!table->parse_name(db_buf, tbl_buf, &db_buf_len, &tbl_buf_len)) {
 		return NULL;
 	}
-
-	if (bg_thread) {
-		return open_purge_table(thd, db_buf, db_buf_len,
-					tbl_buf, tbl_buf_len);
-	}
-
 	mysql_table = find_fk_open_table(thd, db_buf, db_buf_len,
 					 tbl_buf, tbl_buf_len);
+	table->lock_mutex_lock();
 	table->vc_templ->mysql_table = mysql_table;
 	table->vc_templ->mysql_table_query_id = thd_get_query_id(thd);
+	table->lock_mutex_unlock();
 	return mysql_table;
 }
 
@@ -21192,7 +21165,7 @@ ib_foreign_warn(trx_t*	    trx,   /*!< in: trx */
 	}
 
 	va_start(args, format);
-	vsprintf(buf, format, args);
+	vsnprintf(buf, MAX_BUF_SIZE, format, args);
 	va_end(args);
 
 	mysql_mutex_lock(&dict_foreign_err_mutex);
@@ -21363,12 +21336,14 @@ void ins_node_t::vers_update_end(row_prebuilt_t *prebuilt, bool history_row)
 Remove statistics for dropped indexes, add statistics for created indexes
 and rename statistics for renamed indexes.
 @param table InnoDB table that was rebuilt by ALTER TABLE
-@param trx   user transaction */
-void alter_stats_rebuild(dict_table_t *table, trx_t *trx) noexcept
+@param trx   user transaction
+@param copy  Caller is from COPY alter algorithm*/
+void alter_stats_rebuild(dict_table_t *table, trx_t *trx, bool copy) noexcept
 {
   DBUG_ENTER("alter_stats_rebuild");
-  if (!table->space || !table->stats_is_persistent()
-      || dict_stats_persistent_storage_check(false) != SCHEMA_OK)
+  if (!table->space || !table->stats_is_persistent() ||
+      (copy && !table->name.is_temporary()) ||
+      dict_stats_persistent_storage_check(false) != SCHEMA_OK)
     DBUG_VOID_RETURN;
 
   dberr_t ret= dict_stats_update_persistent(trx, table);

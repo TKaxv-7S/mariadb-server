@@ -1632,69 +1632,99 @@ int init_strvar_from_file(char *var, int max_size, IO_CACHE *f,
   DBUG_RETURN(1);
 }
 
-/*
-  when moving these functions to mysys, don't forget to
-  remove slave.cc from libmysqld/CMakeLists.txt
-*/
+/* Check if numeric string parsing has trailing garbage */
+static bool is_string_blank_or_empty(const char *endptr)
+{
+  while (*endptr != '\0' &&
+         (my_isspace(system_charset_info, *endptr) ||
+          my_iscntrl(system_charset_info, *endptr)))
+  {
+    endptr++;
+  }
+
+  return *endptr != '\0';
+}
+
 int init_intvar_from_file(int* var, IO_CACHE* f, int default_val)
 {
-  char buf[32];
+  char buf[32]= {0};
   DBUG_ENTER("init_intvar_from_file");
 
+  *var= 0;
 
-  if (my_b_gets(f, buf, sizeof(buf)))
+  if (!my_b_gets(f, buf, sizeof(buf)))
   {
-    *var = atoi(buf);
+    if (!default_val)
+      DBUG_RETURN(1);
+    *var= default_val;
     DBUG_RETURN(0);
   }
-  else if (default_val)
-  {
-    *var = default_val;
-    DBUG_RETURN(0);
-  }
-  DBUG_RETURN(1);
+
+  char *endptr= buf + strlen(buf);
+  int error= 0;
+  longlong val= my_strtoll10(buf, &endptr, &error);
+
+  if (error || is_string_blank_or_empty(endptr))
+    DBUG_RETURN(1);
+
+  if (val < 0 || val > UINT_MAX)
+    DBUG_RETURN(1);
+
+  *var= (int) val;
+  DBUG_RETURN(0);
 }
 
 int init_ulonglongvar_from_file(ulonglong* var, IO_CACHE* f,
                                 ulonglong default_val)
 {
-  char buf[MY_INT64_NUM_DECIMAL_DIGITS];
-  int error;
+  char buf[MY_INT64_NUM_DECIMAL_DIGITS]= {0};
+  int error= 0;
   DBUG_ENTER("init_ulonglongvar_from_file");
 
+  *var= 0;
 
-  if (my_b_gets(f, buf, sizeof(buf)))
+  if (!my_b_gets(f, buf, sizeof(buf)))
   {
-    *var = (ulonglong) my_strtoll10(buf, (char**) 0, &error);
+    if (!default_val)
+      DBUG_RETURN(1);
+    *var= default_val;
     DBUG_RETURN(0);
   }
-  else if (default_val)
-  {
-    *var = default_val;
-    DBUG_RETURN(0);
-  }
-  DBUG_RETURN(1);
+
+  char *endptr= buf + strlen(buf);
+  ulonglong val= (ulonglong) my_strtoll10(buf, &endptr, &error);
+
+  if (error || is_string_blank_or_empty(endptr))
+    DBUG_RETURN(1);
+
+  *var= val;
+  DBUG_RETURN(0);
 }
 
 int init_floatvar_from_file(float* var, IO_CACHE* f, float default_val)
 {
-  char buf[16];
+  char buf[16]= {0};
   DBUG_ENTER("init_floatvar_from_file");
 
+  *var= 0.0;
 
-  if (my_b_gets(f, buf, sizeof(buf)))
+  if (!my_b_gets(f, buf, sizeof(buf)))
   {
-    if (sscanf(buf, "%f", var) != 1)
+    if (default_val == 0.0)
       DBUG_RETURN(1);
-    else
-      DBUG_RETURN(0);
-  }
-  else if (default_val != 0.0)
-  {
-    *var = default_val;
+    *var= default_val;
     DBUG_RETURN(0);
   }
-  DBUG_RETURN(1);
+
+  char *endptr= buf + strlen(buf);
+  int error= 0;
+  double val= my_strtod(buf, &endptr, &error);
+
+  if (error || is_string_blank_or_empty(endptr))
+    DBUG_RETURN(1);
+
+  *var= (float) val;
+  DBUG_RETURN(0);
 }
 
 
@@ -1859,7 +1889,7 @@ static int get_master_version_and_clock(MYSQL* mysql, Master_info* mi)
              "Master reported unrecognized MariaDB version: %s",
              mysql->server_version);
     err_code= ER_SLAVE_FATAL_ERROR;
-    sprintf(err_buff, ER_DEFAULT(err_code), err_buff2);
+    snprintf(err_buff, sizeof(err_buff), ER_DEFAULT(err_code), err_buff2);
   }
   else
   {
@@ -1880,7 +1910,7 @@ static int get_master_version_and_clock(MYSQL* mysql, Master_info* mi)
                "Master reported unrecognized MariaDB version: %s",
                mysql->server_version);
       err_code= ER_SLAVE_FATAL_ERROR;
-      sprintf(err_buff, ER_DEFAULT(err_code), err_buff2);
+      snprintf(err_buff, sizeof(err_buff), ER_DEFAULT(err_code), err_buff2);
       break;
     default:
       /*
@@ -1913,7 +1943,7 @@ static int get_master_version_and_clock(MYSQL* mysql, Master_info* mi)
   {
     errmsg= "default Format_description_log_event";
     err_code= ER_SLAVE_CREATE_EVENT_FAILURE;
-    sprintf(err_buff, ER_DEFAULT(err_code), errmsg);
+    snprintf(err_buff, sizeof(err_buff), ER_DEFAULT(err_code), errmsg);
     goto err;
   }
 
@@ -2048,7 +2078,7 @@ MariaDB server ids; these ids must be different for replication to work (or \
 the --replicate-same-server-id option must be used on slave but this does \
 not always make sense; please check the manual before using it).";
       err_code= ER_SLAVE_FATAL_ERROR;
-      sprintf(err_buff, ER_DEFAULT(err_code), errmsg);
+      snprintf(err_buff, sizeof(err_buff), ER_DEFAULT(err_code), errmsg);
       goto err;
     }
   }
@@ -2066,7 +2096,7 @@ not always make sense; please check the manual before using it).";
     errmsg= "The slave I/O thread stops because a fatal error is encountered \
 when it try to get the value of SERVER_ID variable from master.";
     err_code= mysql_errno(mysql);
-    sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
+    snprintf(err_buff, sizeof(err_buff), "%s Error: %s", errmsg, mysql_error(mysql));
     goto err;
   }
   else if (!master_row && master_res)
@@ -2084,7 +2114,7 @@ maybe it is a *VERY OLD MASTER*.");
   {
     errmsg= "Slave configured with server id filtering could not detect the master server id.";
     err_code= ER_SLAVE_FATAL_ERROR;
-    sprintf(err_buff, ER_DEFAULT(err_code), errmsg);
+    snprintf(err_buff, sizeof(err_buff), ER_DEFAULT(err_code), errmsg);
     goto err;
   }
 
@@ -2124,7 +2154,7 @@ maybe it is a *VERY OLD MASTER*.");
 different values for the COLLATION_SERVER global variable. The values must \
 be equal for the Statement-format replication to work";
         err_code= ER_SLAVE_FATAL_ERROR;
-        sprintf(err_buff, ER_DEFAULT(err_code), errmsg);
+        snprintf(err_buff, sizeof(err_buff), ER_DEFAULT(err_code), errmsg);
         goto err;
       }
     }
@@ -2142,7 +2172,7 @@ be equal for the Statement-format replication to work";
       errmsg= "The slave I/O thread stops because a fatal error is encountered \
 when it try to get the value of COLLATION_SERVER global variable from master.";
       err_code= mysql_errno(mysql);
-      sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
+      snprintf(err_buff, sizeof(err_buff), "%s Error: %s", errmsg, mysql_error(mysql));
       goto err;
     }
     else
@@ -2187,7 +2217,7 @@ inconsistency if replicated data deals with collation.");
 different values for the TIME_ZONE global variable. The values must \
 be equal for the Statement-format replication to work";
         err_code= ER_SLAVE_FATAL_ERROR;
-        sprintf(err_buff, ER_DEFAULT(err_code), errmsg);
+        snprintf(err_buff, sizeof(err_buff), ER_DEFAULT(err_code), errmsg);
         goto err;
       }
     }
@@ -2214,7 +2244,7 @@ be equal for the Statement-format replication to work";
       /* Fatal error */
       errmsg= "The slave I/O thread stops because a fatal error is encountered \
 when it try to get the value of TIME_ZONE global variable from master.";
-      sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
+      snprintf(err_buff, sizeof(err_buff), "%s Error: %s", errmsg, mysql_error(mysql));
       goto err;
     }
     if (master_res)
@@ -2259,7 +2289,7 @@ when it try to get the value of TIME_ZONE global variable from master.";
         errmsg= "The slave I/O thread stops because a fatal error is encountered "
           "when it tries to SET @master_heartbeat_period on master.";
         err_code= ER_SLAVE_FATAL_ERROR;
-        sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
+        snprintf(err_buff, sizeof(err_buff), "%s Error: %s", errmsg, mysql_error(mysql));
         mysql_free_result(mysql_store_result(mysql));
         goto err;
       }
@@ -2319,7 +2349,7 @@ when it try to get the value of TIME_ZONE global variable from master.";
           errmsg= "The slave I/O thread stops because a fatal error is encountered "
             "when it tried to SET @master_binlog_checksum on master.";
           err_code= ER_SLAVE_FATAL_ERROR;
-          sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
+          snprintf(err_buff, sizeof(err_buff), "%s Error: %s", errmsg, mysql_error(mysql));
           mysql_free_result(mysql_store_result(mysql));
           goto err;
         }
@@ -2353,7 +2383,7 @@ when it try to get the value of TIME_ZONE global variable from master.";
         errmsg= "The slave I/O thread stops because a fatal error is encountered "
           "when it tried to SELECT @master_binlog_checksum.";
         err_code= ER_SLAVE_FATAL_ERROR;
-        sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
+        snprintf(err_buff, sizeof(err_buff), "%s Error: %s", errmsg, mysql_error(mysql));
         mysql_free_result(mysql_store_result(mysql));
         goto err;
       }
@@ -2410,7 +2440,7 @@ past_checksum:
         errmsg= "The slave I/O thread stops because a fatal error is "
           "encountered when it tries to request filtering of events marked "
           "with the @@skip_replication flag.";
-        sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
+        snprintf(err_buff, sizeof(err_buff), "%s Error: %s", errmsg, mysql_error(mysql));
         goto err;
       }
     }
@@ -2442,7 +2472,7 @@ past_checksum:
         /* Fatal error */
         errmsg= "The slave I/O thread stops because a fatal error is "
           "encountered when it tries to set @mariadb_slave_capability.";
-        sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
+        snprintf(err_buff, sizeof(err_buff), "%s Error: %s", errmsg, mysql_error(mysql));
         goto err;
       }
     }
@@ -2494,7 +2524,7 @@ after_set_capability:
         errmsg= "The slave I/O thread stops because master does not support "
           "MariaDB global transaction id. A fatal error is encountered when "
           "it tries to SELECT @@GLOBAL.gtid_domain_id.";
-        sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
+        snprintf(err_buff, sizeof(err_buff), "%s Error: %s", errmsg, mysql_error(mysql));
         goto err;
       }
     }
@@ -2508,7 +2538,7 @@ after_set_capability:
       err_code= ER_OUTOFMEMORY;
       errmsg= "The slave I/O thread stops because a fatal out-of-memory "
         "error is encountered when it tries to compute @slave_connect_state.";
-      sprintf(err_buff, "%s Error: Out of memory", errmsg);
+      snprintf(err_buff, sizeof(err_buff), "%s Error: Out of memory", errmsg);
       goto err;
     }
     query_str.append(STRING_WITH_LEN("'"), system_charset_info);
@@ -2532,7 +2562,7 @@ after_set_capability:
         /* Fatal error */
         errmsg= "The slave I/O thread stops because a fatal error is "
           "encountered when it tries to set @slave_connect_state.";
-        sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
+        snprintf(err_buff, sizeof(err_buff), "%s Error: %s", errmsg, mysql_error(mysql));
         goto err;
       }
     }
@@ -2545,7 +2575,7 @@ after_set_capability:
       err_code= ER_OUTOFMEMORY;
       errmsg= "The slave I/O thread stops because a fatal out-of-memory "
         "error is encountered when it tries to set @slave_gtid_strict_mode.";
-      sprintf(err_buff, "%s Error: Out of memory", errmsg);
+      snprintf(err_buff, sizeof(err_buff), "%s Error: Out of memory", errmsg);
       goto err;
     }
 
@@ -2568,7 +2598,7 @@ after_set_capability:
         /* Fatal error */
         errmsg= "The slave I/O thread stops because a fatal error is "
           "encountered when it tries to set @slave_gtid_strict_mode.";
-        sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
+        snprintf(err_buff, sizeof(err_buff), "%s Error: %s", errmsg, mysql_error(mysql));
         goto err;
       }
     }
@@ -2581,7 +2611,7 @@ after_set_capability:
       err_code= ER_OUTOFMEMORY;
       errmsg= "The slave I/O thread stops because a fatal out-of-memory error "
         "is encountered when it tries to set @slave_gtid_ignore_duplicates.";
-      sprintf(err_buff, "%s Error: Out of memory", errmsg);
+      snprintf(err_buff, sizeof(err_buff), "%s Error: Out of memory", errmsg);
       goto err;
     }
 
@@ -2604,7 +2634,7 @@ after_set_capability:
         /* Fatal error */
         errmsg= "The slave I/O thread stops because a fatal error is "
           "encountered when it tries to set @slave_gtid_ignore_duplicates.";
-        sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
+        snprintf(err_buff, sizeof(err_buff), "%s Error: %s", errmsg, mysql_error(mysql));
         goto err;
       }
     }
@@ -2619,7 +2649,7 @@ after_set_capability:
         err_code= ER_OUTOFMEMORY;
         errmsg= "The slave I/O thread stops because a fatal out-of-memory "
           "error is encountered when it tries to compute @slave_until_gtid.";
-        sprintf(err_buff, "%s Error: Out of memory", errmsg);
+        snprintf(err_buff, sizeof(err_buff), "%s Error: Out of memory", errmsg);
         goto err;
       }
       query_str.append(STRING_WITH_LEN("'"), system_charset_info);
@@ -2643,7 +2673,7 @@ after_set_capability:
           /* Fatal error */
           errmsg= "The slave I/O thread stops because a fatal error is "
             "encountered when it tries to set @slave_until_gtid.";
-          sprintf(err_buff, "%s Error: %s", errmsg, mysql_error(mysql));
+          snprintf(err_buff, sizeof(err_buff), "%s Error: %s", errmsg, mysql_error(mysql));
           goto err;
         }
       }

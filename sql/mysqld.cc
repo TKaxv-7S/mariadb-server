@@ -1959,7 +1959,11 @@ static void mysqld_exit(int exit_code)
   shutdown_performance_schema();        // we do it as late as possible
 #endif
   set_malloc_size_cb(NULL);
+#ifdef HAVE_OPENSSL
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
   OPENSSL_cleanup();
+#endif
+#endif
   if (global_status_var.global_memory_used)
     fprintf(stderr, "Warning: Internal memory accounting error of %lld bytes\n",
             (longlong) global_status_var.global_memory_used);
@@ -2499,8 +2503,8 @@ static void activate_tcp_port(uint port,
       {
         char buff[100];
         int s_errno= socket_errno;
-        sprintf(buff, "Can't start server: Bind on TCP/IP port. Got error: %d",
-                (int) s_errno);
+        snprintf(buff, sizeof(buff), "Can't start server: Bind on TCP/IP port. Got error: %d",
+                 (int) s_errno);
         sql_perror(buff);
         /*
           Linux will quite happily bind to addresses not present. The
@@ -2698,6 +2702,57 @@ err:
 }
 
 
+#ifdef HAVE_SYS_UN_H
+/*
+  Unlink an existing Unix socket file if no process is listening
+  on it, or abort startup if the socket is still active.
+*/
+static void unlink_socket_or_abort(const char *path)
+{
+  struct sockaddr_un addr;
+  MY_STAT stat_buf;
+  int fd;
+
+  if (!my_stat(path, &stat_buf, MYF(0)))
+    return;
+
+  if (!S_ISSOCK(stat_buf.st_mode))
+    goto do_unlink;
+
+  fd= socket(AF_UNIX, SOCK_STREAM, 0);
+  if (fd < 0)
+  {
+    sql_print_error("Cannot create a socket: %iE. Aborting.",
+                    errno);
+    unireg_abort(1);
+  }
+
+  bzero((char*) &addr, sizeof(addr));
+  addr.sun_family= AF_UNIX;
+  strmov(addr.sun_path, path);
+  if (connect(fd, (struct sockaddr *) &addr, sizeof(addr)) == 0)
+  {
+    close(fd);
+    sql_print_error("Another process is already listening "
+                    "on the socket file '%s'. Aborting.",
+                    path);
+    unireg_abort(1);
+  }
+  if (errno != ECONNREFUSED && errno != ENOENT)
+  {
+    close(fd);
+    sql_print_error("Error checking socket file '%s': %iE. "
+                    "Aborting.", path, errno);
+    unireg_abort(1);
+  }
+  close(fd);
+
+do_unlink:
+  (void) unlink(path);
+}
+#endif /* HAVE_SYS_UN_H */
+
+
 static void network_init(void)
 {
 #ifdef HAVE_SYS_UN_H
@@ -2775,7 +2830,7 @@ static void network_init(void)
     else
 #endif
     {
-      (void) unlink(mysqld_unix_port);
+      unlink_socket_or_abort(mysqld_unix_port);
       port_len= sizeof(UNIXaddr);
     }
     arg= 1;
@@ -7146,7 +7201,8 @@ static int show_heartbeat_period(THD *thd, SHOW_VAR *var, void *buff,
       get_master_info(&thd->variables.default_master_connection,
                       Sql_condition::WARN_LEVEL_NOTE))
   {
-    sprintf(static_cast<char*>(buff), "%.3f", mi->heartbeat_period);
+    snprintf(static_cast<char*>(buff), SHOW_VAR_FUNC_BUFF_SIZE, "%.3f",
+             mi->heartbeat_period);
     mi->release();
     var->type= SHOW_CHAR;
     var->value= buff;
@@ -7165,7 +7221,7 @@ static int show_max_used_connections_time(THD *, SHOW_VAR *var, void *buff,
   var->type= SHOW_CHAR;
   var->value= buff;
 
-  get_date(static_cast<char*>(buff),
+  get_date(static_cast<char*>(buff), SHOW_VAR_FUNC_BUFF_SIZE,
            GETDATE_DATE_TIME | GETDATE_FIXEDLENGTH, max_used_connections_time);
   return 0;
 }
