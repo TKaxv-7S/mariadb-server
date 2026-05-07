@@ -3755,6 +3755,27 @@ id	key1
 3	2
 drop table t1;
 #
+# MDEV-39323: CROSS JOIN query returns wrong result with NOT BETWEEN
+#
+CREATE TABLE `t1` (
+`float_key` float,
+`int_key` int,
+UNIQUE KEY `float_key` (`float_key`),
+UNIQUE KEY `int_key` (`int_key`)
+);
+INSERT INTO `t1` VALUES
+(567621000,  NULL),
+(0.363988,   -1643936528),
+(-422810000, NULL),
+(0,          0),
+(NULL,       NULL),
+(NULL,       NULL),
+(NULL,       NULL);
+SELECT COUNT(*) FROM t1 WHERE NOT (1 BETWEEN t1.float_key AND t1.int_key);
+COUNT(*)
+3
+DROP TABLE t1;
+#
 # End of 10.11 tests
 #
 set global innodb_stats_persistent= @innodb_stats_persistent_save;
