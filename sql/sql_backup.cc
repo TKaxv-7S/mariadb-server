@@ -274,11 +274,15 @@ bool Sql_cmd_backup::execute(THD *thd)
                                    MYSQL_STORAGE_ENGINE_PLUGIN,
                                    PLUGIN_IS_DELETED|PLUGIN_IS_READY, nullptr);
 
-  /* FIXME: Escalate to MDL_BACKUP_BLOCK_DDL or similar */
-  fail=
-    plugin_foreach_with_mask(thd, backup_end, MYSQL_STORAGE_ENGINE_PLUGIN,
-                             PLUGIN_IS_DELETED|PLUGIN_IS_READY,
-                             reinterpret_cast<void*>(fail)) || fail;
+  if(!thd->mdl_context.upgrade_shared_lock(mdl_request.ticket,
+                                           MDL_BACKUP_WAIT_COMMIT,
+                                           thd->variables.lock_wait_timeout))
+    fail=
+      plugin_foreach_with_mask(thd, backup_end, MYSQL_STORAGE_ENGINE_PLUGIN,
+                               PLUGIN_IS_DELETED|PLUGIN_IS_READY,
+                               reinterpret_cast<void*>(fail)) || fail;
+  else
+    fail= true;
 
   /* The final part must not interfere with the use of the server datadir.
   Release the locks. */
