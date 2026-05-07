@@ -1444,7 +1444,7 @@ int main(int argc,char *argv[])
     else if ((home= getenv("HOME")))
     {
       size_t histfile_size=
-        strlen(getenv(home)) + strlen("/.mysql_history") + 2;
+        strlen(home) + strlen("/.mysql_history") + 2;
       histfile=(char*) my_malloc(PSI_NOT_INSTRUMENTED,
             histfile_size, MYF(MY_WME));
       if (histfile)

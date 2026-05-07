@@ -113,14 +113,10 @@ pack_row(TABLE *table, MY_BITMAP const* cols,
           length is stored in little-endian format, since this is the
           format used for the binlog.
         */
-#ifndef DBUG_OFF
-        uchar *old_pack_ptr= pack_ptr;
+#if !defined DBUG_OFF && defined DBUG_TRACE
+        const uchar *old_pack_ptr= pack_ptr;
 #endif
         pack_ptr= field->pack(pack_ptr, field->ptr + offset);
-        DBUG_EXECUTE_IF("rpl_pack_simulate_negation",
-          for (uchar *byte= old_pack_ptr; byte < pack_ptr; ++byte)
-            *byte= ~*byte;
-        );
         DBUG_PRINT("rpl_record",
                    ("field: %s; real_type: %d, pack_ptr: %p;"
                     " pack_ptr':%p; bytes: %d",
@@ -318,8 +314,6 @@ static void convert_field(Field *result_field, Field *conv_field)
    A generic, internal, error caused the unpacking to fail.
    @retval HA_ERR_CORRUPT_EVENT
    Found error when trying to unpack fields.
-   @retval HA_ERR_ROWS_EVENT_APPLY
-   Found error when validating field values.
  */
 
 int unpack_row(const rpl_group_info *rgi, TABLE *table, uint const master_cols,
