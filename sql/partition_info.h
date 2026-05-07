@@ -98,6 +98,9 @@ struct Vers_part_info : public Sql_alloc
 class partition_info : public DDL_LOG_STATE, public Sql_alloc
 {
 public:
+  INTERVAL interval;
+  enum interval_type int_type;
+
   /*
    * Here comes a set of definitions needed for partitioned table handlers.
    */
@@ -309,7 +312,8 @@ public:
   bool column_list;                          // COLUMNS PARTITIONING, 5.5+
 
   partition_info()
-  : get_partition_id(NULL), get_part_partition_id(NULL),
+  : int_type(INTERVAL_LAST),
+    get_partition_id(NULL), get_part_partition_id(NULL),
     get_subpartition_id(NULL),
     part_field_array(NULL), subpart_field_array(NULL),
     part_charset_field_array(NULL),
@@ -417,6 +421,8 @@ public:
   bool field_in_partition_expr(Field *field) const;
 
   bool vers_init_info(THD *thd);
+  bool set_interval(THD* thd, Item* ival, interval_type type,
+                    const char *table_name);
   bool vers_set_interval(THD *thd, Item *interval,
                          interval_type int_type, Item *starts,
                          bool auto_part, const char *table_name);
@@ -430,6 +436,9 @@ public:
   void vers_check_limit(THD *thd);
   bool vers_fix_field_list(THD *thd);
   void vers_update_el_ids();
+  /* TODO(MDEV-15621): change to a new RANGE_INTERVAL_PARTITION part type */
+  bool is_range_interval()
+  { return int_type != INTERVAL_LAST && part_type == RANGE_PARTITION; }
   partition_element *get_partition(uint part_id)
   {
     List_iterator<partition_element> it(partitions);
@@ -452,6 +461,7 @@ void part_type_error(THD *thd, partition_info *work_part_info,
 uint32 get_next_partition_id_range(struct st_partition_iter* part_iter);
 bool check_partition_dirs(partition_info *part_info);
 bool vers_create_partitions(THD* thd, TABLE_LIST* tl, uint num_parts);
+bool range_interval_create_partitions(THD* thd, TABLE_LIST* tl, uint num_parts);
 
 /* Initialize the iterator to return a single partition with given part_id */
 

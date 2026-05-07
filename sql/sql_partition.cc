@@ -2673,6 +2673,13 @@ char *generate_partition_syntax(THD *thd, partition_info *part_info,
     part_info->part_expr->print_for_table_def(&str);
     err+= str.append(')');
   }
+  else if (part_info->is_range_interval())
+  {
+    err+= str.append(STRING_WITH_LEN(" COLUMNS"));
+    err+= add_part_field_list(thd, &str, part_info->part_field_list);
+    err+= str.append(STRING_WITH_LEN("INTERVAL "));
+    err+= append_interval(&str, part_info->int_type, part_info->interval);
+  }
   else if (part_info->column_list)
   {
     err+= str.append(STRING_WITH_LEN(" COLUMNS"));

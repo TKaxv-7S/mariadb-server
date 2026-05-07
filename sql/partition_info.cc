@@ -1014,6 +1014,14 @@ exit:
   return result;
 }
 
+/*
+  TODO(MDEV-15621): similar to vers_create_partitions, create range
+  interval partitions
+*/
+bool range_interval_create_partitions(THD* thd, TABLE_LIST* tl, uint num_parts)
+{
+  return 0;
+}
 
 /**
   Warn at the end of DML command if the last history partition is out of LIMIT.
@@ -2790,6 +2798,18 @@ bool partition_info::vers_init_info(THD * thd)
   return false;
 }
 
+bool partition_info::set_interval(THD* thd, Item* ival, interval_type type,
+                                  const char *table_name)
+{
+  bool error= get_interval_value(thd, ival, type, &interval);
+  if (error)
+  {
+    my_error(ER_PART_WRONG_VALUE, MYF(0), table_name, "INTERVAL");
+    return true;
+  }
+  int_type= type;
+  return error;
+}
 
 /**
   Assign INTERVAL and STARTS for SYSTEM_TIME partitions.

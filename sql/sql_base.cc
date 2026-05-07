@@ -1929,6 +1929,17 @@ bool TABLE::vers_switch_partition(THD *thd, TABLE_LIST *table_list,
 
   return false;
 }
+
+/*
+  TODO(MDEV-15621): similar to vers_check_partition, find how many
+  partitions to create and calls oc_ctx->request_backoff_action for
+  actions to take when failing opening_and_process_table
+*/
+bool TABLE::range_interval_check_partition(THD *thd, TABLE_LIST *table_list,
+                                           Open_table_context *ot_ctx)
+{
+  return false;
+}
 #endif /* WITH_PARTITION_STORAGE_ENGINE */
 
 
@@ -2355,7 +2366,9 @@ retry_share:
 
 #ifdef WITH_PARTITION_STORAGE_ENGINE
   if (!part_names_error &&
-      table->vers_switch_partition(thd, table_list, ot_ctx))
+      (table->vers_switch_partition(thd, table_list, ot_ctx) ||
+       table->range_interval_check_partition(thd, table_list, ot_ctx))
+  )
   {
     MYSQL_UNBIND_TABLE(table->file);
     tc_release_table(table);
@@ -3547,6 +3560,7 @@ Open_table_context::recover_from_failed_open()
       break;
     case OT_DISCOVER:
     case OT_REPAIR:
+    case OT_ADD_RANGE_INTERVAL_PARTITION:
     case OT_ADD_HISTORY_PARTITION:
       DEBUG_SYNC(m_thd, "add_history_partition");
       if (!m_thd->locked_tables_mode)
@@ -3618,6 +3632,12 @@ Open_table_context::recover_from_failed_open()
         case OT_REPAIR:
           result= auto_repair_table(m_thd, m_failed_table);
           break;
+        case OT_ADD_RANGE_INTERVAL_PARTITION:
+#ifdef WITH_PARTITION_STORAGE_ENGINE
+          result= range_interval_create_partitions(
+            m_thd, m_failed_table, range_interval_create_count);
+          break;
+#endif
         case OT_ADD_HISTORY_PARTITION:
 #ifdef WITH_PARTITION_STORAGE_ENGINE
         {
