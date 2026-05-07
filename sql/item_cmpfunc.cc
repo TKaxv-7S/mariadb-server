@@ -6631,7 +6631,7 @@ bool Item_func_xor::val_bool()
   null_value= false;
   for (uint i= 0; i < arg_count; i++)
   {
-    result^= (args[i]->val_int() != 0);
+    result^= args[i]->val_bool();
     if (args[i]->null_value)
     {
       null_value= true;
