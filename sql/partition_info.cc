@@ -400,7 +400,7 @@ bool partition_info::set_up_default_partitions(THD *thd, handler *file,
       num_parts= 2;
     use_default_num_partitions= false;
   }
-  else if (part_type != HASH_PARTITION)
+  else if (part_type != HASH_PARTITION && !is_range_interval())
   {
     const char *error_string;
     if (part_type == RANGE_PARTITION)
@@ -891,6 +891,18 @@ bool partition_info::vers_set_hist_part(THD *thd, uint *create_count)
   return false;
 }
 
+bool partition_info::range_interval_set_count(THD* thd, uint *create_count)
+{
+  partition_element *el= partitions.elem(partitions.elements - 1);
+  Item *item= el->list_val_list.elem(0)->col_val_array->item_expression;
+  MYSQL_TIME ltime;
+  my_tz_OFFSET0->gmt_sec_to_TIME(&ltime, thd->query_start());
+  if (item->val_datetime_packed(thd) < pack_time(&ltime))
+    *create_count= 1;
+  else
+    *create_count= 0;
+  return false;
+}
 
 /**
   @brief Run fast_alter_partition_table() to add new history partitions
@@ -1015,12 +1027,95 @@ exit:
 }
 
 /*
-  TODO(MDEV-15621): similar to vers_create_partitions, create range
-  interval partitions
+  similar to vers_create_partitions, create range interval partitions
 */
 bool range_interval_create_partitions(THD* thd, TABLE_LIST* tl, uint num_parts)
 {
-  return 0;
+  bool result= true;
+  Table_specification_st create_info;
+  Alter_info alter_info;
+  TABLE *table= tl->table;
+
+  DBUG_ASSERT(!thd->is_error());
+  DBUG_ASSERT(num_parts);
+
+  {
+    alter_info.reset();
+    alter_info.partition_flags= ALTER_PARTITION_ADD;
+    create_info.init();
+    create_info.alter_info= &alter_info;
+    Alter_table_ctx alter_ctx(thd, tl, 1, &table->s->db, &table->s->table_name);
+
+    MDL_REQUEST_INIT(&tl->mdl_request, MDL_key::TABLE, tl->db.str,
+                    tl->table_name.str, MDL_SHARED_NO_WRITE, MDL_TRANSACTION);
+    if (thd->mdl_context.acquire_lock(&tl->mdl_request,
+                                      thd->variables.lock_wait_timeout))
+      goto exit;
+    table->mdl_ticket= tl->mdl_request.ticket;
+
+    create_info.db_type= table->s->db_type();
+    DBUG_ASSERT(create_info.db_type);
+
+    partition_info *part_info= new partition_info();
+    if (unlikely(!part_info))
+    {
+      my_error(ER_OUT_OF_RESOURCES, MYF(0));
+      goto exit;
+    }
+    part_info->use_default_num_partitions= false;
+    part_info->use_default_num_subpartitions= false;
+    part_info->num_parts= num_parts;
+    part_info->num_subparts= table->part_info->num_subparts;
+    part_info->subpart_type= table->part_info->subpart_type;
+    part_info->num_columns= table->part_info->num_columns;
+    part_info->part_type= RANGE_PARTITION;
+    /* for partition_info::fix_parser_data to exit early */
+    part_info->int_type= table->part_info->int_type;
+
+    thd->work_part_info= part_info;
+    bool partition_changed= false;
+    bool fast_alter_partition= false;
+    if (prep_alter_part_table(thd, table, &alter_info, &create_info,
+                              &partition_changed, &fast_alter_partition))
+    {
+      my_error(ER_INTERNAL_ERROR, MYF(ME_WARNING),
+               tl->db.str, tl->table_name.str);
+      goto exit;
+    }
+    if (!fast_alter_partition)
+    {
+      my_error(ER_INTERNAL_ERROR, MYF(ME_WARNING),
+               tl->db.str, tl->table_name.str);
+      goto exit;
+    }
+    DBUG_ASSERT(partition_changed);
+    if (mysql_prepare_alter_table(thd, table, &create_info, &alter_info,
+                                  &alter_ctx))
+    {
+      my_error(ER_INTERNAL_ERROR, MYF(ME_WARNING),
+               tl->db.str, tl->table_name.str);
+      goto exit;
+    }
+
+    alter_info.db= alter_ctx.db;
+    alter_info.table_name= alter_ctx.table_name;
+    if (fast_alter_partition_table(thd, table, &alter_info, &alter_ctx,
+                                   &create_info, tl))
+    {
+      my_error(ER_INTERNAL_ERROR, MYF(ME_WARNING),
+               tl->db.str, tl->table_name.str);
+      goto exit;
+    }
+  }
+
+  result= false;
+  // NOTE: we have to return DA_EMPTY for new command
+  DBUG_ASSERT(thd->get_stmt_da()->is_ok());
+  thd->get_stmt_da()->reset_diagnostics_area();
+  thd->variables.option_bits|= OPTION_BINLOG_THIS;
+
+exit:
+  return result;
 }
 
 /**
@@ -2232,6 +2327,7 @@ bool partition_info::fix_column_value_functions(THD *thd,
   part_column_list_val *col_val= val->col_val_array;
   DBUG_ENTER("partition_info::fix_column_value_functions");
 
+  /* TODO: col_val->fixed can never be 1. */
   if (col_val->fixed > 1)
   {
     DBUG_RETURN(FALSE);
@@ -2335,6 +2431,8 @@ bool partition_info::fix_parser_data(THD *thd)
   uint i= 0, j, k;
   DBUG_ENTER("partition_info::fix_parser_data");
 
+  if (is_range_interval())
+    DBUG_RETURN(FALSE);
   if (!(part_type == RANGE_PARTITION ||
         part_type == LIST_PARTITION))
   {

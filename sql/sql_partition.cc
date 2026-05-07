@@ -1248,6 +1248,67 @@ int partition_info_compare_column_values(const void *first_arg,
   return 0;
 }
 
+static bool check_range_interval_constants(THD *thd, partition_info *part_info)
+{
+  /* For now this can only happen with RANGE COLUMNS */
+  DBUG_ASSERT(part_info->column_list);
+  DBUG_ASSERT(part_info->part_field_list.elements == 1);
+  uint part_id= part_info->partitions.elements - 1;
+  partition_element *el= part_info->partitions.elem(part_id);
+  bool result= FALSE;
+  /* Already supplied value. Could be CREATE TABLE */
+  if (!el->list_val_list.is_empty())
+    return result;
+  /* Create the partition range value */
+  Timestamp ts(thd->query_start(), 0);
+  Timestamp_or_zero_datetime ts0(ts);
+  Item *column_item= new (thd->mem_root) Item_timestamp_literal(thd, ts0, 0);
+  p_elem_val *range_val= new p_elem_val;
+  el->list_val_list.push_back(range_val);
+  part_column_list_val *col_val= new part_column_list_val;
+  range_val->col_val_array= col_val;
+  col_val->item_expression= column_item;
+  col_val->max_value= false;
+  col_val->null_value= false;
+
+  /*
+    Similar to partition_info::fix_column_value_functions, but with a
+    hack on field->table->write_set to pass the assertion of
+    marked_for_write_or_computed() in
+    Field_date_common::store_TIME_with_warning
+  */
+  Field *field= part_info->part_field_array[0];
+  col_val->part_info= part_info;
+  col_val->partition_id= part_id;
+  col_val->column_value= NULL;
+  uchar *val_ptr;
+  uint len= field->pack_length();
+
+  Sql_mode_instant_set sms(thd, 0);
+  /* TODO(MDEV-15621): remove this HACK */
+  MY_BITMAP *save_write_set= field->table->write_set;
+  field->table->write_set= NULL;
+  bool save_got_warning= thd->got_warning;
+  thd->got_warning= 0;
+  /* HACK: only fail if error */
+  if (column_item->save_in_field(field, TRUE) && thd->is_error())
+  {
+    my_error(ER_WRONG_TYPE_COLUMN_VALUE_ERROR, MYF(0));
+    result= TRUE;
+    goto end;
+  }
+  thd->got_warning= save_got_warning;
+  field->table->write_set= save_write_set;
+  if (!(val_ptr= (uchar*) thd->memdup(field->ptr, len)))
+  {
+    result= TRUE;
+    goto end;
+  }
+  col_val->column_value= val_ptr;
+  col_val->fixed= 2;
+end:
+  return result;
+}
 
 /*
   This routine allocates an array for all range constants to achieve a fast
@@ -1281,6 +1342,9 @@ static bool check_range_constants(THD *thd, partition_info *part_info)
   DBUG_PRINT("enter", ("RANGE with %d parts, column_list = %u",
                        part_info->num_parts, part_info->column_list));
 
+  if (part_info->is_range_interval())
+    if (check_range_interval_constants(thd, part_info))
+      goto end;
   if (part_info->column_list)
   {
     part_column_list_val *loc_range_col_array;
@@ -5258,7 +5322,8 @@ uint prep_alter_part_table(THD *thd, TABLE *table, Alter_info *alter_info,
       */
       if (thd->lex->no_write_to_binlog &&
           tab_part_info->part_type != HASH_PARTITION &&
-          tab_part_info->part_type != VERSIONING_PARTITION)
+          tab_part_info->part_type != VERSIONING_PARTITION &&
+          !tab_part_info->is_range_interval())
       {
         my_error(ER_NO_BINLOG_ERROR, MYF(0));
         goto err;
