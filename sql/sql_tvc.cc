@@ -200,11 +200,15 @@ bool get_type_attributes_for_tvc(THD *thd,
   List_item *lst;
   li.rewind();
   
+  /*
+    Reset arg_count on each call.  The args[] buffer itself was allocated
+    on stmt_arena when the Type_holder[] array was first set up in
+    table_value_constr::prepare(), so we reuse that buffer across
+    executions of the prepared statement instead of allocating again on
+    every call.
+  */
   for (uint pos= 0; pos < first_list_el_count; pos++)
-  {
-    if (holders[pos].alloc_arguments(thd, count_of_lists))
-      DBUG_RETURN(true);
-  }
+    holders[pos].remove_arguments();
   
   while ((lst= li++))
   {
@@ -269,17 +273,68 @@ bool table_value_constr::prepare(THD *thd, SELECT_LEX *sl,
   if (fix_fields_for_tvc(thd, li))
     DBUG_RETURN(true);
 
+  /*
+    Should be nullptr only during first PREPARE at which time it's
+    then allocated and will be set for the rest of the statement's
+    lifetime.
+  */
   if (!holders)
   {
     DBUG_ASSERT(thd->stmt_arena->is_stmt_prepare_or_first_stmt_execute() ||
                 thd->stmt_arena->is_conventional());
-    holders= type_holders=
+    /*
+      Build the Type_holder array in a local first.  Only save it to
+      the persistent type_holders member once every holder has its
+      args[] buffer in place.  If alloc_arguments() fails partway
+      through, then we must not leave type_holders pointing at a
+      partially initialized array.  A later call would then take the
+      "already initialized" path, skip this block, and dereference a
+      NULL args[] inside add_argument().
+    */
+    Type_holder *new_holders=
       new (thd->active_stmt_arena_to_use()->mem_root) Type_holder[cnt];
-    if (!holders ||
-         join_type_handlers_for_tvc(thd, li, holders, cnt) ||
-         get_type_attributes_for_tvc(thd, li, holders,
-				     lists_of_values.elements, cnt))
+    if (!new_holders)
        DBUG_RETURN(true);
+
+    /*
+      Allocate each Type_holder's args[] buffer on stmt_arena so that
+      we have stable storage that can be refilled in place on every
+      EXECUTE instead of being reallocated each time.
+    */
+    Query_arena *arena, backup;
+    arena= thd->activate_stmt_arena_if_needed(&backup);
+    bool args_err= false;
+    for (uint pos= 0; pos < cnt && !args_err; pos++)
+    {
+      if (new_holders[pos].alloc_arguments(thd, lists_of_values.elements))
+        args_err= true;
+    }
+    if (arena)
+      thd->restore_active_arena(arena, &backup);
+    if (args_err)
+      DBUG_RETURN(true);
+
+    holders= type_holders= new_holders;
+  }
+
+  /*
+    Collect the column types from the list of values.  This must run
+    on every PREPARE, not just the first one, so that values whose
+    type is not known at PREPARE time update their actual type at
+    EXECUTE time.
+  */
+  if (join_type_handlers_for_tvc(thd, li, holders, cnt) ||
+      get_type_attributes_for_tvc(thd, li, holders,
+                                  lists_of_values.elements, cnt))
+     DBUG_RETURN(true);
+
+  /*
+    If the counts don't match, then allocate some more
+    Item_type_holder instances.  These will, on subsequent EXECUTEs,
+    be mutated in place (see the 'else' case following).
+  */
+  if (sl->item_list.elements != cnt)
+  {
     List_iterator_fast<Item> it(*first_elem);
     Item *item;
     Query_arena *arena, backup;
@@ -300,6 +355,22 @@ bool table_value_constr::prepare(THD *thd, SELECT_LEX *sl,
 
     if (unlikely(thd->is_fatal_error))
       DBUG_RETURN(true); // out of memory
+  }
+  else
+  {
+    /*
+      Refresh the cached type info on the existing Item_type_holder
+      instances so that the types reported for the TVC reflect the values
+      seen on the current execution.
+    */
+    List_iterator<Item> it(sl->item_list);
+    for (uint pos= 0; pos < cnt; pos++)
+    {
+      Item_type_holder *ith= static_cast<Item_type_holder*>(it++);
+      ith->set_handler(holders[pos].type_handler());
+      ith->Type_std_attributes::set(holders[pos]);
+      ith->set_maybe_null(holders[pos].get_maybe_null());
+    }
   }
     
   result= tmp_result;
