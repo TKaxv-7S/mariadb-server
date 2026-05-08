@@ -17,6 +17,87 @@ select -- hello ; there
 1;
 select 3 ; select 4;
 
+-- executable comments
+SELECT 1 /*! +1 */;
+SELECT 2 /*M! +1 */;
+SELECT 1 /*! +1 ; */;
+SELECT 2 /*M! +1 ; */;
+
+-- create table
+CREATE TABLE t (c INT);
+CREATE OR REPLACE TABLE t (c INT);
+CREATE TABLE IF NOT EXISTS t (c INT);
+CREATE TABLE t2 LIKE t1;
+CREATE TABLE IF NOT EXISTS t2 SELECT * FROM t;
+CREATE TABLE t (c INT) ENGINE=innodb;
+
+CREATE TABLE t (
+    a INT NOT NULL,
+    b INT DEFAULT 10,
+    c INT AUTO_INCREMENT PRIMARY KEY,
+    d VARCHAR(50),
+    e DATE,
+    f DECIMAL(10,2),
+    g INT AUTO_INCREMENT UNIQUE,
+    h DATETIME,
+    CONSTRAINT b_gt_10 CHECK (b > 10)
+);
+
+-- insert table
+INSERT INTO t VALUES (1, 'two', 3.14, 05-05-2005), (11, 'twenty two', 3.14, 05-05-2006);
+INSERT INTO t(a, b, c, d) VALUES (1, 'two', 3.14, 05-05-2005);
+INSERT INTO t SET a=1, b='two';
+INSERT INTO t SELECT * FROM t;
+
+-- alter table
+ALTER TABLE t ADD COLUMN IF NOT EXISTS c INT NOT NULL AUTO_INCREMENT;
+ALTER TABLE t MODIFY COLUMN IF EXISTS c INT UNIQUE;
+ALTER TABLE t DROP COLUMN IF EXISTS c;
+ALTER TABLE t ALTER COLUMN c SET DEFAULT 10;
+ALTER TABLE t ADD CONSTRAINT pk PRIMARY KEY (c);
+ALTER TABLE t DROP CONSTRAINT IF EXISTS pk;
+
+-- drop table
+DROP TABLE t;
+DROP TABLE IF EXISTS t;
+DROP TABLE t1, t2;
+
+-- select from table
+SELECT * FROM t;
+SELECT * FROM dbname.t;
+SELECT a, b, c FROM t;
+SELECT t1.a, t2.b FROM t1 JOIN t2 ON t1.a = t2.a
+WHERE t2.c IS NOT NULL AND t1.c IS NULL
+ORDER BY t1.d ASC
+LIMIT 10;
+
+-- update table
+UPDATE t set c=10;
+UPDATE t set c=10 WHERE d > 10;
+UPDATE t1, t2 SET t1.a = 10, t2.a = 20 WHERE t1.b = t2.b;
+
+-- delete table
+DELETE FROM t;
+DELETE FROM t WHERE t.a = 10;
+DELETE FROM t WHERE c in (SELECT c FROM t WHERE c > 10);
+DELETE FROM t ORDER BY TIMESTAMP LIMIT 100;
+TRUNCATE TABLE t;
+
+-- views
+CREATE VIEW v AS SELECT c FROM t;
+CREATE OR REPLACE VIEW v AS SELECT c FROM t WHERE c > 0;
+CREATE VIEW IF NOT EXISTS v AS SELECT c FROM t;
+CREATE VIEW v (c) AS SELECT 1;
+CREATE VIEW v AS SELECT c FROM t WITH CHECK OPTION;
+CREATE ALGORITHM=MERGE VIEW v AS SELECT c FROM t;
+CREATE SQL SECURITY DEFINER VIEW v AS SELECT c FROM t;
+ALTER VIEW v AS SELECT c FROM t;
+SELECT * FROM v;
+SELECT c FROM v WHERE c > 0;
+DROP VIEW v;
+DROP VIEW IF EXISTS v;
+DROP VIEW v1, v2;
+
 --errors
 foo;
 foo2;
@@ -25,10 +106,35 @@ select '1;
 '+;
 select 1+;
 select 10 ; select 3+ ; select 11;
+
+-- DDLs
+CREATE OR REPLACE TABLE;
+CREATE TABLE IF NOT EXISTS;
+CREATE TABLE t (c DUMMY_TYPE);
+INSERT INTO t VALUES;
+ALTER TABLE t;
+ALTER TABLE t MODIFY COLUMN c DUMMY_TYPE;
+DROP TABLE;
+
+-- DMLs
+SELECT * FROM;
+UPDATE t SET;
+DELETE TABLE;
+TRUNCATE TABLE;
+
+-- views
+CREATE VIEW;
+CREATE VIEW v;
+CREATE VIEW v AS;
+CREATE OR REPLACE VIEW;
+ALTER VIEW;
+ALTER VIEW v;
+DROP VIEW;
+
 EOF
 
 --error 1
---exec cat $MYSQLTEST_VARDIR/tmp/syntax_checker.tmp | $MYSQLD --no-defaults --check-syntax
+--exec $MYSQLD --no-defaults --check-syntax < $MYSQLTEST_VARDIR/tmp/syntax_checker.tmp
 --remove_file $MYSQLTEST_VARDIR/tmp/syntax_checker.tmp
 
 --echo #
@@ -41,9 +147,337 @@ DELIMITER ;;
 select 2;;
 select 3+4;;
 select 1+1 ;; select 2+2 ;;
+delimiter      $$
+select 1$$
+delimiter //  # trialing whitespaces in delimiter token
+select 1//
 delimiter ;
 select 1;
+/* delimiter $ */
+select 1;
+DELIMITER ZZZZZZZZZZZZZZZ
+SELECT 1ZZZZZZZZZZZZZZZ
+SELECT 2ZZZZZZZZZZZZZZZ
+DELIMITER ;
+SELECT 1;
 EOF
 
---exec cat $MYSQLTEST_VARDIR/tmp/syntax_checker2.tmp | $MYSQLD --no-defaults --check-syntax
+--exec $MYSQLD --no-defaults --check-syntax < $MYSQLTEST_VARDIR/tmp/syntax_checker2.tmp
 --remove_file $MYSQLTEST_VARDIR/tmp/syntax_checker2.tmp
+
+--echo # Check SQL_MODE
+
+--write_file $MYSQLTEST_VARDIR/tmp/syntax_checker3.tmp
+SET sql_mode='ANSI_QUOTES';
+CREATE TABLE "ansi" (c INT);
+SET sql_mode='';
+CREATE TABLE "after_reset" (c INT);
+SET sql_mode='DUMMY';
+EOF
+
+--error 1
+--exec $MYSQLD --no-defaults --check-syntax < $MYSQLTEST_VARDIR/tmp/syntax_checker3.tmp
+--remove_file $MYSQLTEST_VARDIR/tmp/syntax_checker3.tmp
+
+--echo # Check SQL_MODE=ORACLE PL/SQL syntax
+
+# These constructs are accepted only when sql_mode='ORACLE'
+# 'IS' instead of '()', VARCHAR2/NUMBER/RAW types,
+# ':=' for PL/SQL assignment, RETURN clause on functions,
+# EXCEPTION WHEN / RAISE block.
+
+--write_file $MYSQLTEST_VARDIR/tmp/syntax_checker4.tmp
+SET sql_mode='ORACLE';
+
+-- Oracle-style functions.
+SELECT NVL(NULL, 'd');
+SELECT NVL2(NULL, 'a', 'b');
+SELECT TO_CHAR(123.45);
+
+SELECT DECODE(1, 1, 'one', 0, 'zero', 'other');
+SELECT DECODE_ORACLE(1, 1, 'one', 0, 'zero', 'other');
+
+-- Oracle style Stored Routines
+DELIMITER //
+BEGIN
+  NULL;
+END //
+
+CREATE PROCEDURE p IS
+BEGIN
+  NULL;
+END //
+
+CREATE PROCEDURE p1(x INT) IS
+  v VARCHAR2(10) := 'hello';
+  n NUMBER := 0;
+BEGIN
+  n := x + 1;
+END //
+
+CREATE FUNCTION f1(x INT) RETURN INT IS
+BEGIN
+  RETURN x * 2;
+END //
+
+CREATE PROCEDURE p_excp IS
+BEGIN
+  RAISE no_data_found;
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END //
+
+CREATE PACKAGE pkg AS
+  PROCEDURE p;
+  FUNCTION f RETURN INT;
+END //
+
+-- NOTE: 'CREATE PACKAGE BODY ...' is intentionally NOT tested here.
+-- It performs a routine lookup against mysql.proc while parsing, but mysql.proc
+-- is unavailable in --check-syntax mode
+CREATE PROCEDURE p_type IS
+  v t.c%TYPE;
+BEGIN
+  NULL;
+END //
+
+CREATE PROCEDURE p_if(x INT) IS
+BEGIN
+  IF x = 1 THEN NULL;
+  ELSIF x = 2 THEN NULL;
+  ELSE NULL;
+  END IF;
+END //
+
+CREATE PROCEDURE p_loop IS
+  i INT := 0;
+BEGIN
+  LOOP
+    EXIT WHEN i > 10;
+    i := i + 1;
+  END LOOP;
+END //
+DELIMITER ;
+EOF
+
+--exec $MYSQLD --no-defaults --check-syntax < $MYSQLTEST_VARDIR/tmp/syntax_checker4.tmp
+--remove_file $MYSQLTEST_VARDIR/tmp/syntax_checker4.tmp
+
+# Oracle-only constructs WITHOUT sql_mode='ORACLE' must fail
+# (IS keyword, VARCHAR2/NUMBER types, RETURN clause)
+
+--write_file $MYSQLTEST_VARDIR/tmp/syntax_checker5.tmp
+DELIMITER //
+CREATE PROCEDURE p IS
+BEGIN
+  NULL;
+END //
+
+CREATE FUNCTION f1(x INT) RETURN INT IS
+BEGIN
+  RETURN x * 2;
+END //
+
+CREATE PACKAGE pkg AS
+  PROCEDURE p;
+  FUNCTION f RETURN INT;
+END //
+
+CREATE PROCEDURE p_type() BEGIN
+  DECLARE v t.c%TYPE;
+END //
+
+CREATE PROCEDURE p_if(x INT) BEGIN
+  IF x = 1 THEN
+    SET @y = 1;
+  ELSIF x = 2 THEN
+    SET @y = 2;
+  END IF;
+END //
+
+CREATE PROCEDURE p_loop() BEGIN
+  DECLARE i INT DEFAULT 0;
+  LOOP
+    EXIT WHEN i > 10;
+    SET i = i + 1;
+  END LOOP;
+END //
+DELIMITER ;
+EOF
+
+--error 1
+--exec $MYSQLD --no-defaults --check-syntax < $MYSQLTEST_VARDIR/tmp/syntax_checker5.tmp
+--remove_file $MYSQLTEST_VARDIR/tmp/syntax_checker5.tmp
+
+--echo # Check MariaDB stored routines (procedures and functions)
+
+--write_file $MYSQLTEST_VARDIR/tmp/syntax_checker6.tmp
+DELIMITER //
+CREATE PROCEDURE p() BEGIN END //
+CREATE PROCEDURE p(IN x INT, OUT y INT) BEGIN SET y = x + 1; END //
+CREATE OR REPLACE PROCEDURE p() BEGIN END //
+CREATE PROCEDURE IF NOT EXISTS p() BEGIN END //
+CREATE FUNCTION f() RETURNS INT RETURN 1 //
+
+CREATE FUNCTION f(x INT) RETURNS INT DETERMINISTIC
+BEGIN
+  RETURN x * 2;
+END //
+
+CREATE PROCEDURE p_logic() BEGIN
+  DECLARE c INT DEFAULT 0;
+  WHILE c < 10 DO
+    SET c = c + 1;
+  END WHILE;
+  IF c = 10 THEN
+    SET @x = 1;
+  ELSEIF c > 10 THEN
+    SET @x = 2;
+  ELSE
+    SET @x = 0;
+  END IF;
+END //
+DELIMITER ;
+
+CALL p();
+CALL p(1, @y);
+DROP PROCEDURE p;
+DROP FUNCTION f;
+DROP PROCEDURE IF EXISTS p;
+DROP FUNCTION IF EXISTS f;
+
+-- errors
+CREATE PROCEDURE;
+CREATE PROCEDURE p;
+CREATE FUNCTION;
+CREATE FUNCTION f;
+CREATE FUNCTION f() RETURN INT;
+DROP PROCEDURE;
+DROP FUNCTION;
+EOF
+
+--error 1
+--exec $MYSQLD --no-defaults --check-syntax < $MYSQLTEST_VARDIR/tmp/syntax_checker6.tmp
+--remove_file $MYSQLTEST_VARDIR/tmp/syntax_checker6.tmp
+
+--echo # Check triggers and events
+
+--write_file $MYSQLTEST_VARDIR/tmp/syntax_checker7.tmp
+DELIMITER //
+CREATE TRIGGER tr BEFORE INSERT ON t FOR EACH ROW
+BEGIN
+  SET NEW.c = NEW.c + 1;
+END //
+
+CREATE OR REPLACE TRIGGER tr BEFORE UPDATE ON t FOR EACH ROW
+BEGIN
+  SET NEW.c = OLD.c;
+END //
+
+CREATE EVENT e ON SCHEDULE EVERY 1 DAY DO
+BEGIN
+  DELETE FROM t WHERE c < 0;
+END //
+
+CREATE OR REPLACE EVENT e ON SCHEDULE AT '2026-01-01 00:00:00' DO
+  INSERT INTO t VALUES (1) //
+ALTER EVENT e DISABLE //
+DELIMITER ;
+DROP TRIGGER tr;
+DROP TRIGGER IF EXISTS tr;
+DROP EVENT e;
+DROP EVENT IF EXISTS e;
+
+-- errors
+CREATE TRIGGER;
+CREATE TRIGGER tr;
+CREATE TRIGGER tr BEFORE INSERT;
+CREATE EVENT;
+CREATE EVENT e;
+CREATE EVENT e ON SCHEDULE;
+ALTER EVENT;
+DROP TRIGGER;
+DROP EVENT;
+EOF
+
+--error 1
+--exec $MYSQLD --no-defaults --check-syntax < $MYSQLTEST_VARDIR/tmp/syntax_checker7.tmp
+--remove_file $MYSQLTEST_VARDIR/tmp/syntax_checker7.tmp
+
+--echo # Check sequences and CTEs
+
+--write_file $MYSQLTEST_VARDIR/tmp/syntax_checker8.tmp
+-- sequences
+CREATE SEQUENCE s;
+CREATE SEQUENCE IF NOT EXISTS s INCREMENT BY 1 START WITH 1;
+CREATE OR REPLACE SEQUENCE s;
+ALTER SEQUENCE s INCREMENT BY 5;
+SELECT NEXTVAL(s);
+SELECT LASTVAL(s);
+SELECT NEXT VALUE FOR s;
+SELECT PREVIOUS VALUE FOR s;
+SELECT SETVAL(s, 100);
+DROP SEQUENCE s;
+DROP SEQUENCE IF EXISTS s;
+
+-- CTEs
+WITH cte AS (SELECT 1 AS c) SELECT * FROM cte;
+WITH cte (c) AS (SELECT 1) SELECT c FROM cte;
+WITH a AS (SELECT 1 AS c), b AS (SELECT 2 AS c) SELECT * FROM a JOIN b ON a.c = b.c;
+WITH RECURSIVE cte AS (
+  SELECT 1 AS c
+  UNION ALL
+  SELECT c + 1 FROM cte WHERE c < 5
+) SELECT * FROM cte;
+DELETE FROM t WHERE c IN (WITH cte AS (SELECT c FROM t) SELECT c FROM cte);
+
+-- errors
+CREATE SEQUENCE;
+ALTER SEQUENCE;
+DROP SEQUENCE;
+WITH;
+WITH cte;
+WITH cte AS;
+WITH RECURSIVE;
+
+-- Top-level WITH must wrap a SELECT in MariaDB. Attaching it directly
+WITH cte AS (SELECT c FROM t) DELETE FROM t WHERE c IN (SELECT c FROM cte);
+WITH cte AS (SELECT c FROM t) UPDATE t SET c = (SELECT c FROM cte);
+WITH cte AS (SELECT 1) INSERT INTO t SELECT * FROM cte;
+EOF
+
+--error 1
+--exec $MYSQLD --no-defaults --check-syntax < $MYSQLTEST_VARDIR/tmp/syntax_checker8.tmp
+--remove_file $MYSQLTEST_VARDIR/tmp/syntax_checker8.tmp
+
+--echo # Check prepared statements
+
+--write_file $MYSQLTEST_VARDIR/tmp/syntax_checker9.tmp
+PREPARE stmt FROM 'SELECT 1';
+PREPARE stmt FROM 'SELECT ?';
+PREPARE stmt FROM 'INSERT INTO t VALUES (?, ?)';
+PREPARE stmt FROM @q;
+EXECUTE stmt;
+EXECUTE stmt USING @a;
+EXECUTE stmt USING @a, @b;
+EXECUTE IMMEDIATE 'SELECT 1';
+EXECUTE IMMEDIATE @q USING @a;
+DEALLOCATE PREPARE stmt;
+DROP PREPARE stmt;
+
+-- errors
+PREPARE;
+PREPARE stmt;
+PREPARE stmt FROM;
+EXECUTE;
+EXECUTE stmt USING;
+-- 'EXECUTE IMMEDIATE;' is NOT a syntax error: the parser reads IMMEDIATE
+-- as a statement-name identifier (EXECUTE <name>)
+DEALLOCATE;
+DEALLOCATE PREPARE;
+DROP PREPARE;
+EOF
+
+--error 1
+--exec $MYSQLD --no-defaults --check-syntax < $MYSQLTEST_VARDIR/tmp/syntax_checker9.tmp
+--remove_file $MYSQLTEST_VARDIR/tmp/syntax_checker9.tmp

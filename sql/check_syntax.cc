@@ -26,16 +26,16 @@
 #include "m_ctype.h"
 #include "sql_parse.h"
 
-class PARSER_STATE
+class Syntax_checker_state
 {
 public:
   LEX_STRING delimiter;
   const char *query;
   uint start_line, end_line;
-  char delimiter_buff[5];
+  char delimiter_buff[16];     // matches mariadb client
   String rest_of_line;
 
-  PARSER_STATE()
+  Syntax_checker_state()
   {
     delimiter_buff[0]= ';';
     delimiter_buff[1]= 0;
@@ -55,7 +55,7 @@ public:
   }
 };
 
-PARSER_STATE syntax_parser;
+Syntax_checker_state syntax_parser;
 
 
 static bool is_empty_line(String *line)
@@ -235,12 +235,18 @@ static bool get_query(THD *thd, MYSQL_FILE *file, String *query)
           if (!query->charset()->strnncoll(line.ptr(), line.length(),
                                          STRING_WITH_LEN("DELIMITER "), true))
           {
-            const char *start= strrchr(line.c_ptr()+9,' ');
-            if (start + 1 < line.ptr() + line.length())
+            /* Skip the keyword "DELIMITER" and any whitespace after it */
+            const char *p= line.ptr() + 9;
+            const char *line_end= line.ptr() + line.length();
+            while (p < line_end && my_isspace(charset_info, *p)) p++;
+
+            /* Read the delimiter token until trailing whitespace / EOL */
+            const char *delim_start= p;
+            while (p < line_end && !my_isspace(charset_info, *p)) p++;
+            if (p > delim_start)
             {
-              syntax_parser.set_delimiter(start+1,
-                                          line.length() -
-                                          (start+ 1 - line.ptr()));
+              syntax_parser.set_delimiter(delim_start,
+                                          (size_t) (p - delim_start));
               line.length(0);
               break;
             }
@@ -347,12 +353,20 @@ bool syntax_checker(MYSQL_FILE *file)
   bool error= 0;
   THD thd(next_thread_id());
   plugin_parser_error_handler err_handler;
-  DBUG_ENTER("execute_queries");
+  const LEX_CSTRING dummy_db= { STRING_WITH_LEN("dummy") };
+  DBUG_ENTER("syntax_checker");
 
-  thd.store_globals();                    // Setup current_thd and mysys_var
-  thd.init();                             // Needed for error messages
+  thd.store_globals();                  // Setup current_thd and mysys_var
+  thd.init();                           // Needed for error messages
+  thd.set_db(&dummy_db);                // Needed when db not specified in query
   thd.push_internal_handler(&err_handler);
   query.set_charset(thd.variables.character_set_client);
+
+  if (isatty(fileno(file->m_file)))
+  {
+    fprintf(stderr, "MariaDB syntax checker (interactive mode).\n");
+    fprintf(stderr, "Enter SQL statement followed by a semicolon(;). Press Ctrl-D to exit.\n\n");
+  }
 
   while (!get_query(&thd, file, &query))
   {

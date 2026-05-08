@@ -7954,6 +7954,8 @@ void mysql_parse(THD *thd, char *rawbuf, uint length,
           int error __attribute__((unused))= 0;
           if (likely(!parser_state->parse_only))
             error= mysql_execute_command(thd);
+          else if (lex->sql_command == SQLCOM_SET_OPTION)
+            set_sql_mode_for_syntax_checker(thd);
           MYSQL_QUERY_EXEC_DONE(error);
 	}
       }
