@@ -1,13 +1,127 @@
-Line:     18  Query: 'foo'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'foo
+Line:     99  Query: 'foo'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'foo
 ' at line 1' (1064)
-Line:     19  Query: 'foo2'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'foo2
+Line:    100  Query: 'foo2'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'foo2
 ' at line 1' (1064)
-Line:     20  Query: 'select */ +1'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '/ +1
+Line:    101  Query: 'select */ +1'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '/ +1
 ' at line 1' (1064)
-Line:     21  Query: 'select '1;
+Line:    102  Query: 'select '1;
 '+'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
-Line:     23  Query: 'select 1+'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
-Line:     25  Query: 'select 3+ '  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    104  Query: 'select 1+'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    106  Query: 'select 3+ '  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    108  Query: 'CREATE OR REPLACE TABLE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    109  Query: 'CREATE TABLE IF NOT EXISTS'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    110  Query: 'CREATE TABLE t (c DUMMY_TYPE)'  Error 'Unknown data type: 'DUMMY_TYPE'' (4161)
+Line:    111  Query: 'INSERT INTO t VALUES'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    113  Query: 'ALTER TABLE t MODIFY COLUMN c DUMMY_TYPE'  Error 'Unknown data type: 'DUMMY_TYPE'' (4161)
+Line:    114  Query: 'DROP TABLE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    117  Query: 'SELECT * FROM'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    118  Query: 'UPDATE t SET'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    119  Query: 'DELETE TABLE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'TABLE
+' at line 1' (1064)
+Line:    120  Query: 'TRUNCATE TABLE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    123  Query: 'CREATE VIEW'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    124  Query: 'CREATE VIEW v'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    125  Query: 'CREATE VIEW v AS'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    126  Query: 'CREATE OR REPLACE VIEW'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    127  Query: 'ALTER VIEW'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    128  Query: 'ALTER VIEW v'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:    129  Query: 'DROP VIEW'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
 #
 # Check DELIMITER
 #
+# Check SQL_MODE
+Line:      4  Query: 'CREATE TABLE "after_reset" (c INT)'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '"after_reset" (c INT)
+' at line 1' (1064)
+Line:      5  Query: 'SET sql_mode='DUMMY''  Error 'Variable 'sql_mode' can't be set to the value of 'DUMMY'' (1231)
+# Check SQL_MODE=ORACLE PL/SQL syntax
+Line:      2  Query: 'CREATE PROCEDURE p IS
+BEGIN
+  NULL;
+END '  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'IS
+BEGIN
+  NULL;
+END 
+' at line 1' (1064)
+Line:      7  Query: 'CREATE FUNCTION f1(x INT) RETURN INT IS
+BEGIN
+  RETURN x * 2;
+END '  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'RETURN INT IS
+BEGIN
+  RETURN x * 2;
+END 
+' at line 1' (1064)
+Line:     12  Query: 'CREATE PACKAGE pkg AS
+  PROCEDURE p;
+  FUNCTION f RETURN INT;
+END '  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'AS
+  PROCEDURE p;
+  FUNCTION f RETURN INT;
+END 
+' at line 1' (1064)
+Line:     17  Query: 'CREATE PROCEDURE p_type() BEGIN
+  DECLARE v t.c%TYPE;
+END '  Error 'Unknown data type: 't'' (4161)
+Line:     21  Query: 'CREATE PROCEDURE p_if(x INT) BEGIN
+  IF x = 1 THEN
+    SET @y = 1;
+  ELSIF x = 2 THEN
+    SET @y = 2;
+  END IF;
+END '  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'x = 2 THEN
+    SET @y = 2;
+  END IF;
+END 
+' at line 4' (1064)
+Line:     29  Query: 'CREATE PROCEDURE p_loop() BEGIN
+  DECLARE i INT DEFAULT 0;
+  LOOP
+    EXIT WHEN i > 10;
+    SET i = i + 1;
+  END LOOP;
+END '  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'EXIT WHEN i > 10;
+    SET i = i + 1;
+  END LOOP;
+END 
+' at line 4' (1064)
+# Check MariaDB stored routines (procedures and functions)
+Line:     36  Query: 'CREATE PROCEDURE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     37  Query: 'CREATE PROCEDURE p'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     38  Query: 'CREATE FUNCTION'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     39  Query: 'CREATE FUNCTION f'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     40  Query: 'CREATE FUNCTION f() RETURN INT'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'RETURN INT
+' at line 1' (1064)
+Line:     41  Query: 'DROP PROCEDURE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     42  Query: 'DROP FUNCTION'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+# Check triggers and events
+Line:     27  Query: 'CREATE TRIGGER'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     28  Query: 'CREATE TRIGGER tr'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     29  Query: 'CREATE TRIGGER tr BEFORE INSERT'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     30  Query: 'CREATE EVENT'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     31  Query: 'CREATE EVENT e'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     32  Query: 'CREATE EVENT e ON SCHEDULE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     33  Query: 'ALTER EVENT'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     34  Query: 'DROP TRIGGER'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     35  Query: 'DROP EVENT'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+# Check sequences and CTEs
+Line:     26  Query: 'CREATE SEQUENCE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     27  Query: 'ALTER SEQUENCE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     28  Query: 'DROP SEQUENCE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     29  Query: 'WITH'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     30  Query: 'WITH cte'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     31  Query: 'WITH cte AS'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     32  Query: 'WITH RECURSIVE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     35  Query: 'WITH cte AS (SELECT c FROM t) DELETE FROM t WHERE c IN (SELECT c FROM cte)'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'DELETE FROM t WHERE c IN (SELECT c FROM cte)
+' at line 1' (1064)
+Line:     36  Query: 'WITH cte AS (SELECT c FROM t) UPDATE t SET c = (SELECT c FROM cte)'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'UPDATE t SET c = (SELECT c FROM cte)
+' at line 1' (1064)
+Line:     37  Query: 'WITH cte AS (SELECT 1) INSERT INTO t SELECT * FROM cte'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'INSERT INTO t SELECT * FROM cte
+' at line 1' (1064)
+# Check prepared statements
+Line:     14  Query: 'PREPARE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     15  Query: 'PREPARE stmt'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     16  Query: 'PREPARE stmt FROM'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     17  Query: 'EXECUTE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     18  Query: 'EXECUTE stmt USING'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     21  Query: 'DEALLOCATE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     22  Query: 'DEALLOCATE PREPARE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)
+Line:     23  Query: 'DROP PREPARE'  Error 'You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 2' (1064)

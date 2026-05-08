@@ -763,6 +763,34 @@ err:
   DBUG_RETURN(error);
 }
 
+
+/*
+  Apply SET sql_mode = ... in --check-syntax (parse_only) mode so subsequent
+  statements are parsed under the right mode (ANSI_QUOTES, ORACLE, etc).
+
+  Strictly sql_mode only. Other SET forms (user vars, SET PASSWORD/ROLE, other
+  sysvars, GLOBALs) are skipped: they are either irrelevant for parsing, would
+  mutate real server state, or need services that aren't initialized in
+  --check-syntax mode.
+*/
+
+void set_sql_mode_for_syntax_checker(THD *thd)
+{
+  List_iterator_fast<set_var_base> it(thd->lex->var_list);
+  set_var_base *base;
+  while ((base= it++))
+  {
+    if (!base->is_system())                // skip user var, SET ROLE, etc.
+      continue;
+    set_var *sv= static_cast<set_var*>(base);
+    if (!sv->var || strcasecmp(sv->var->name.str, "sql_mode") != 0)
+      continue;
+    if (sv->check(thd) == 0)
+      sv->update(thd);
+  }
+}
+
+
 /*****************************************************************************
   Functions to handle SET mysql_internal_variable=const_expr
 *****************************************************************************/

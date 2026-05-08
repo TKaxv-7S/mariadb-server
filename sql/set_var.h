@@ -441,6 +441,7 @@ int fill_sysvars(THD *thd, TABLE_LIST *tables, COND *cond);
 sys_var *find_sys_var(THD *thd, const char *str, size_t length= 0,
                       bool throw_error= false, bool hash_already_locked= false);
 int sql_set_variables(THD *thd, List<set_var_base> *var_list, bool free);
+void set_sql_mode_for_syntax_checker(THD *thd);
 
 #define SYSVAR_AUTOSIZE(VAR,VAL)                        \
   do {                                                  \
