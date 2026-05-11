@@ -21440,16 +21440,16 @@ bool Create_tmp_table::finalize(THD *thd,
         */
         uint32 key_field_length= m_key_part_info->length;
         if ((field->flags & BLOB_FLAG) &&
-            key_field_length <= ((Field_blob*)field)->length_size())
+            key_field_length <= ((Field_blob*) field)->length_size())
         {
           key_field_length= MY_MIN((*cur_group->item)->max_length,
-                                   (uint32)(MAX_BLOB_WIDTH -
-                                            HA_KEY_BLOB_LENGTH));
+                                   (MAX_BLOB_WIDTH - 4 - 1));
           /*
-            Check that the group buffer has room for this blob key field.
-            calc_group_buffer() may have calculated the size of the buffer before the field
-            was promoted to blob in the tmp table.  If the promoted blob
-            doesn't fit, fall back to m_using_unique_constraint.
+            Check that the group buffer has room for this blob key
+            field.  calc_group_buffer() may have calculated the size
+            of the buffer before the field was promoted to blob in the
+            tmp table.  If the promoted blob doesn't fit, fall back to
+            m_using_unique_constraint.
           */
           uint32 need= key_field_length + 4 /* length_bytes */ +
                         MY_TEST(maybe_null);
@@ -21485,8 +21485,14 @@ bool Create_tmp_table::finalize(THD *thd,
           to unique.
         */
         if (cur_group->field->flags & BLOB_FLAG)
-          keyinfo->flags|= HA_BLOB_PART_KEY;
 
+        {
+          /* We only come here for Field_blob_key's */
+          DBUG_ASSERT(cur_group->field[0].key_length() ==
+                      4 + portable_sizeof_char_ptr);
+          /* Tell engine to that this key includes a blob */
+          keyinfo->flags|= HA_BLOB_PART_KEY;
+        }
         /*
           Set store_length for all GROUP BY key parts so
           rebuild_key_from_group_buff() can advance through the key buffer.
@@ -21659,8 +21665,6 @@ bool Create_tmp_table::finalize(THD *thd,
         m_key_part_info->store_length+= HA_KEY_NULL_LENGTH;
         m_key_part_info->key_part_flag |= HA_NULL_PART;
       }
-      if (field->flags & BLOB_FLAG)
-        keyinfo->flags|= HA_BLOB_PART_KEY;
 
       m_key_part_info->store_length+= field->key_part_length_bytes();
       keyinfo->key_length+= m_key_part_info->store_length;
@@ -21668,6 +21672,23 @@ bool Create_tmp_table::finalize(THD *thd,
       m_key_part_info->type=     (uint8) field->key_type();
       m_key_part_info->key_type= (is_text_key_segment(m_key_part_info) ?
                                   0 : FIELDFLAG_BINARY);
+
+      if (field->flags & BLOB_FLAG)
+      {
+        /*
+          Tell engine to that this key includes a blob
+          Heap engine will store blob key as length + pointer
+          This is safe as for unique detection we will never
+          try to read the data through a key.
+        */
+        keyinfo->flags|= HA_BLOB_PART_KEY;
+        m_key_part_info->length= 4 + portable_sizeof_char_ptr;
+        m_key_part_info->store_length= m_key_part_info->length;
+        m_key_part_info->type= (field->binary() ?
+                                HA_KEYTYPE_VARBINARY4 :
+                                HA_KEYTYPE_VARTEXT4);
+      }
+
       m_key_part_info++;
     }
   }
@@ -24981,39 +25002,6 @@ end_update(JOIN *join, JOIN_TAB *join_tab __attribute__((unused)),
   if (unlikely(copy_funcs(join_tab->tmp_table_param->items_to_copy,
                           join->thd)))
     DBUG_RETURN(NESTED_LOOP_ERROR);           /* purecov: inspected */
-  /*
-    HEAP-specific: restore group key values after copy_funcs().
-    For blob GROUP BY keys, copy_funcs() overwrites record[0]'s blob
-    pointers with new expression results, but the GROUP BY key was
-    built from the group buffer's Field_varstring (not record[0]).
-    Restore the group buffer values into record[0] so hp_make_key()
-    in ha_write_tmp_row() builds the correct key.
-    Non-blob fields are unaffected: copy_funcs() writes directly into
-    the record[0] field slots that hp_make_key() reads from.
-  */
-  if (table->s->db_type() == heap_hton && 0)
-  {
-    if (table->s->blob_fields)
-    {
-      String tmp_str;
-      for (group= table->group; group; group= group->next)
-      {
-        Field *tbl_field= (*group->item)->get_tmp_table_field();
-        DBUG_ASSERT(tbl_field);
-        if (tbl_field && tbl_field != group->field)
-        {
-          if (group->field->is_null())
-            tbl_field->set_null();
-          else
-          {
-            String *val= group->field->val_str(&tmp_str);
-            tbl_field->set_notnull();
-            tbl_field->store(val->ptr(), val->length(), val->charset());
-          }
-        }
-      }
-    }
-  }
   if (unlikely((error= table->file->ha_write_tmp_row(table->record[0]))))
   {
     if (create_internal_tmp_table_from_heap(join->thd, table,
