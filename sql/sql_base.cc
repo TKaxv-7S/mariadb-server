@@ -2384,7 +2384,11 @@ retry_share:
 
       MDL_REQUEST_INIT(&protection_request, MDL_key::BACKUP, "", "", mdl_type,
                        MDL_STATEMENT);
-
+      if (table_list->table_options & TL_OPTION_GTID_TABLE_SLAVE)
+      {
+	protection_request.is_teammate_callback=
+	  &rpl_group_info::ignore_mdl_priority;
+      }
       /*
         Install error handler which if possible will convert deadlock error
         into request to back-off and restart process of opening tables.
