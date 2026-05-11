@@ -286,7 +286,6 @@ int ha_heap::delete_row(const uchar * buf)
   return res;
 }
 
-
 int ha_heap::index_read_map(uchar *buf, const uchar *key,
                             key_part_map keypart_map,
                             enum ha_rkey_function find_flag)
@@ -681,7 +680,7 @@ int heap_prepare_hp_create_info(TABLE *table_arg, bool internal_table,
 	seg->type= field->key_type();
       else
       {
-        if ((seg->type = field->key_type()) != (int) HA_KEYTYPE_TEXT &&
+        if ((seg->type= key_part->type) != (int) HA_KEYTYPE_TEXT &&
             seg->type != HA_KEYTYPE_VARTEXT1 &&
             seg->type != HA_KEYTYPE_VARTEXT2 &&
             seg->type != HA_KEYTYPE_VARTEXT4 &&
@@ -694,8 +693,8 @@ int heap_prepare_hp_create_info(TABLE *table_arg, bool internal_table,
       seg->start=   (uint) key_part->offset;
       seg->length=  (uint) key_part->length;
       seg->flag=    key_part->key_part_flag;
-      seg->bit_length= seg->bit_start= 0;
-      seg->bit_pos= 0;
+      seg->bit_length= 0;
+      seg->bit_start= seg->bit_pos= 0;
 
       DBUG_ASSERT((seg->flag & HA_BLOB_PART) ==
                   (field->key_part_flag() & HA_BLOB_PART));
@@ -711,15 +710,29 @@ int heap_prepare_hp_create_info(TABLE *table_arg, bool internal_table,
         */
         if (seg->type == HA_KEYTYPE_VARBINARY2 ||
             seg->type == HA_KEYTYPE_VARTEXT2)
-          seg->type= (seg->type == HA_KEYTYPE_VARBINARY2) ?
-                      HA_KEYTYPE_VARBINARY4 : HA_KEYTYPE_VARTEXT4;
+        {
+          /*
+            Old type blob key (length + data). Convert it to
+            a 4 byte length and pointer.
+          */
+          seg->type= HA_KEYTYPE_VARTEXT4;       // Safe, see heap_create()
+          seg->length= 4 + portable_sizeof_char_ptr;
+          /* One cannot use this key for index_read() anymore */
+          seg->flag|= HA_NO_KEY_READ;
+        }
+        else
+        {
+          /*
+            Blob key with a 4 byte length and a pointer to data
+            HA_KEYTYPE_VARBINARY4 will be converted to HA_KEYTYPE_TEXT4
+            in heap_create().
+          */
+          DBUG_ASSERT(seg->length == 4 + portable_sizeof_char_ptr);
+          DBUG_ASSERT(seg->type == HA_KEYTYPE_VARBINARY4 ||
+                      seg->type == HA_KEYTYPE_VARTEXT4);
+        }
         seg->bit_start= ((Field_blob*) field)->length_size();
-        seg->length= 4 + portable_sizeof_char_ptr;
-        DBUG_ASSERT(seg->type == HA_KEYTYPE_VARBINARY4 ||
-                    seg->type == HA_KEYTYPE_VARTEXT4);
-        DBUG_ASSERT(seg->bit_start >= 1 && seg->bit_start <= 4);
       }
-
       if (field->flags & (ENUM_FLAG | SET_FLAG))
         seg->charset= &my_charset_bin;
       else
@@ -794,7 +807,9 @@ int heap_prepare_hp_create_info(TABLE *table_arg, bool internal_table,
   hp_create_info->auto_key= auto_key;
   hp_create_info->auto_key_type= auto_key_type;
   hp_create_info->max_table_size=
-    MY_MAX(current_thd->variables.max_heap_table_size,
+    MY_MAX((internal_table ?
+            current_thd->variables.tmp_memory_table_size :
+            current_thd->variables.max_heap_table_size),
            sizeof(HP_PTRS));
   hp_create_info->with_auto_increment= found_real_auto_increment;
   hp_create_info->internal_table= internal_table;

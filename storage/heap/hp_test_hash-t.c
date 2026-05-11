@@ -719,27 +719,28 @@ extern ulong hp_hashnr(HP_KEYDEF *keydef, const uchar *key);
 
 /*
   Record layout for mixed varchar + blob table:
-    byte 0:       null bitmap (null_bit 4 = city null, null_bit 8 = libname null)
-    bytes 1:      varchar length_bytes=1 (libname: VARCHAR(21))
-    bytes 2-22:   varchar data (21 bytes)
-    bytes 23-24:  blob packlength=2 (city: TEXT)
-    bytes 25-32:  blob data pointer (8 bytes on x86_64)
-    byte 33:      flags byte (visible offset)
-  Total reclength: 34, recbuffer: ALIGN(MAX(34,8)+1, 8) = 40
+
+  byte 0:       null bitmap (null_bit 4 = city null, null_bit 8 = libname null)
+  bytes 1:      varchar length_bytes=1 (libname: VARCHAR(22))
+  bytes 2-23:   varchar data (22 bytes)
+  bytes 24-25:  blob packlength=2 (city: TEXT)
+  bytes 26-33:  blob data pointer (8 bytes on x86_64)
+  byte 34:      flags byte (visible offset)
+  Total reclength: 35, recbuffer: ALIGN(MAX(34,8)+1, 8) = 40
 */
 #define MIX_NULL_OFFSET    0
 #define MIX_VARCHAR_OFFSET 1
-#define MIX_VARCHAR_LEN    21
+#define MIX_VARCHAR_LEN    22
 #define MIX_VARCHAR_LENBYTES 1
-#define MIX_BLOB_OFFSET    23
+#define MIX_BLOB_OFFSET    24
 #define MIX_BLOB_PACKLEN   2
-#define MIX_REC_LENGTH     34
+#define MIX_REC_LENGTH     35
 #define MIX_KEY_BUF_SIZE   256
 
 
 static void setup_mixed_keydef(HP_KEYDEF *keydef, HA_KEYSEG *segs)
 {
-  /* Segment 0: blob (city TEXT) at offset 23 */
+  /* Segment 0: blob (city TEXT) at offset 24 */
   memset(&segs[0], 0, sizeof(segs[0]));
   segs[0].type=      HA_KEYTYPE_VARTEXT4;
   segs[0].flag=      HA_BLOB_PART | HA_VAR_LENGTH_PART;
@@ -848,7 +849,7 @@ static void test_key_vs_rec_hash_consistency(void)
     */
     memcpy(segs2b, segs, sizeof(segs));
     segs2b[1].bit_start= 2;  /* 2-byte length prefix */
-    segs2b[1].length= 256;
+    segs2b[1].length--;      /* Size for one less character */
     setup_keydef(&keydef2b, segs2b, 2);
 
     memset(rec2b, 0, sizeof(rec2b));

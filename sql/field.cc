@@ -9139,19 +9139,29 @@ int Field_blob::key_cmp(const uchar *a,const uchar *b) const
 
 
 #ifndef DBUG_OFF
-/* helper to assert that new_table->blob_storage is NULL */
+/*
+  Helper to assert that the union, defined in table.h, still holds
+  only a bool-sized value, no pointer has been stored
+*/
 static struct blob_storage_check
 {
   union { bool b; intptr p; } val;
   blob_storage_check() { val.p= -1; val.b= false; }
 } blob_storage_check;
 #endif
+
 Field *Field_blob::make_new_field(MEM_ROOT *root, TABLE *newt, bool keep_type,
                                   const Tmp_field_param *param)
 {
   DBUG_ASSERT((intptr(newt->blob_storage) & blob_storage_check.val.p) == 0);
   if (param && param->part_of_unique_key())
   {
+    /*
+      This is an internal temporary table using a unique key on a blob
+      to identify rows. Use Field_blob_key for storing the key in
+      'blob format' (length + pointer) instead of 'varchar format'
+      (length + string)
+    */
     Field_blob_key *res;
     res= new (root) Field_blob_key(field_length, maybe_null(), &field_name,
                                    charset());
@@ -9159,15 +9169,19 @@ Field *Field_blob::make_new_field(MEM_ROOT *root, TABLE *newt, bool keep_type,
       res->init_for_make_new_field(newt, orig_table);
     return res;
   }
-  /*
-    MDEV-16699: Field_geom::store() lacks Blob_mem_storage support,
-    so GROUP_CONCAT with ORDER BY/DISTINCT on geometry columns would
-    read freed memory.  Downgrade to plain Field_blob whose store()
-    routes data through table->blob_storage.
-  */
-  if (newt->group_concat)
+  if (newt->group_concat && type() != MYSQL_TYPE_BLOB)
+  {
+    /*
+      We are creating an internal temporary table for storing group_concat
+      result. Field_geom::store() lacks Blob_mem_storage support,
+      so GROUP_CONCAT with ORDER BY/DISTINCT on geometry columns would
+      read freed memory.  Downgrade to plain Field_blob whose store()
+      routes data through table->blob_storage.
+    */
     return new (root) Field_blob(field_length, maybe_null(), &field_name,
                                  charset());
+  }
+
   return Field::make_new_field(root, newt, keep_type, param);
 }
 

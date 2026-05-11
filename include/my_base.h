@@ -307,7 +307,8 @@ enum ha_base_keytype {
 #define HA_KEY_HAS_PART_KEY_SEG 65536
 /* Internal Flag Can be calculated */
 #define HA_INVISIBLE_KEY 2<<18
-	/* Automatic bits in key-flag */
+
+/* Automatic bits in key-flag */
 
 #define HA_SPACE_PACK_USED	 4	/* Test for if SPACE_PACK used */
 #define HA_VAR_LENGTH_KEY	 8
@@ -316,12 +317,14 @@ enum ha_base_keytype {
 #define HA_USES_PARSER           16384  /* Fulltext index uses [pre]parser */
 #define HA_USES_BLOCK_SIZE	 ((uint) 32768)
 #define HA_SORT_ALLOWS_SAME      512    /* Intern bit when sorting records */
+#define HA_NO_KEY_READ           1024   /* internal, for debugging */
+
 #define HA_BLOB_PART_KEY	 65536  /* Some key parts are blobs */
 
 /* This flag can be used only in KEY::ext_key_flags */
 #define HA_EXT_NOSAME            131072
 
-	/* These flags can be added to key-seg-flag */
+/* These flags can be added to key-seg-flag */
 
 #define HA_SPACE_PACK		 1	/* Pack space in key-seg */
 #define HA_PART_KEY_SEG		 4	/* Used by MySQL for part-key-cols */

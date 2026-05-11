@@ -29,6 +29,7 @@ int heap_rkey(HP_INFO *info, uchar *record, int inx, const uchar *key,
   {
     DBUG_RETURN(my_errno= HA_ERR_WRONG_INDEX);
   }
+  DBUG_ASSERT(!(keyinfo->flag & HA_NO_KEY_READ));
   info->lastinx= inx;
   info->current_record= (ulong) ~0L;		/* For heap_rrnd() */
   info->key_version= info->s->key_version;

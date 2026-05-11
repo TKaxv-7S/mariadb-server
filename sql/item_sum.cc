@@ -3900,7 +3900,7 @@ int dump_leaf_key(void* key_arg, element_count count __attribute__((unused)),
   /* stop if length of result more than max_length */
   if (result->length() > max_length)
   {
-    THD *thd= current_thd;
+    THD *thd= table->in_use;
     item->cut_max_length(result, old_length, max_length);
     item->warning_for_row= TRUE;
     report_cut_value_error(thd, item->row_count, item->func_name());
