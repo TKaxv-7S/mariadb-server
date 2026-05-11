@@ -122,8 +122,9 @@ FLUSH STATUS;
 SELECT LENGTH(GROUP_CONCAT(DISTINCT LEFT(a, 4) ORDER BY a)) AS gc_len FROM t1;
 SHOW STATUS LIKE 'Created_tmp%';
 
---echo # --- GROUP_CONCAT(text_col ORDER BY ...) — blob_storage path, no DISTINCT ---
+--echo # --- GROUP_CONCAT(text ORDER BY ...) — blob_storage path, no DISTINCT
 --echo # No HEAP key table is needed; blob data goes to blob_storage (MEM_ROOT).
+
 FLUSH STATUS;
 SELECT LENGTH(GROUP_CONCAT(LEFT(a, 4) ORDER BY v)) AS gc_len FROM t1;
 SHOW STATUS LIKE 'Created_tmp%';
@@ -143,6 +144,32 @@ SELECT COUNT(*), SUM(gv) FROM (
 SHOW STATUS LIKE 'Created_tmp%';
 
 DROP TABLE t1;
+
+--echo #
+--echo # Test with geometry fields
+--echo #
+
+CREATE TABLE t1 (
+  pk INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  g  GEOMETRY,
+  v  INT  NOT NULL
+);
+
+INSERT INTO t1 (g, v)
+  SELECT PolygonFromText(concat('POLYGON((10 10,20 10,20 20,10 20,10 10, 10 10,20 10,20 20,10 20,10 10, 10 10,20 10,20 20,10 20,10 10,', seq, " ", seq, ", ", seq+10, " ", seq+10, ", 10 10))")),seq from seq_1_to_200;
+
+# Duplicate rows: same g values, v offset by 400 (v=401..800250).
+INSERT INTO t1 (g, v)
+  SELECT g, v + 200 FROM t1 ORDER BY pk;
+
+FLUSH STATUS;
+SELECT COUNT(*), COUNT(DISTINCT g), SUM(v) FROM t1;
+SELECT LENGTH(GROUP_CONCAT(g ORDER BY v)) AS gc_len FROM t1;
+SHOW STATUS LIKE 'Created_tmp%';
+
+DROP TABLE t1;
+
+--echo # Clean up
 
 set @@max_sort_length=@save_max_sort_length;
 set @@sort_buffer_size=@save_sort_buffer_size;
