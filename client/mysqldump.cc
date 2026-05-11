@@ -4694,16 +4694,769 @@ static char *getTableName(int reset, int want_sequences)
 
 
 /*
-  dump user/role grants
-  ARGS
-  user_role: is either a user, or a role
+  Helpers for translating MySQL 8.0+ user/grant syntax into MariaDB.
+  Dynamic privileges with no MariaDB equivalent are
+  dropped (with a # WARNING); CREATE USER clauses MariaDB doesn't
+  support are dropped; an unsupported auth plugin causes the IDENTIFIED
+  clause to be dropped and the account forced ACCOUNT LOCK so the
+  now-passwordless account is unusable.
 */
 
+#define IS_MYSQL_SERVER(v) ((v) >= 80000 && (v) < 100000)
+#define LITERAL_LEN(s)  (sizeof(s) - 1)
+
+/*
+  The mysql.user shape CREATE ROLE leaves behind, used to tell MySQL roles
+  from users (MySQL 8 has no is_role column). `t` is the table alias with
+  its dot ("u.", "mu.", "") so the same predicate can be spliced into each
+  query. Kept in one macro so the several queries whose result sets must be
+  exact complements cannot drift apart.
+*/
+#define MYSQL8_ROLE_HEURISTIC(t) \
+  t "account_locked='Y' AND " t "authentication_string='' AND " \
+  t "password_expired='Y'"
+
+/*
+  Worst-case "<QUOTE(user)>@<QUOTE(host)>" + NUL. QUOTE(s) yields up
+  to 2 + 2*strlen(s) bytes (wrapping quotes + doubled internal
+  quotes/backslashes); plus '@' + NUL.
+*/
+#define MAX_QUOTED_USER_HOST_LEN \
+   (2*USERNAME_LENGTH + 2*HOSTNAME_LENGTH + 6)
+
+/*
+  MySQL 8.0+ privileges that need translation. Dynamic privileges
+  (BACKUP_ADMIN etc.) plus MySQL-only static role privs
+  (CREATE ROLE, DROP ROLE).
+
+  mariadb_priv == NULL means "no direct MariaDB equivalent": the
+  privilege is dropped from the MariaDB grant and a # WARNING line
+  is emitted. A privilege NOT in this map is assumed to be a name
+  MariaDB also recognizes.
+
+  Entries must be in strict ASCII-ascending order on mysql_priv -
+  lookup_mysql8_priv() does a bsearch().
+*/
+struct mysql8_priv_map_entry
+{
+  const char *mysql_priv;
+  size_t len;
+  const char *mariadb_priv;
+};
+static const struct mysql8_priv_map_entry mysql8_priv_map[]=
+{
+  {STRING_WITH_LEN("ALLOW_NONEXISTENT_DEFINER"), "SET USER"},
+  {STRING_WITH_LEN("APPLICATION_PASSWORD_ADMIN"), NULL},
+  {STRING_WITH_LEN("AUDIT_ABORT_EXEMPT"),       NULL},
+  {STRING_WITH_LEN("AUDIT_ADMIN"),              NULL},
+  {STRING_WITH_LEN("AUTHENTICATION_POLICY_ADMIN"), NULL},
+  {STRING_WITH_LEN("BACKUP_ADMIN"),             NULL},
+  {STRING_WITH_LEN("BINLOG_ADMIN"),             "BINLOG REPLAY, BINLOG ADMIN"},
+  {STRING_WITH_LEN("BINLOG_ENCRYPTION_ADMIN"),  NULL},
+  {STRING_WITH_LEN("CLONE_ADMIN"),              NULL},
+  {STRING_WITH_LEN("CONNECTION_ADMIN"),         "CONNECTION ADMIN"},
+  {STRING_WITH_LEN("CREATE ROLE"),              NULL},
+  {STRING_WITH_LEN("CREATE_SPATIAL_REFERENCE_SYSTEM"), NULL},
+  {STRING_WITH_LEN("DROP ROLE"),                NULL},
+  {STRING_WITH_LEN("ENCRYPTION_KEY_ADMIN"),     NULL},
+  {STRING_WITH_LEN("EXPORT_QUERY_RESULTS"),     NULL},
+  {STRING_WITH_LEN("FIREWALL_ADMIN"),           NULL},
+  {STRING_WITH_LEN("FIREWALL_EXEMPT"),          NULL},
+  {STRING_WITH_LEN("FIREWALL_USER"),            NULL},
+  {STRING_WITH_LEN("FLUSH_OPTIMIZER_COSTS"),    NULL},
+  {STRING_WITH_LEN("FLUSH_PRIVILEGES"),         NULL},
+  {STRING_WITH_LEN("FLUSH_STATUS"),             NULL},
+  {STRING_WITH_LEN("FLUSH_TABLES"),             NULL},
+  {STRING_WITH_LEN("FLUSH_USER_RESOURCES"),     NULL},
+  {STRING_WITH_LEN("GROUP_REPLICATION_ADMIN"),  NULL},
+  {STRING_WITH_LEN("GROUP_REPLICATION_STREAM"), NULL},
+  {STRING_WITH_LEN("INNODB_REDO_LOG_ARCHIVE"),  NULL},
+  {STRING_WITH_LEN("INNODB_REDO_LOG_ENABLE"),   NULL},
+  {STRING_WITH_LEN("MASKING_DICTIONARIES_ADMIN"), NULL},
+  {STRING_WITH_LEN("NDB_STORED_USER"),          NULL},
+  {STRING_WITH_LEN("OPTIMIZE_LOCAL_TABLE"),     NULL},
+  {STRING_WITH_LEN("OPTION_TRACKER_OBSERVER"),  NULL},
+  {STRING_WITH_LEN("OPTION_TRACKER_UPDATER"),   NULL},
+  {STRING_WITH_LEN("PASSWORDLESS_USER_ADMIN"),  NULL},
+  {STRING_WITH_LEN("PERSIST_RO_VARIABLES_ADMIN"), NULL},
+  {STRING_WITH_LEN("REPLICATION_APPLIER"),      "BINLOG REPLAY"},
+  {STRING_WITH_LEN("REPLICATION_SLAVE_ADMIN"),  "REPLICATION SLAVE ADMIN"},
+  {STRING_WITH_LEN("RESOURCE_GROUP_ADMIN"),     NULL},
+  {STRING_WITH_LEN("RESOURCE_GROUP_USER"),      NULL},
+  {STRING_WITH_LEN("ROLE_ADMIN"),               NULL},
+  {STRING_WITH_LEN("SENSITIVE_VARIABLES_OBSERVER"), NULL},
+  {STRING_WITH_LEN("SERVICE_CONNECTION_ADMIN"), "CONNECTION ADMIN"},
+  {STRING_WITH_LEN("SESSION_VARIABLES_ADMIN"),  NULL},
+  {STRING_WITH_LEN("SET_ANY_DEFINER"),          "SET USER"},
+  {STRING_WITH_LEN("SET_USER_ID"),              NULL},
+  {STRING_WITH_LEN("SHOW_ROUTINE"),             "SHOW CREATE ROUTINE"},
+  {STRING_WITH_LEN("SKIP_QUERY_REWRITE"),       NULL},
+  {STRING_WITH_LEN("SYSTEM_USER"),              NULL},
+  {STRING_WITH_LEN("SYSTEM_VARIABLES_ADMIN"),   NULL},
+  {STRING_WITH_LEN("TABLE_ENCRYPTION_ADMIN"),   NULL},
+  {STRING_WITH_LEN("TELEMETRY_LOG_ADMIN"),      NULL},
+  {STRING_WITH_LEN("TP_CONNECTION_ADMIN"),      NULL},
+  {STRING_WITH_LEN("TRANSACTION_GTID_TAG"),     NULL},
+  {STRING_WITH_LEN("VERSION_TOKEN_ADMIN"),      NULL},
+  {STRING_WITH_LEN("XA_RECOVER_ADMIN"),         NULL}
+};
+
+/*
+  Skip past a quoted SQL token starting at *p (' " or `). Handles
+  both backslash and doubled-quote escapes. Returns position after
+  the closing quote, or end-of-string on unterminated input.
+*/
+static const char *skip_quoted(const char *p)
+{
+  char q= *p++;
+  while (*p)
+  {
+    if (*p == '\\' && p[1])
+      p+= 2;
+    else if (*p == q)
+    {
+      if (p[1] == q)
+        p+= 2;
+      else
+        return p + 1;
+    }
+    else
+      p++;
+  }
+  return p;
+}
+
+/*
+  A keyword the top-level scanner searches for. `incompat` is used
+  only by the CREATE USER clause scan (true = MariaDB has no
+  equivalent, so the clause is dropped from the output); other callers
+  leave it false. Every keyword must begin with a space - scan_top_level
+  only tries to match at spaces.
+*/
+struct kw_entry
+{
+  LEX_CSTRING kw;
+  bool incompat;
+};
+
+/*
+  Single left-to-right pass over `start` to NUL, skipping quoted
+  ('..', "..", `..`) and parenthesised regions. Returns the first
+  top-level position where one of `kws` (terminated by a {NULL,0}
+  entry) begins - longest keyword wins when several start there -
+  and sets *idx to its index; NULL if none match. Resume past a hit
+  at pos + kws[*idx].kw.length.
+*/
+static const char *scan_top_level(const char *start,
+                                  const struct kw_entry *kws, int *idx)
+{
+  int depth= 0;
+  for (const char *p= start; *p; )
+  {
+    if (*p == '\'' || *p == '"' || *p == '`') { p= skip_quoted(p); continue; }
+    if (*p == '(') { depth++; p++; continue; }
+    if (*p == ')') { depth--; p++; continue; }
+    if (depth == 0 && *p == ' ')
+    {
+      int best= -1;
+      size_t best_len= 0;
+      for (int i= 0; kws[i].kw.str; i++)
+        if (kws[i].kw.length > best_len &&
+            strncmp(p, kws[i].kw.str, kws[i].kw.length) == 0)
+        { best= i; best_len= kws[i].kw.length; }
+      if (best >= 0) { *idx= best; return p; }
+    }
+    p++;
+  }
+  return NULL;
+}
+
+struct priv_lookup_key
+{
+  const char *name;
+  size_t len;
+};
+
+/* Case-sensitive: MySQL emits privilege names in upper case, same as
+   the map. Compare content first then length, which matches the
+   array's ASCII-ascending order so bsearch stays valid. */
+static int priv_compar(const void *k, const void *e)
+{
+  const struct priv_lookup_key *key= (const struct priv_lookup_key *) k;
+  const struct mysql8_priv_map_entry *entry=
+      (const struct mysql8_priv_map_entry *) e;
+  size_t cmp_len= key->len < entry->len ? key->len : entry->len;
+  int rc= memcmp(key->name, entry->mysql_priv, cmp_len);
+  if (rc)
+    return rc;
+  return (int) key->len - (int) entry->len;
+}
+
+/*
+  Look up `name` in mysql8_priv_map. Returns true on hit; *mapped
+  is the MariaDB equivalent or NULL meaning "drop with warning".
+  false means the caller treats the priv as static and passes
+  it through verbatim.
+*/
+static bool lookup_mysql8_priv(const char *name, size_t len,
+                               const char **mapped)
+{
+  struct priv_lookup_key key= {name, len};
+  const struct mysql8_priv_map_entry *e= (const struct mysql8_priv_map_entry *)
+      bsearch(&key, mysql8_priv_map,
+              array_elements(mysql8_priv_map),
+              sizeof(mysql8_priv_map[0]),
+              priv_compar);
+  if (!e)
+    return false;
+  *mapped= e->mariadb_priv;
+  return true;
+}
+
+/*
+  Trim leading/trailing ASCII whitespace in [s, e); return length.
+*/
+static size_t trim_priv(const char **s, const char *e)
+{
+  while (*s < e && (**s == ' ' || **s == '\t')) (*s)++;
+  while (e > *s && (e[-1] == ' ' || e[-1] == '\t')) e--;
+  return (size_t)(e - *s);
+}
+
+
+/*
+  Append the privilege token [tok, tok+len) to the comma-separated
+  out_privs, unless it is already present: two MySQL privileges can map
+  to the same MariaDB privilege (e.g. ALLOW_NONEXISTENT_DEFINER and
+  SET_ANY_DEFINER both -> "SET USER"), and a repeated token in a GRANT
+  list is at best noise and at worst rejected on import. out_n counts the
+  tokens emitted so far, so the ", " separator is only added when one is.
+
+  The membership walk splits out_privs on a *top-level* ", " only: a ", "
+  inside parentheses belongs to a column list ("SELECT (col_a, col_b)")
+  and is part of one element, not a separator, so paren depth is tracked.
+*/
+static void append_priv_unique(DYNAMIC_STRING *out_privs, const char *tok,
+                               size_t len, size_t *out_n)
+{
+  const char *elem= out_privs->str;
+  int depth= 0;
+  for (const char *p= elem; p; p++)
+  {
+    if (*p == '(')
+      depth++;
+    else if (*p == ')' && depth > 0)
+      depth--;
+    else if (*p == '\0' || (depth == 0 && p[0] == ',' && p[1] == ' '))
+    {
+      if ((size_t) (p - elem) == len && memcmp(elem, tok, len) == 0)
+        return;                          /* already present */
+      if (*p == '\0')
+        break;
+      p++;                               /* step onto the ' ' of ", " */
+      elem= p + 1;                       /* next element starts after it */
+    }
+  }
+  if ((*out_n)++)
+    dynstr_append_checked(out_privs, ", ");
+  dynstr_append_mem_checked(out_privs, tok, (uint) len);
+}
+
+
+/*
+  Process one priv [start, end): look it up in the map; emit warning
+  for known-no-mapping, append translated/verbatim form to out_privs
+  otherwise. Returns true if priv was substituted or dropped (caller
+  uses this to decide whether the GRANT needs translation).
+*/
+static bool process_priv(const char *start, const char *end,
+                         DYNAMIC_STRING *out_privs,
+                         DYNAMIC_STRING *out_warnings,
+                         size_t *out_n)
+{
+  size_t plen= trim_priv(&start, end);
+  if (!plen)
+    return false;
+
+  const char *mapped= NULL;
+  bool known= lookup_mysql8_priv(start, plen, &mapped);
+
+  if (known && !mapped)
+  {
+    char buf[256];
+    my_snprintf(buf, sizeof(buf),
+                "# WARNING: dropped MySQL privilege %.*s "
+                "(no MariaDB equivalent)\n", (int) plen, start);
+    dynstr_append_checked(out_warnings, buf);
+    return true;
+  }
+
+  if (mapped)
+  {
+    /* A mapped value may itself be a comma-separated list ("BINLOG
+       REPLAY, BINLOG ADMIN"); split it so each token is deduped
+       individually against what a sibling privilege already emitted. */
+    for (const char *t= mapped; *t; )
+    {
+      const char *sep= strstr(t, ", ");
+      size_t tlen= sep ? (size_t) (sep - t) : strlen(t);
+      append_priv_unique(out_privs, t, tlen, out_n);
+      if (!sep)
+        break;
+      t= sep + 2;
+    }
+  }
+  else
+    append_priv_unique(out_privs, start, plen, out_n);
+  return known;
+}
+
+
+/*
+  Walk [start, end) once with quote/paren state tracked inline,
+  splitting at every top-level comma and feeding each priv to
+  process_priv.
+*/
+static bool translate_priv_list(const char *start, const char *end,
+                                DYNAMIC_STRING *out_privs,
+                                DYNAMIC_STRING *out_warnings,
+                                size_t *out_n)
+{
+  bool changed= false;
+  const char *p= start;
+  const char *priv_start= start;
+  int depth= 0;
+  while (p < end)
+  {
+    if (*p == '\'' || *p == '"' || *p == '`')
+    {
+      p= skip_quoted(p);
+      continue;
+    }
+    if (*p == '(') { depth++; p++; continue; }
+    if (*p == ')') { depth--; p++; continue; }
+    if (depth == 0 && *p == ',')
+    {
+      changed|= process_priv(priv_start, p, out_privs, out_warnings, out_n);
+      priv_start= p + 1;
+    }
+    p++;
+  }
+  changed|= process_priv(priv_start, end, out_privs, out_warnings, out_n);
+  return changed;
+}
+
+
+/*
+  True if the NUL-terminated s contains star-slash, which would close an
+  enclosing M!nnnnn version comment early and let the bytes after it run as
+  SQL on import (a comment-delimiter injection from a crafted source). It
+  can't be escaped inside a comment nor by QUOTE()/backticks, so callers
+  that wrap identifiers in a version comment refuse such a body.
+*/
+static bool has_comment_close(const char *s)
+{
+  return strstr(s, "*/") != NULL;
+}
+
+
+/*
+  vsnprintf fmt/args into stackbuf (capacity stacksz); if the result does
+  not fit, my_malloc a buffer that does. Returns the formatted, NUL-
+  terminated string - either stackbuf or a heap buffer the caller must
+  my_free() when the return value != stackbuf. die()s on a formatting
+  error or OOM, matching the die-on-failure _checked convention used
+  throughout this dump path. args is left untouched (traversed via
+  va_copy) so the caller still owns its va_end.
+*/
+static char *vformat_dup(const char *fmt, va_list args,
+                         char *stackbuf, size_t stacksz)
+{
+  va_list copy;
+  int len;
+
+  va_copy(copy, args);
+  len= vsnprintf(stackbuf, stacksz, fmt, copy);
+  va_end(copy);
+  if (len < 0)
+    die(EX_MYSQLERR, "vsnprintf failed formatting dump output");
+  if ((size_t) len < stacksz)
+    return stackbuf;
+
+  char *heap= (char*) my_malloc(PSI_NOT_INSTRUMENTED, (size_t) len + 1,
+                                MYF(MY_WME));
+  if (!heap)
+    die(EX_EOM, "Couldn't allocate memory for dump output");
+  va_copy(copy, args);
+  vsnprintf(heap, (size_t) len + 1, fmt, copy);
+  va_end(copy);
+  return heap;
+}
+
+
+/*
+  Emit a single-line "# WARNING ..." diagnostic, formatted printf-style.
+  Untrusted identifiers interpolated via %s are the reason this is not a
+  plain fprintf: a "#" comment runs only to end of line, and QUOTE()/
+  backticks do not escape newline (only NUL, backslash, quote and Ctrl-Z),
+  so a crafted-source identifier carrying a '\n' would otherwise end the
+  comment and let its trailing bytes run as SQL on import.  This helper
+  folds every CR/LF in the whole formatted message (fmt text included) to a
+  space and appends the terminating newline itself, keeping the diagnostic
+  on one commented line - the "#"-comment analogue of the has_comment_close()
+  guard on the version-comment path.
+*/
+static void emit_comment_warning(const char *fmt, ...)
+{
+  char stackbuf[1024], *body;
+  va_list args;
+
+  va_start(args, fmt);
+  body= vformat_dup(fmt, args, stackbuf, sizeof(stackbuf));
+  va_end(args);
+
+  for (char *p= body; *p; p++)
+    if (*p == '\n' || *p == '\r')
+      *p= ' ';
+  fputs(body, md_result_file);
+  fputc('\n', md_result_file);
+  if (body != stackbuf)
+    my_free(body);
+  check_io(md_result_file);
+}
+
+
+/*
+  Format the statement body via printf-style args, wrap it in the
+  given versioned-comment prefix (e.g. M!100005 open) and the closing
+  comment + semicolon, and emit. User data must be passed via %s (NOT
+  baked into the fmt) so that literal percent bytes in identifiers
+  (e.g. the host wildcard) aren't read as format specifiers.  A body
+  carrying star-slash is refused (see has_comment_close).
+*/
+static void emit_versioned_wrap_fmt(const char *prefix,
+                                    const char *fmt, ...)
+{
+  char stackbuf[1024], *body;
+  va_list args;
+
+  va_start(args, fmt);
+  body= vformat_dup(fmt, args, stackbuf, sizeof(stackbuf));
+  va_end(args);
+
+  if (has_comment_close(body))
+    emit_comment_warning(
+      "# WARNING: statement skipped: an identifier contains '*/', which "
+      "would close the version comment and inject SQL on import: %s", body);
+  else
+  {
+    fputs(prefix, md_result_file);
+    fputs(body, md_result_file);
+    fputs(" */;\n", md_result_file);
+  }
+  if (body != stackbuf)
+    my_free(body);
+  check_io(md_result_file);
+}
+
+
+/*
+  Emit any queued per-priv "# WARNING" lines, then (if any priv
+  survived translation) the MariaDB GRANT: "GRANT " + the translated
+  priv list + the tail [on_ptr, tail_end) which is
+  " ON <obj> TO <user> [WITH GRANT OPTION]".
+*/
+static void emit_translated_priv_stmt(const char *on_ptr,
+                                      const char *tail_end,
+                                      DYNAMIC_STRING *mdb_privs,
+                                      DYNAMIC_STRING *warnings,
+                                      size_t n_emitted)
+{
+  if (warnings->length)
+    fputs(warnings->str, md_result_file);
+  /* Route through emit_versioned_wrap_fmt so the star-slash guard lives
+     in one place. The tail [on_ptr, tail_end) carries the db/table/user
+     identifiers verbatim from SHOW GRANTS; the translated priv list comes
+     from a fixed map and never contains star-slash. */
+  if (n_emitted)
+    emit_versioned_wrap_fmt("/*M!100005 ", "GRANT %.*s%.*s",
+                            (int) mdb_privs->length, mdb_privs->str,
+                            (int) (tail_end - on_ptr), on_ptr);
+  check_io(md_result_file);
+}
+
+
+/*
+  Translate a MySQL 8.0+ GRANT and emit it. Returns true when handled
+  (caller skips its own print - including the pure-role-grant path, which
+  emits nothing here because dump_role_hierarchy_mysql() covers it), false
+  if the GRANT is portable and the caller should print it verbatim.
+  Output: per-dropped-priv "# WARNING" + the MariaDB GRANT
+  (if any priv survived translation).
+*/
+static bool translate_mysql8_grant(const char *grant)
+{
+  static const struct kw_entry on_kw[]=
+    {{{STRING_WITH_LEN(" ON ")}, false}, {{NULL, 0}, false}};
+  static const struct kw_entry as_kw[]=
+    {{{STRING_WITH_LEN(" AS ")}, false}, {{NULL, 0}, false}};
+  int dummy;
+  const char *on_ptr= scan_top_level(grant, on_kw, &dummy);
+  const char *as_ptr= scan_top_level(grant, as_kw, &dummy);
+
+  /* SQL syntax has AS strictly after ON; defend against malformed
+     input where the search returns AS at an earlier offset (would
+     underflow tail_end - on_ptr below). */
+  if (as_ptr && on_ptr && as_ptr < on_ptr)
+    as_ptr= NULL;
+
+  if (!on_ptr)
+  {
+    /* Pure role grant ("GRANT role TO user_or_role"). The MariaDB
+       role hierarchy is emitted in full by dump_role_hierarchy_mysql();
+       this SHOW GRANTS line would be a duplicate, so skip it. */
+    return true;
+  }
+
+  DYNAMIC_STRING mdb_privs, warnings;
+  init_dynamic_string_checked(&mdb_privs, "", 256, 1024);
+  init_dynamic_string_checked(&warnings, "", 256, 256);
+
+  size_t n_emitted= 0;
+  bool any_changed=
+      translate_priv_list(grant + LITERAL_LEN("GRANT "), on_ptr,
+                          &mdb_privs, &warnings, &n_emitted);
+  if (as_ptr)
+    any_changed= true;     /* AS clause is MariaDB-incompatible */
+
+  if (!any_changed)
+  {
+    dynstr_free(&mdb_privs);
+    dynstr_free(&warnings);
+    return false;
+  }
+
+  const char *tail_end= as_ptr ? as_ptr : grant + strlen(grant);
+  emit_translated_priv_stmt(on_ptr, tail_end, &mdb_privs, &warnings,
+                            n_emitted);
+
+  dynstr_free(&mdb_privs);
+  dynstr_free(&warnings);
+  return true;
+}
+
+
+/*
+  A MySQL 8.0+ REVOKE. SHOW GRANTS only emits REVOKE for the
+  partial_revokes feature, which MariaDB has no equivalent for, so
+  there is nothing to replay - just warn the operator. Returns true.
+*/
+static bool translate_mysql8_revoke(const char *revoke)
+{
+  emit_comment_warning(
+    "# WARNING: partial REVOKE has no MariaDB equivalent, ignored: %s", revoke);
+  emit_comment_warning(
+    "#   the wider GRANT remains in effect; re-grant at the narrower "
+    "scope if needed.");
+  return true;
+}
+
+
+/*
+  Clauses inside SHOW CREATE USER, for scan_top_level. incompat=true
+  means MariaDB has no equivalent, so the clause is dropped from the
+  output. Index 0 (" IDENTIFIED ") is the leading auth clause, dropped
+  too when its plugin is unsupported (see translate_mysql8_create_user).
+  Order only matters for that index-0 reference; scan_top_level itself
+  is order-independent (longest match wins at a position).
+*/
+#define USER_CLAUSE_IDENTIFIED 0
+static const struct kw_entry user_clauses[]=
+{
+  {{STRING_WITH_LEN(" IDENTIFIED ")},               false},
+  {{STRING_WITH_LEN(" AND IDENTIFIED ")},           true},
+  {{STRING_WITH_LEN(" INITIAL AUTHENTICATION ")},   true},
+  {{STRING_WITH_LEN(" DEFAULT ROLE ")},             true},
+  {{STRING_WITH_LEN(" REQUIRE ")},                  false},
+  {{STRING_WITH_LEN(" WITH MAX_")},                 false},
+  {{STRING_WITH_LEN(" PASSWORD EXPIRE")},           false},
+  {{STRING_WITH_LEN(" PASSWORD HISTORY ")},         true},
+  {{STRING_WITH_LEN(" PASSWORD REUSE INTERVAL ")},  true},
+  /* No trailing space: MySQL emits this clause last, so it has no
+     following space to match - and with the space it would be missed
+     and the embedded " REQUIRE " would falsely match instead. */
+  {{STRING_WITH_LEN(" PASSWORD REQUIRE CURRENT")},  true},
+  {{STRING_WITH_LEN(" ACCOUNT UNLOCK")},            false},
+  {{STRING_WITH_LEN(" ACCOUNT LOCK")},              false},
+  {{NULL, 0}, false}
+};
+
+/*
+  Auth plugins MariaDB can authenticate on import: mysql_native_password
+  (built in) and caching_sha2_password (via the loadable auth_mysql_sha2,
+  whose A-format hashes MariaDB understands). This is deliberately an
+  ALLOWLIST, not a blocklist: any OTHER MySQL plugin - sha256_password,
+  auth_socket, the authentication_ldap_* / _kerberos / _fido / _webauthn /
+  _oci family, or any future one - MariaDB cannot authenticate, so
+  IDENTIFIED WITH it gets a # WARNING; if it is the leading plugin the
+  IDENTIFIED clause is dropped and the account is forced ACCOUNT LOCK
+  (passwordless guard - see translate_mysql8_create_user). A blocklist
+  would silently pass an unknown plugin through and produce an un-vetted
+  or unimportable account.
+*/
+static const char *const mariadb_known_auth_plugins[]= {
+  "mysql_native_password",
+  "caching_sha2_password",
+  NULL
+};
+
+
+/*
+  Walk each IDENTIFIED WITH '<plugin>' in user_str and append a
+  # WARNING for any plugin not in mariadb_known_auth_plugins. Returns
+  true if the FIRST plugin is unsupported, so the caller drops the
+  leading IDENTIFIED clause (and forces ACCOUNT LOCK to keep the
+  passwordless account unusable).
+
+  caching_sha2_password is on the allowlist: MariaDB accepts it via the
+  loadable auth_mysql_sha2, and if that module isn't loaded the statement
+  fails loudly on import like any other object - we don't advise on
+  server configuration here.
+*/
+static bool scan_identified_plugins(const char *user_str,
+                                    DYNAMIC_STRING *warnings_out)
+{
+  static const struct kw_entry idw_kw[]=
+    {{{STRING_WITH_LEN(" IDENTIFIED WITH '")}, false}, {{NULL, 0}, false}};
+  bool first_unsupported= false;
+  bool first= true;
+  int dummy;
+
+  for (const char *p= user_str;
+       (p= scan_top_level(p, idw_kw, &dummy)) != NULL; )
+  {
+    const char *plugin_start= p + idw_kw[0].kw.length;
+    const char *plugin_end= strchr(plugin_start, '\'');
+    if (!plugin_end)
+      break;                /* malformed: unterminated plugin name */
+    size_t plen= plugin_end - plugin_start;
+
+    /* Force-lock unless this plugin is one MariaDB can authenticate. */
+    bool supported= false;
+    for (const char *const *m= mariadb_known_auth_plugins; *m; m++)
+    {
+      if (strlen(*m) == plen && strncmp(plugin_start, *m, plen) == 0)
+      {
+        supported= true;
+        break;
+      }
+    }
+    if (!supported)
+    {
+      char buf[256];
+      my_snprintf(buf, sizeof(buf),
+                  "# WARNING: auth plugin '%.*s' not shipped with "
+                  "MariaDB; %s\n",
+                  (int) plen, plugin_start,
+                  first
+                    ? "user created with no password - set a new password "
+                      "before login"
+                    : "MFA factor with this plugin lost on import");
+      dynstr_append_checked(warnings_out, buf);
+      if (first)
+        first_unsupported= true;
+    }
+    first= false;
+    p= plugin_end + 1;
+  }
+  return first_unsupported;
+}
+
+/*
+  Emit "CREATE USER ..." translating from MySQL 8.0+: drop each
+  clause MariaDB has no equivalent for.
+*/
+static int translate_mysql8_create_user(const char *user_str)
+{
+  /*
+    Queue per-plugin warnings; if the first IDENTIFIED's plugin is
+    unsupported the leading IDENTIFIED clause is dropped (the user
+    would be passwordless, so the clause loop forces ACCOUNT LOCK).
+  */
+  DYNAMIC_STRING warnings;
+  init_dynamic_string_checked(&warnings, "", 256, 256);
+  bool ident_incompat= scan_identified_plugins(user_str, &warnings);
+
+  DYNAMIC_STRING out;
+  init_dynamic_string_checked(&out, "CREATE ", 512, 1024);
+  if (opt_replace_into)
+    dynstr_append_checked(&out, "/*M!100103 OR REPLACE */ ");
+  dynstr_append_checked(&out, "USER");
+  if (opt_ignore)
+    dynstr_append_checked(&out, " IF NOT EXISTS");
+
+  /*
+    One left-to-right pass over the clauses. Text before each clause
+    (the base "USER `u`@`h`" and any run of compatible clauses) is
+    emitted verbatim; an incompatible clause is dropped. When the auth
+    string is dropped (unsupported plugin) the user would land
+    passwordless, so force ACCOUNT LOCK whatever the source said.
+  */
+  const char *cur= user_str;
+  bool account_emitted= false;
+  int idx;
+  const char *clause= scan_top_level(user_str, user_clauses, &idx);
+  while (clause)
+  {
+    int nidx= 0;
+    const char *next= scan_top_level(clause + user_clauses[idx].kw.length,
+                                     user_clauses, &nidx);
+    const char *clause_end= next ? next : user_str + strlen(user_str);
+    bool is_account= strncmp(user_clauses[idx].kw.str, " ACCOUNT", 8) == 0;
+
+    dynstr_append_mem_checked(&out, cur, (uint)(clause - cur));
+
+    if (user_clauses[idx].incompat ||
+        (ident_incompat && idx == USER_CLAUSE_IDENTIFIED))
+      ;                                  /* incompatible - drop it */
+    else if (ident_incompat && is_account)
+    {
+      dynstr_append_checked(&out, " ACCOUNT LOCK");  /* passwordless guard */
+      account_emitted= true;
+    }
+    else
+    {
+      dynstr_append_mem_checked(&out, clause, (uint)(clause_end - clause));
+      account_emitted|= is_account;
+    }
+
+    cur= clause_end;
+    clause= next;
+    idx= nidx;
+  }
+  dynstr_append_checked(&out, cur);
+  if (ident_incompat && !account_emitted)
+    /* passwordless account with no source ACCOUNT clause: lock it */
+    dynstr_append_checked(&out, " ACCOUNT LOCK");
+  dynstr_append_checked(&out, ";\n");
+  if (warnings.length)
+    dynstr_append_mem_checked(&out, warnings.str, (uint) warnings.length);
+
+  fputs(out.str, md_result_file);
+  check_io(md_result_file);
+  dynstr_free(&out);
+  dynstr_free(&warnings);
+  return 0;
+}
+
+
+/* dump grants for a user or role */
 static int dump_grants(const char *user_role)
 {
   DYNAMIC_STRING sqlbuf;
   MYSQL_ROW row;
   MYSQL_RES *tableres;
+  uint version= mysql_get_server_version(mysql);
 
   init_dynamic_string_checked(&sqlbuf, "SHOW GRANTS FOR ", 256, 1024);
   dynstr_append_checked(&sqlbuf, user_role);
@@ -4715,8 +5468,21 @@ static int dump_grants(const char *user_role)
   }
   while ((row= mysql_fetch_row(tableres)))
   {
+    if (!row[0])
+      continue;
     if (strncmp(row[0], "SET DEFAULT ROLE", sizeof("SET DEFAULT ROLE") - 1) == 0)
       continue;
+
+    if (IS_MYSQL_SERVER(version))
+    {
+      if (strncmp(row[0], "GRANT ", 6) == 0 &&
+          translate_mysql8_grant(row[0]))
+        continue;
+      if (strncmp(row[0], "REVOKE ", 7) == 0 &&
+          translate_mysql8_revoke(row[0]))
+        continue;
+    }
+
     fprintf(md_result_file, "%s;\n", row[0]);
   }
   mysql_free_result(tableres);
@@ -4725,15 +5491,13 @@ static int dump_grants(const char *user_role)
 }
 
 
-/*
-  dump create user
-*/
-
+/* dump CREATE USER, translating MySQL 8.0+ syntax when needed */
 static int dump_create_user(const char *user)
 {
   DYNAMIC_STRING sqlbuf;
   MYSQL_ROW row;
   MYSQL_RES *tableres;
+  uint version= mysql_get_server_version(mysql);
 
   init_dynamic_string_checked(&sqlbuf, "SHOW CREATE USER ", 256, 1024);
   dynstr_append_checked(&sqlbuf, user);
@@ -4745,9 +5509,24 @@ static int dump_create_user(const char *user)
   }
   while ((row= mysql_fetch_row(tableres)))
   {
-    fprintf(md_result_file, "CREATE %sUSER %s%s;\n", opt_replace_into ? "/*M!100103 OR REPLACE */ ": "",
+    if (!row[0])
+      continue;
+
+    /* user_str points at the leading space before the user identifier;
+       translator scans keywords starting with that space, legacy path
+       skips it via user_str + 1. */
+    const char *user_str= row[0] + LITERAL_LEN("CREATE USER");
+
+    if (IS_MYSQL_SERVER(version))
+    {
+      translate_mysql8_create_user(user_str);
+      continue;
+    }
+
+    fprintf(md_result_file, "CREATE %sUSER %s%s;\n",
+            opt_replace_into ? "/*M!100103 OR REPLACE */ " : "",
             opt_ignore ? "IF NOT EXISTS " : "",
-            row[0] + sizeof("CREATE USER"));
+            user_str + 1);
   }
   mysql_free_result(tableres);
   dynstr_free(&sqlbuf);
@@ -4756,57 +5535,506 @@ static int dump_create_user(const char *user)
 
 
 /*
-  dump all users, roles and their grants
+  Dialect-specific helpers for dump_all_users_roles_and_grants().
+  One pair (_maria/_mysql) per concern: role hierarchy, default
+  roles, role-admin grants. All return 0 on success, 1 on error.
 */
 
+/*
+  Record that CREATE ROLE has been emitted for `role`, returning true
+  only the first time it is seen. The recursive role walk can return a
+  role at several non-adjacent depths (a role granted both to a user and
+  to another role), so a previous-row comparison is not enough - we keep
+  a newline-delimited set of roles already created. `role` is the QUOTE()'d
+  identifier; QUOTE() does not escape a literal newline, but account names
+  containing one do not occur in practice, so a stray newline in the set
+  would at worst re-emit or skip one CREATE ROLE - never a mis-parse on
+  import (each CREATE ROLE goes out through emit_versioned_wrap_fmt).
+*/
+static bool first_role_sighting(DYNAMIC_STRING *seen, const char *role)
+{
+  char key[MAX_QUOTED_USER_HOST_LEN + 4];
+  my_snprintf(key, sizeof(key), "\n%s\n", role);
+  if (strstr(seen->str, key))
+    return false;
+  dynstr_append_checked(seen, role);
+  dynstr_append_checked(seen, "\n");
+  return true;
+}
+
+/*
+  Emit CREATE ROLE for each MariaDB role + a GRANT per (role, user,
+  admin) tuple. CREATE is emitted once per role (first_role_sighting),
+  the rest of the rows just add membership grants.
+*/
+static int dump_role_hierarchy_maria()
+{
+  MYSQL_ROW row;
+  MYSQL_RES *tableres;
+
+  if (mysql_query_with_error_report(mysql, &tableres,
+      "WITH RECURSIVE create_role_order AS"
+      "  (SELECT 1 as n, roles_mapping.*"
+      "   FROM mysql.roles_mapping"
+      "   JOIN mysql.user USING (user,host)"
+      "   WHERE is_role='N'"
+      "     AND Admin_option='Y'"
+      "   UNION SELECT c.n+1, r.*"
+      "   FROM create_role_order c"
+      "   JOIN mysql.roles_mapping r ON c.role=r.user"
+      "   AND r.host=''"
+      "   AND r.Admin_option='Y') "
+      "SELECT QUOTE(ROLE) AS r,"
+      "       CONCAT(QUOTE(user),"
+      "       IF(HOST='', '', CONCAT('@', QUOTE(HOST)))) AS c,"
+      "       Admin_option "
+      "FROM create_role_order ORDER BY n, r, user"))
+    return 1;
+
+  DYNAMIC_STRING seen;
+  init_dynamic_string_checked(&seen, "\n", 256, 1024);
+
+  while ((row= mysql_fetch_row(tableres)))
+  {
+    if (!row[0] || !row[1] || !row[2])
+      continue;
+    if (first_role_sighting(&seen, row[0]))
+    {
+      /* Split CREATE + GRANT WITH ADMIN: the one-shot
+         "CREATE ROLE ... WITH ADMIN" needs 10.11.1+ (MDEV-28088). */
+      emit_versioned_wrap_fmt(
+        opt_replace_into ? "/*M!100103 " : "/*M!100005 ",
+        "%sROLE %s%s",
+        opt_replace_into ? "CREATE OR REPLACE " : "CREATE ",
+        opt_ignore ? "IF NOT EXISTS " : "", row[0]);
+      emit_versioned_wrap_fmt("/*M!100005 ",
+        "GRANT %s TO mariadb_dump_import_role WITH ADMIN OPTION",
+        row[0]);
+    }
+    emit_versioned_wrap_fmt("/*M!100005 ",
+      "GRANT %s TO %s%s",
+      row[0], row[1],
+      (row[2][0] == 'Y') ? " WITH ADMIN OPTION" : "");
+  }
+  check_io(md_result_file);
+  dynstr_free(&seen);
+  mysql_free_result(tableres);
+  return 0;
+}
+
+
+/*
+  Emit the MariaDB CREATE ROLE for one MySQL role (qname is the host-less
+  QUOTE'd name) plus the GRANT that makes mariadb_dump_import_role its
+  admin, so the import can drop it in the epilogue. --replace precedes it
+  with DROP ROLE IF EXISTS. CREATE and GRANT are split because the one-shot
+  "CREATE ROLE ... WITH ADMIN" needs 10.11.1+ (MDEV-28088). Both phases of
+  dump_role_hierarchy_mysql call this once per distinct role name.
+  (dump_role_hierarchy_maria emits its own CREATE OR REPLACE form, so it is
+  not shared here.)
+*/
+static void emit_create_mysql_role(const char *qname)
+{
+  if (opt_replace_into)
+    emit_versioned_wrap_fmt("/*M!100005 ", "DROP ROLE IF EXISTS %s", qname);
+  emit_versioned_wrap_fmt("/*M!100005 ",
+    "CREATE ROLE %s%s", opt_ignore ? "IF NOT EXISTS " : "", qname);
+  emit_versioned_wrap_fmt("/*M!100005 ",
+    "GRANT %s TO mariadb_dump_import_role WITH ADMIN OPTION", qname);
+}
+
+
+/*
+  Emit CREATE ROLE + GRANT-to-import-role for every MySQL role, then a
+  GRANT per (role, grantee) edge.
+
+  MySQL has no is_role flag, so roles are identified by the state
+  CREATE ROLE leaves behind on the account: account_locked='Y' AND
+  authentication_string='' AND password_expired='Y'. (CREATE USER ...
+  ACCOUNT LOCK leaves password_expired='N' and may set auth_string,
+  so it doesn't match.)
+
+  Phase A picks up roles that do not appear as FROM_USER in role_edges:
+  truly-orphan roles (granted to nobody) and grantee-only roles like an
+  admin role granted only TO others. Phase B (the recursive walk) covers
+  roles that ARE granted onward. The two sets are disjoint; the shared
+  `seen` set is defensive.
+
+  For each membership GRANT, the TO side could be a user or a role; the
+  CTE's outer SELECT reads the same heuristic to choose between
+  `GRANT r TO user@host` and `GRANT r TO role` (bare).
+*/
+static int dump_role_hierarchy_mysql()
+{
+  MYSQL_ROW row;
+  MYSQL_RES *tableres;
+
+  /*
+    Two dedup sets. `role_names` is keyed on the bare, host-less role
+    name: a MariaDB role has no host, so MySQL roles differing only in
+    host ('dev'@'%' vs 'dev'@'localhost') map to ONE MariaDB role and must
+    be CREATEd once - keying the CREATE on user@host would emit a second
+    CREATE ROLE that fails with ER 1396 on import. `seen` is keyed on the
+    full user@host and tells "same role revisited at another recursion
+    depth" (silent) apart from "another host of an already-created name"
+    (a lossy collapse worth a # WARNING).
+  */
+  DYNAMIC_STRING seen, role_names;
+  init_dynamic_string_checked(&seen, "\n", 256, 1024);
+  init_dynamic_string_checked(&role_names, "\n", 256, 1024);
+  bool heuristic_noted= false;   /* one-time note for the role heuristic */
+
+  /* Phase A: roles with no outgoing edges (orphan or grantee-only). */
+  if (mysql_query_with_error_report(mysql, &tableres,
+      "SELECT QUOTE(u.User),"
+      "       CONCAT(QUOTE(u.User), '@', QUOTE(u.Host)) "
+      "FROM mysql.user u "
+      "WHERE " MYSQL8_ROLE_HEURISTIC("u.")
+      "  AND NOT EXISTS (SELECT 1 FROM mysql.role_edges r "
+      "                  WHERE r.FROM_USER=u.User AND r.FROM_HOST=u.Host) "
+      "ORDER BY u.User, u.Host"))
+  {
+    dynstr_free(&seen);
+    dynstr_free(&role_names);
+    return 1;
+  }
+  while ((row= mysql_fetch_row(tableres)))
+  {
+    if (!row[0] || !row[1])
+      continue;
+    if (first_role_sighting(&role_names, row[0]))
+    {
+      /*
+        Phase A accounts are inferred to be roles purely by heuristic
+        (account_locked + empty authentication_string + password_expired,
+        and granted to nobody): MySQL 8 has no authoritative role flag in
+        mysql.user, so a genuinely disabled user account of the same shape
+        is indistinguishable. The note is Phase-A-only on purpose: Phase B
+        roles appear as FROM in role_edges, so they are roles by evidence,
+        not by this heuristic. Emit it once rather than per role.
+      */
+      if (!heuristic_noted)
+      {
+        emit_comment_warning(
+          "# WARNING: locked, passwordless, expired accounts that are "
+          "granted to nobody are dumped as CREATE ROLE below (MySQL 8 has "
+          "no role flag); recreate as a user any that was a disabled account");
+        heuristic_noted= true;
+      }
+      emit_create_mysql_role(row[0]);
+      first_role_sighting(&seen, row[1]);
+    }
+    else if (first_role_sighting(&seen, row[1]))
+      emit_comment_warning(
+        "# WARNING: MySQL role %s maps onto hostless MariaDB role %s "
+        "already created for another host; the two are merged",
+        row[1], row[0]);
+  }
+  mysql_free_result(tableres);
+
+  /* Phase B: the recursive walk over role_edges.  The outer SELECT
+     adds to_is_role so the GRANT emits the right form (bare role vs
+     user@host) at the leaf (depth 1) level too. */
+  if (mysql_query_with_error_report(mysql, &tableres,
+      "WITH RECURSIVE create_role_order AS"
+      "  (SELECT 1 AS n,"
+      "          re.*"
+      "   FROM mysql.role_edges re"
+      "   JOIN mysql.user u ON re.TO_HOST=u.HOST"
+      "   AND re.TO_USER = u.USER"
+      "   LEFT JOIN mysql.role_edges re2 ON re.TO_USER=re2.FROM_USER"
+      "   AND re2.TO_HOST=re2.FROM_HOST"
+      "   WHERE re2.FROM_USER IS NULL"
+      "   UNION SELECT c.n+1,"
+      "                re.*"
+      "   FROM create_role_order c"
+      "   JOIN mysql.role_edges re ON c.FROM_USER=re.TO_USER"
+      "   AND c.FROM_HOST=re.TO_HOST) "
+      "SELECT QUOTE(c.FROM_USER), QUOTE(c.FROM_HOST),"
+      "       QUOTE(c.TO_USER),   QUOTE(c.TO_HOST),"
+      "       c.WITH_ADMIN_OPTION, c.n,"
+      "       (" MYSQL8_ROLE_HEURISTIC("tu.") ") AS to_is_role "
+      "FROM create_role_order c "
+      "JOIN mysql.user tu ON tu.User=c.TO_USER AND tu.Host=c.TO_HOST "
+      "ORDER BY c.n,"
+      "         c.FROM_USER, c.FROM_HOST,"
+      "         c.TO_USER,   c.TO_HOST,"
+      "         c.WITH_ADMIN_OPTION"))
+  {
+    dynstr_free(&seen);
+    dynstr_free(&role_names);
+    return 1;
+  }
+
+  while ((row= mysql_fetch_row(tableres)))
+  {
+    if (!row[0] || !row[1] || !row[2] || !row[3] || !row[4])
+      continue;
+    const char *r_user= row[0], *r_host= row[1];
+    const char *u_user= row[2], *u_host= row[3];
+    const char *admin= (row[4][0] == 'Y') ? " WITH ADMIN OPTION" : "";
+    bool to_is_role= (row[6] && row[6][0] == '1');
+
+    char this_role[MAX_QUOTED_USER_HOST_LEN];
+    my_snprintf(this_role, sizeof(this_role), "%s@%s", r_user, r_host);
+
+    if (first_role_sighting(&role_names, r_user))
+    {
+      emit_create_mysql_role(r_user);
+      first_role_sighting(&seen, this_role);
+    }
+    else if (first_role_sighting(&seen, this_role))
+      emit_comment_warning(
+        "# WARNING: MySQL role %s maps onto hostless MariaDB role %s "
+        "already created for another host; the two are merged",
+        this_role, r_user);
+
+    if (to_is_role)
+      emit_versioned_wrap_fmt("/*M!100005 ",
+        "GRANT %s TO %s%s", r_user, u_user, admin);
+    else
+      emit_versioned_wrap_fmt("/*M!100005 ",
+        "GRANT %s TO %s@%s%s", r_user, u_user, u_host, admin);
+  }
+  check_io(md_result_file);
+  dynstr_free(&seen);
+  dynstr_free(&role_names);
+  mysql_free_result(tableres);
+  return 0;
+}
+
+
+/* MariaDB users + single default role: GRANTS + SET DEFAULT ROLE */
+static int dump_default_roles_maria()
+{
+  MYSQL_ROW row;
+  MYSQL_RES *tableres;
+  int result= 0;
+
+  if (mysql_query_with_error_report(mysql, &tableres,
+      "select IF(default_role='', 'NONE', QUOTE(default_role)) as r,"
+      "concat(QUOTE(User), '@', QUOTE(Host)) as u FROM mysql.user  "
+      "/*M!100005 WHERE is_role='N' */"))
+    return 1;
+
+  while ((row= mysql_fetch_row(tableres)))
+  {
+    if (!row[0] || !row[1])
+      continue;
+    if (dump_grants(row[1]))
+      result= 1;
+    emit_versioned_wrap_fmt("/*M!100005 ",
+      "SET DEFAULT ROLE %s FOR %s", row[0], row[1]);
+  }
+  check_io(md_result_file);
+  mysql_free_result(tableres);
+  return result;
+}
+
+
+/*
+  MySQL users + default roles. Multiple default roles per user yield
+  multiple rows; the ORDER BY groups a user's rows together, so GRANTS
+  are emitted once per user and the surviving default role is
+  deterministic. MariaDB allows a single default role, so only the
+  first is emitted; extras get a # WARNING instead of being silently
+  overwritten by a later SET DEFAULT ROLE.
+*/
+static int dump_default_roles_mysql()
+{
+  MYSQL_ROW row;
+  MYSQL_RES *tableres;
+  int result= 0;
+
+  if (mysql_query_with_error_report(mysql, &tableres,
+      "SELECT IF(DEFAULT_ROLE_HOST IS NULL, 'NONE', QUOTE(DEFAULT_ROLE_USER)),"
+      "       IF(DEFAULT_ROLE_HOST IS NULL, 'NONE', QUOTE(DEFAULT_ROLE_HOST)),"
+      "       QUOTE(mu.USER), QUOTE(mu.HOST) "
+      "FROM mysql.user mu LEFT JOIN mysql.default_roles USING (USER, HOST) "
+      "WHERE NOT (" MYSQL8_ROLE_HEURISTIC("mu.") ") "
+      "ORDER BY mu.USER, mu.HOST, DEFAULT_ROLE_USER, DEFAULT_ROLE_HOST"))
+    return 1;
+
+  char last_user[MAX_QUOTED_USER_HOST_LEN];
+  last_user[0]= '\0';
+  bool default_role_emitted= false;   /* one already emitted for last_user */
+
+  while ((row= mysql_fetch_row(tableres)))
+  {
+    if (!row[0] || !row[1] || !row[2] || !row[3])
+      continue;
+    const char *r_user= row[0];
+    const char *u_user= row[2], *u_host= row[3];
+
+    char user_host[MAX_QUOTED_USER_HOST_LEN];
+    my_snprintf(user_host, sizeof(user_host), "%s@%s", u_user, u_host);
+
+    if (strcmp(user_host, last_user) != 0)
+    {
+      if (dump_grants(user_host))
+        result= 1;
+      my_snprintf(last_user, sizeof(last_user), "%s", user_host);
+      default_role_emitted= false;
+    }
+
+    if (strcmp(r_user, "NONE") == 0)
+      continue;
+
+    if (default_role_emitted)
+      emit_comment_warning(
+        "# WARNING: %s@%s has multiple default roles in the source; "
+        "MariaDB supports a single default role, dropping %s",
+        u_user, u_host, r_user);
+    else
+    {
+      emit_versioned_wrap_fmt("/*M!100005 ",
+        "SET DEFAULT ROLE %s FOR %s@%s", r_user, u_user, u_host);
+      default_role_emitted= true;
+    }
+  }
+  check_io(md_result_file);
+  mysql_free_result(tableres);
+  return result;
+}
+
+
+/*
+  Run `query` (one quoted role name - 'r' or 'r'@'h' - per row) and dump
+  SHOW GRANTS for each. Shared by the MariaDB and MySQL role-grant passes,
+  which differ only in how they enumerate the roles.
+*/
+static int dump_grants_for_roles(const char *query)
+{
+  MYSQL_ROW row;
+  MYSQL_RES *tableres;
+  int result= 0;
+
+  if (mysql_query_with_error_report(mysql, &tableres, query))
+    return 1;
+
+  while ((row= mysql_fetch_row(tableres)))
+  {
+    if (!row[0])
+      continue;
+    if (dump_grants(row[0]))
+      result= 1;
+  }
+  check_io(md_result_file);
+  mysql_free_result(tableres);
+  return result;
+}
+
+
+/* GRANTS for every MariaDB role with at least one admin. */
+static int dump_role_admin_grants_maria()
+{
+  return dump_grants_for_roles(
+      "SELECT DISTINCT QUOTE(m.role) AS r "
+      "   FROM mysql.roles_mapping m"
+      "   JOIN mysql.user u ON u.user = m.role"
+      "   WHERE is_role='Y'"
+      "     AND Admin_option='Y'"
+      "   ORDER BY m.role");
+}
+
+
+/*
+  GRANTS for every MySQL role. Roles are enumerated by the same
+  locked+passwordless+expired heuristic used everywhere else (MySQL 8 has
+  no is_role flag), so orphan roles - which never appear in role_edges -
+  are covered too. dump_default_roles_mysql dumps the USERS' grants (it
+  excludes this same role set), so the two passes together emit each
+  account's grants exactly once rather than dumping roles twice.
+*/
+static int dump_role_admin_grants_mysql()
+{
+  return dump_grants_for_roles(
+      "SELECT CONCAT(QUOTE(User), '@', QUOTE(Host)) AS r "
+      "FROM mysql.user "
+      "WHERE " MYSQL8_ROLE_HEURISTIC("")
+      " ORDER BY User, Host");
+}
+
+
+/* dump all users, roles, and their grants */
 static int dump_all_users_roles_and_grants()
 {
   MYSQL_ROW row;
   MYSQL_RES *tableres;
   int result= 0;
-  /* Roles added in MariaDB-10.0.5 or MySQL-8.0 */
-  my_bool maria_roles_exist= (mysql_get_server_version(mysql) >= 100005);
-  my_bool mysql_roles_exist= (mysql_get_server_version(mysql) >= 80001) && !maria_roles_exist;
+  /* Roles added in MariaDB-10.0.5 or MySQL-8.0.0. The MySQL threshold
+     matches IS_MYSQL_SERVER so a source that translates also dumps its
+     roles (they can't diverge and silently drop every role). */
+  uint ver= (uint) mysql_get_server_version(mysql);
+  bool maria_roles_exist= (ver >= 100005);
+  bool mysql_roles_exist= IS_MYSQL_SERVER(ver) && !maria_roles_exist;
+  bool roles_exist= maria_roles_exist || mysql_roles_exist;
 
   if (mysql_query_with_error_report(mysql, &tableres,
-                                    "SELECT CONCAT(QUOTE(u.user), '@', QUOTE(u.Host)) AS u "
+                                    "SELECT CONCAT(QUOTE(u.user), '@', QUOTE(u.Host)) AS u, "
+                                    "u.user, u.Host "
                                     "FROM mysql.user u "
-                                    " /*!80001 LEFT JOIN mysql.role_edges e "
+                                    " /*!80000 LEFT JOIN mysql.role_edges e "
                                     "            ON u.user=e.from_user "
                                     "              AND u.host=e.from_host "
-                                    "         WHERE e.from_user IS NULL */"
+                                    "         WHERE e.from_user IS NULL "
+                                    "           AND NOT (" MYSQL8_ROLE_HEURISTIC("u.") ") */"
                                     " /*M!100005 WHERE is_role='N' */"))
     return 1;
   while ((row= mysql_fetch_row(tableres)))
   {
-    char buf[200];
+    char buf[MAX_QUOTED_USER_HOST_LEN];
+    char raw_uh[USERNAME_LENGTH + HOSTNAME_LENGTH + 2];
     if (opt_replace_into)
-      /* Protection against removing the current import user */
-      /* MySQL-8.0 export capability */
-      fprintf(md_result_file,
-        "DELIMITER |\n"
-        "/*M!100101 IF current_user()=%s THEN\n"
-        "  SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO=30001,"
-        " MESSAGE_TEXT=\"Don't remove current user %s'\";\n"
-        "END IF */|\n"
-        "DELIMITER ;\n"
-        "/*!50701 DROP USER IF EXISTS %s */;\n",
-        quote_for_equal(row[0],buf), row[0], row[0]);
+    {
+      /*
+        Self-DROP guard: compare current_user() against the RAW
+        user@host - NOT row[0]'s QUOTE'd form, whose embedded quotes
+        ('user'@'host') would never match current_user()'s bare output.
+        A star-slash in raw_uh would close the M!100101 wrapper early
+        and inject the trailing bytes as SQL on import, so the guard is
+        skipped with a # WARNING in that case; the DROP itself still
+        runs (safely) via emit_versioned_wrap_fmt.
+      */
+      my_snprintf(raw_uh, sizeof(raw_uh), "%s@%s", row[1], row[2]);
+      const char *guard_uh= quote_for_equal(raw_uh, buf);
+      if (has_comment_close(guard_uh))
+        emit_comment_warning(
+          "# WARNING: current-user self-DROP guard skipped: identifier "
+          "contains '*/', which would close the version comment: %s",
+          guard_uh);
+      else
+        /* MESSAGE_TEXT must be a string literal (SIGNAL rejects an
+           expression), so it can't embed the name safely - a '"' or "'"
+           in it would break the literal. Use a fixed message; the guard
+           only fires for the user current_user() already matched, and the
+           dump shows which DROP USER it precedes. */
+        fprintf(md_result_file,
+          "DELIMITER |\n"
+          "/*M!100101 IF current_user()=%s THEN\n"
+          "  SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO=30001,"
+          " MESSAGE_TEXT='Cannot remove the current user during import';\n"
+          "END IF */|\n"
+          "DELIMITER ;\n",
+          guard_uh);
+      emit_versioned_wrap_fmt("/*M!100103 ",
+        "DROP USER IF EXISTS %s", row[0]);
+    }
     if (dump_create_user(row[0]))
       result= 1;
     /* if roles exist, defer dumping grants until after roles created */
-    if (maria_roles_exist || mysql_roles_exist)
+    if (roles_exist)
       continue;
     if (dump_grants(row[0]))
       result= 1;
   }
   mysql_free_result(tableres);
 
-  if (!(maria_roles_exist || mysql_roles_exist))
-    goto exit;
+  if (!roles_exist)
+    return result;
 
   /*
-     Preserve current role active role, in case this dump is imported
+     Preserve the current active role, in case this dump is imported
      in the same connection that assumes the active role at the beginning
      is the same as at the end of the connection. This is so:
 
@@ -4825,134 +6053,40 @@ static int dump_all_users_roles_and_grants()
      have the necessary privileges to grant users to a created role or to
      create new admins for the created role.
 
-     At the end of the import the mariadb_dump_import_role is be dropped,
-     which implicitly drops all its admin aspects of the dropped role.
+     At the end of the import the mariadb_dump_import_role is dropped,
+     which implicitly drops all its admin grants on the new roles.
      This is significantly easier than revoking the ADMIN of each role
      from the current user.
   */
   fputs("SELECT COALESCE(CURRENT_ROLE(),'NONE') into @current_role;\n"
         "CREATE ROLE IF NOT EXISTS mariadb_dump_import_role;\n"
-	"GRANT mariadb_dump_import_role TO CURRENT_USER();\n"
+        "GRANT mariadb_dump_import_role TO CURRENT_USER();\n"
         "SET ROLE mariadb_dump_import_role;\n"
         , md_result_file);
+
   /* No show create role yet, MDEV-22311 */
-  /* Roles, with user admins first, then roles they administer, and recurse on that */
-  if (maria_roles_exist && mysql_query_with_error_report(mysql, &tableres,
-      "WITH RECURSIVE create_role_order AS"
-      "  (SELECT 1 as n, roles_mapping.*"
-      "   FROM mysql.roles_mapping"
-      "   JOIN mysql.user USING (user,host)"
-      "   WHERE is_role='N'"
-      "     AND Admin_option='Y'"
-      "   UNION SELECT c.n+1, r.*"
-      "   FROM create_role_order c"
-      "   JOIN mysql.roles_mapping r ON c.role=r.user"
-      "   AND r.host=''"
-      "   AND r.Admin_option='Y') "
-      "SELECT QUOTE(ROLE) AS r,"
-      "       CONCAT(QUOTE(user),"
-      "	      IF(HOST='', '', CONCAT('@', QUOTE(HOST)))) AS c,"
-      "       Admin_option "
-      "FROM create_role_order ORDER BY n, r, user"))
-    return 1;
-  /*
-     TODO Mysql - misses roles that have no admin or role members.
-     MySQL roles don't require an admin.
-  */
-  if (mysql_roles_exist && mysql_query_with_error_report(mysql, &tableres,
-      "WITH RECURSIVE create_role_order AS"
-      "  (SELECT 1 AS n,"
-      "          re.*"
-      "   FROM mysql.role_edges re"
-      "   JOIN mysql.user u ON re.TO_HOST=u.HOST"
-      "   AND re.TO_USER = u.USER"
-      "   LEFT JOIN mysql.role_edges re2 ON re.TO_USER=re2.FROM_USER"
-      "   AND re2.TO_HOST=re2.FROM_HOST"
-      "   WHERE re2.FROM_USER IS NULL"
-      "   UNION SELECT c.n+1,"
-      "                re.*"
-      "   FROM create_role_order c"
-      "   JOIN mysql.role_edges re ON c.FROM_USER=re.TO_USER"
-      "   AND c.FROM_HOST=re.TO_HOST) "
-      "SELECT CONCAT(QUOTE(FROM_USER), '/*!80001 @', QUOTE(FROM_HOST), '*/') AS r,"
-      "       CONCAT(QUOTE(TO_USER), IF(n=1, CONCAT('@', QUOTE(TO_HOST)),"
-      "                                 CONCAT('/*!80001 @', QUOTE(TO_HOST), ' */'))) AS u,"
-      "       WITH_ADMIN_OPTION "
-      "FROM create_role_order "
-      "ORDER BY n,"
-      "         FROM_USER,"
-      "         FROM_HOST,"
-      "         TO_USER,"
-      "         TO_HOST,"
-      "         WITH_ADMIN_OPTION"))
-    return 1;
-  while ((row= mysql_fetch_row(tableres)))
+  /* Roles, with user admins first, then roles they administer, recursing.
+     If a helper fails mid-stream we still need to emit the role-drop
+     epilogue, otherwise the dump file leaves mariadb_dump_import_role
+     stranded with admin privileges over every role created so far. */
+  if (maria_roles_exist)
   {
-    /* MySQL-8.0 export capability */
-    if (opt_replace_into)
-      fprintf(md_result_file,
-        "/*!80001 DROP ROLE IF EXISTS %s */;\n", row[0]);
-    fprintf(md_result_file,
-      "/*!80001 CREATE ROLE %s%s */;\n", opt_ignore ? "IF NOT EXISTS " : "", row[0]);
-    /* By default created with current role */
-    fprintf(md_result_file,
-      "%sROLE %s%s WITH ADMIN mariadb_dump_import_role */;\n",
-      opt_replace_into ? "/*M!100103 CREATE OR REPLACE ": "/*M!100005 CREATE ",
-      opt_ignore ? "IF NOT EXISTS " : "", row[0]);
-    fprintf(md_result_file, "/*M!100005 GRANT %s TO %s%s*/;\n",
-            row[0], row[1], (row[2][0] == 'Y') ? " WITH ADMIN OPTION " : "");
+    if (dump_role_hierarchy_maria())     { result= 1; goto role_epilogue; }
+    result|= dump_default_roles_maria();
+    result|= dump_role_admin_grants_maria();
   }
-  mysql_free_result(tableres);
-
-  /* users and their default role */
-  if (maria_roles_exist && mysql_query_with_error_report(mysql, &tableres,
-      "select IF(default_role='', 'NONE', QUOTE(default_role)) as r,"
-      "concat(QUOTE(User), '@', QUOTE(Host)) as u FROM mysql.user  "
-      "/*M!100005 WHERE is_role='N' */"))
-    return 1;
-  if (mysql_roles_exist && mysql_query_with_error_report(mysql, &tableres,
-      "SELECT IF(DEFAULT_ROLE_HOST IS NULL, 'NONE', CONCAT(QUOTE(DEFAULT_ROLE_USER),"
-      "                                                    '@', QUOTE(DEFAULT_ROLE_HOST))) as r,"
-      "  CONCAT(QUOTE(mu.USER),'@',QUOTE(mu.HOST)) as u "
-      "FROM mysql.user mu LEFT JOIN mysql.default_roles using (USER, HOST)"))
+  else /* mysql_roles_exist */
   {
-    mysql_free_result(tableres);
-    return 1;
+    if (dump_role_hierarchy_mysql())     { result= 1; goto role_epilogue; }
+    result|= dump_default_roles_mysql();
+    result|= dump_role_admin_grants_mysql();
   }
 
-  while ((row= mysql_fetch_row(tableres)))
-  {
-    if (dump_grants(row[1]))
-      result= 1;
-    fprintf(md_result_file, "/*M!100005 SET DEFAULT ROLE %s FOR %s */;\n", row[0], row[1]);
-    fprintf(md_result_file, "/*!80001 ALTER USER %s DEFAULT ROLE %s */;\n", row[1], row[0]);
-  }
-  mysql_free_result(tableres);
-
-  if (maria_roles_exist && mysql_query_with_error_report(mysql, &tableres,
-      "SELECT DISTINCT QUOTE(m.role) AS r "
-      "   FROM mysql.roles_mapping m"
-      "   JOIN mysql.user u ON u.user = m.role"
-      "   WHERE is_role='Y'"
-      "     AND Admin_option='Y'"
-      "   ORDER BY m.role"))
-    return 1;
-  if (mysql_roles_exist && mysql_query_with_error_report(mysql, &tableres,
-      "SELECT DISTINCT CONCAT(QUOTE(FROM_USER),'@', QUOTE(FROM_HOST)) AS r "
-      "FROM mysql.role_edges"))
-    return 1;
-  while ((row= mysql_fetch_row(tableres)))
-  {
-    if (dump_grants(row[0]))
-      result= 1;
-  }
-  mysql_free_result(tableres);
-  /* switch back */
+role_epilogue:
   fputs("SET ROLE NONE;\n"
         "DROP ROLE mariadb_dump_import_role;\n"
         "/*M!100203 EXECUTE IMMEDIATE CONCAT('SET ROLE ', @current_role) */;\n",
         md_result_file);
-exit:
 
   return result;
 }
