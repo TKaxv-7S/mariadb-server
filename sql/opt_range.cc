@@ -12471,6 +12471,7 @@ ha_rows check_quick_select(PARAM *param, uint idx, ha_rows limit,
   ha_rows replay_ctx_max_index_blocks;
   ha_rows replay_ctx_max_row_blocks;
   bool replay_ctx_rc;
+  TABLE::OPT_RANGE *range= param->table->opt_range + keynr;
   DBUG_ENTER("check_quick_select");
 
   /* Range not calculated yet */
@@ -12534,7 +12535,6 @@ ha_rows check_quick_select(PARAM *param, uint idx, ha_rows limit,
   param->quick_rows[keynr]= rows;
   if (rows != HA_POS_ERROR)
   {
-    TABLE::OPT_RANGE *range= param->table->opt_range + keynr;
     ha_rows table_records= param->table->stat_records();
     if (rows > table_records)
     {
@@ -12559,15 +12559,6 @@ ha_rows check_quick_select(PARAM *param, uint idx, ha_rows limit,
         file->index_blocks(keynr, param->range_count, rows);
     range->max_row_blocks=
         MY_MIN(file->row_blocks(), rows * file->stats.block_size / IO_SIZE);
-
-    if (Optimizer_context_recorder *rec= param->thd->opt_ctx_recorder)
-    {
-      Range_print_enumerator_impl range_iter(param, idx, tree);
-      rec->record_multi_range_read_info_const(param->table->pos_in_table_list,
-                                              keynr, &range_iter, rows, cost,
-                                              range->max_index_blocks,
-                                              range->max_row_blocks);
-    }
 
     if (update_tbl_stats)
     {
@@ -12595,6 +12586,14 @@ ha_rows check_quick_select(PARAM *param, uint idx, ha_rows limit,
       range->first_key_part_has_only_one_value=
         check_if_first_key_part_has_only_one_value(tree);
     }
+  }
+
+  if (Optimizer_context_recorder *rec= param->thd->opt_ctx_recorder)
+  {
+    Range_print_enumerator_impl range_iter(param, idx, tree);
+    rec->record_multi_range_read_info_const(
+        param->table->pos_in_table_list, keynr, &range_iter, rows, cost,
+        &range->max_index_blocks, &range->max_row_blocks);
   }
 
   /* Figure out if the key scan is ROR (returns rows in ROWID order) or not */
