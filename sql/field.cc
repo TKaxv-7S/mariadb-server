@@ -9199,7 +9199,7 @@ Field *Field_blob::new_key_field(MEM_ROOT *root, TABLE *new_table,
 Binlog_type_info Field_blob::binlog_type_info() const
 {
   DBUG_ASSERT(Field_blob::type() == binlog_type());
-  return Binlog_type_info(Field_blob::type(), pack_length_no_ptr(), 1,
+  return Binlog_type_info(Field_blob::type(), length_size(), 1,
                           charset());
 }
 
@@ -9475,7 +9475,7 @@ longlong Field_blob_compressed::val_int(void)
 Binlog_type_info Field_blob_compressed::binlog_type_info() const
 {
   return Binlog_type_info(Field_blob_compressed::binlog_type(),
-                          pack_length_no_ptr(), 1, charset());
+                          length_size(), 1, charset());
 }
 
 

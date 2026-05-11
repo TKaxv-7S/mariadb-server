@@ -966,7 +966,7 @@ uint Field_geom::get_key_image(uchar *buff,uint length, const uchar *ptr_arg,
 Binlog_type_info Field_geom::binlog_type_info() const
 {
   DBUG_ASSERT(Field_geom::type() == binlog_type());
-  return Binlog_type_info(Field_geom::type(), pack_length_no_ptr(), 1,
+  return Binlog_type_info(Field_geom::type(), length_size(), 1,
                           field_charset(), type_handler_geom()->geometry_type());
 }
 

@@ -713,7 +713,7 @@ int heap_prepare_hp_create_info(TABLE *table_arg, bool internal_table,
             seg->type == HA_KEYTYPE_VARTEXT2)
           seg->type= (seg->type == HA_KEYTYPE_VARBINARY2) ?
                       HA_KEYTYPE_VARBINARY4 : HA_KEYTYPE_VARTEXT4;
-        seg->bit_start= ((Field_blob*) field)->pack_length_no_ptr();
+        seg->bit_start= ((Field_blob*) field)->length_size();
         seg->length= 4 + portable_sizeof_char_ptr;
         DBUG_ASSERT(seg->type == HA_KEYTYPE_VARBINARY4 ||
                     seg->type == HA_KEYTYPE_VARTEXT4);
@@ -784,7 +784,7 @@ int heap_prepare_hp_create_info(TABLE *table_arg, bool internal_table,
 
       blob_descs[blob_count].offset=
         (uint) blob->offset(table_arg->record[0]);
-      blob_descs[blob_count].packlength= blob->pack_length_no_ptr();
+      blob_descs[blob_count].packlength= blob->length_size();
       blob_count++;
     }
     hp_create_info->blob_descs= blob_descs;

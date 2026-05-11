@@ -174,9 +174,9 @@ static void test_distinct_key_truncation()
   ok(kd->seg[0].length == 4 + portable_sizeof_char_ptr,
      "distinct_key_truncation: seg->length = %u (expected %u = 4+ptr)",
      (uint) kd->seg[0].length, (uint)(4 + portable_sizeof_char_ptr));
-  ok(kd->seg[0].bit_start == bf.pack_length_no_ptr(),
+  ok(kd->seg[0].bit_start == bf.length_size(),
      "distinct_key_truncation: seg->bit_start = %u (expected %u = packlength)",
-     (uint) kd->seg[0].bit_start, (uint) bf.pack_length_no_ptr());
+     (uint) kd->seg[0].bit_start, (uint) bf.length_size());
   ok(kd->seg[0].flag & HA_BLOB_PART,
      "distinct_key_truncation: seg->flag (0x%x) has HA_BLOB_PART",
      (uint) kd->seg[0].flag);

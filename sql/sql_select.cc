@@ -21440,7 +21440,7 @@ bool Create_tmp_table::finalize(THD *thd,
         */
         uint32 key_field_length= m_key_part_info->length;
         if ((field->flags & BLOB_FLAG) &&
-            key_field_length <= ((Field_blob*)field)->pack_length_no_ptr())
+            key_field_length <= ((Field_blob*)field)->length_size())
         {
           key_field_length= MY_MIN((*cur_group->item)->max_length,
                                    (uint32)(MAX_BLOB_WIDTH -
@@ -22099,7 +22099,7 @@ bool create_internal_tmp_table(TABLE *table, KEY *keyinfo,
 	seg->type=
 	((keyinfo->key_part[i].key_type & FIELDFLAG_BINARY) ?
 	 HA_KEYTYPE_VARBINARY2 : HA_KEYTYPE_VARTEXT2);
-	seg->bit_start= (uint8) ((Field_blob*) field)->pack_length_no_ptr();
+	seg->bit_start= (uint8) ((Field_blob*) field)->length_size();
 	seg->flag= HA_BLOB_PART;
 	seg->length=0;			// Whole blob in unique constraint
       }
