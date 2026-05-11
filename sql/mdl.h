@@ -551,6 +551,12 @@ public:
   const char *m_src_file;
   uint m_src_line;
 
+  /**
+    If set, this callback is used to determine if this request can
+    ignore a waiting higher priority lock.
+  */
+  bool (*is_teammate_callback)(const THD*, const THD*);
+
 public:
 
   static void *operator new(size_t size, MEM_ROOT *mem_root) throw ()
@@ -616,7 +622,8 @@ public:
     return *this;
   }
   /* Another piece of ugliness for TABLE_LIST constructor */
-  MDL_request(): type(MDL_NOT_INITIALIZED), ticket(NULL) {}
+  MDL_request(bool ignore_arg= false):
+    type(MDL_NOT_INITIALIZED), ticket(NULL), is_teammate_callback(nullptr) {}
 
   MDL_request(const MDL_request *rhs)
     :type(rhs->type),

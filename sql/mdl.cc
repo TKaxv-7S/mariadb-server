@@ -1022,6 +1022,7 @@ void MDL_request::init_with_source(MDL_key::enum_mdl_namespace mdl_namespace,
   ticket= NULL;
   m_src_file= src_file;
   m_src_line= src_line;
+  is_teammate_callback= nullptr;
 }
 
 
@@ -1046,6 +1047,7 @@ void MDL_request::init_by_key_with_source(const MDL_key *key_arg,
   ticket= NULL;
   m_src_file= src_file;
   m_src_line= src_line;
+  is_teammate_callback= nullptr;
 }
 
 
@@ -2126,8 +2128,36 @@ MDL_context::try_acquire_lock_impl(MDL_request *mdl_request,
                                   mdl_request->m_src_line);
 
   ticket->m_lock= lock;
+  /*
+    When so specified in mdl_request, compute the grant lock decision
+    basing on whether there is a grantee which is a member of
+    requestor's "team" that logically share the lock. The requestor
+    provides with a method to identify the teamship.
+  */
+  bool do_grant_lock= false;
+  if (mdl_request->is_teammate_callback)
+  {
+    // known locks that can be granted on the basis of team membership
+    DBUG_ASSERT(mdl_request->key.mdl_namespace() == MDL_key::BACKUP);
 
-  if (lock->can_grant_lock(mdl_request->type, this, false))
+    const THD *requestor_thd= this->get_thd();
+    /*
+      Scan the granted list to find any one holder which
+      the current requestor can team up with.
+    */
+    for (const auto &ticket : lock->m_granted)
+    {
+      THD *holder_thd= ticket.get_ctx()->get_thd();
+      if (holder_thd &&
+	  ticket.get_type() == MDL_BACKUP_COMMIT &&
+	  mdl_request->is_teammate_callback(holder_thd, requestor_thd))
+      {
+        do_grant_lock= true;
+        break; // Found one teammate that is enough to ignore priority
+      }
+    }
+  }
+  if (do_grant_lock || lock->can_grant_lock(mdl_request->type, this, false))
   {
     if (metadata_lock_info_plugin_loaded)
       ticket->m_time= microsecond_interval_timer();

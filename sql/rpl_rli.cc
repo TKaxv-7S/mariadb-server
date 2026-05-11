@@ -2286,6 +2286,8 @@ void rpl_group_info::cleanup_context(THD *thd, bool error, bool keep_domain_owne
     trans_rollback_stmt(thd); // if a "statement transaction"
     /* trans_rollback() also resets OPTION_GTID_BEGIN */
     trans_rollback(thd);      // if a "real transaction"
+
+    DBUG_ASSERT(!thd->backup_commit_lock); // trans_rollback must've taken care
     /*
       Now that we have rolled back the transaction, make sure we do not
       erroneously update the GTID position.
@@ -2437,6 +2439,45 @@ void rpl_group_info::slave_close_thread_tables(THD *thd)
   DBUG_VOID_RETURN;
 }
 
+/*
+  The method computes weather the requestor's replicatated transaction
+  can be grouped with the holder's one to share BACKUP MDL.
+
+  The method returns
+    false
+  when the holder is not parallel slave transaction, or
+  when its (multi-) source or gtid domain are different, or the holder has lesser
+  gtid sequence number. The latter condtion is safe for parallel slave
+  performance. It merely forces such requestors to enqueue its S BACKUP DML
+  after any waiting locks which contributes to fairness
+  of BACKUP MDL acquision.
+
+  Otherwise when
+     rgi_hol->gtid_sub_id > rgi_req->gtid_sub_id
+  it returns
+    true.
+*/
+bool
+rpl_group_info::ignore_mdl_priority(const THD* holder, const THD* requestor)
+{
+  DBUG_ASSERT(requestor->system_thread == SYSTEM_THREAD_SLAVE_SQL);
+  DBUG_ASSERT(requestor->rgi_slave->is_parallel_exec); // func is for parallel
+
+  rpl_group_info *rgi_hol= holder->rgi_slave;
+  rpl_group_info *rgi_req= requestor->rgi_slave;
+
+  if (unlikely(rgi_req->gtid_sub_id == 0))
+    return false; ; // requestor is not a slave worker executing commit
+
+  bool do_ignore=
+    holder->system_thread == SYSTEM_THREAD_SLAVE_SQL &&
+    (rgi_hol->rli == rgi_req->rli &&
+     rgi_hol->current_gtid.domain_id == rgi_req->current_gtid.domain_id &&
+     rgi_hol->gtid_sub_id > 0 &&
+     rgi_hol->gtid_sub_id > rgi_req->gtid_sub_id);
+
+  return do_ignore;
+}
 
 
 static void
