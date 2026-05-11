@@ -4561,10 +4561,10 @@ public:
 
      @returns The length of the raw data itself without the pointer.
   */
-  uint32 pack_length_no_ptr() const
+  uint32 length_size() const override
   { return (uint32) (packlength); }
   void set_pack_length(uint32 packlength_arg);
-  uint row_pack_length() const override { return pack_length_no_ptr(); }
+  uint row_pack_length() const override { return packlength; }
   uint32 sort_length() const override;
   uint32 sort_suffix_length() const override;
   uint32 value_length() override { return get_length(); }
