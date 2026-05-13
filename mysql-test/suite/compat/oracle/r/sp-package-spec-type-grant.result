@@ -1,0 +1,367 @@
+#
+# MDEV-39587 Package-wide TYPE for variable declarations
+#
+SET sql_mode=ORACLE;
+CREATE DATABASE test1;
+CREATE DATABASE test2;
+CREATE USER user1@localhost;
+CREATE USER user2@localhost;
+GRANT CREATE ROUTINE ON test1.* TO user1@localhost;
+GRANT CREATE ROUTINE ON test2.* TO user1@localhost;
+GRANT CREATE ROUTINE ON test1.* TO user2@localhost;
+GRANT CREATE ROUTINE ON test2.* TO user2@localhost;
+connect  conn_user1, localhost, user1,, test1;
+SET sql_mode=ORACLE;
+connect  conn_user2, localhost, user2,, test1;
+SET sql_mode=ORACLE;
+connection conn_user1;
+CREATE PACKAGE pkg1 AS
+TYPE rec0_t IS RECORD (a INT, b VARCHAR(10));
+TYPE cur0_t IS REF CURSOR RETURN rec0_t;
+END;
+$$
+connection conn_user1;
+# Start of allowed.inc
+SELECT CURRENT_USER;
+CURRENT_USER
+user1@localhost
+#
+# ACL_NONE + same user + same DB
+#
+USE test1;
+# ACL_NONE + same user + same DB + PACKAGE type in the same PACKAGE BODY
+CREATE PACKAGE BODY pkg1 AS
+r0 pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE BODY pkg1;
+CREATE PACKAGE BODY pkg1 AS
+r0 test1.pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE BODY pkg1;
+# ACL_NONE + same user + same DB + PACKAGE type in another PACKAGE
+CREATE PACKAGE pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE pkg2;
+CREATE PACKAGE pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE pkg2;
+# ACL_NONE + same user + same DB + PACKAGE type in another PACKAGE BODY
+CREATE PACKAGE pkg2 AS
+END;
+$$
+CREATE PACKAGE BODY pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE pkg2;
+CREATE PACKAGE pkg2 AS
+END;
+$$
+CREATE PACKAGE BODY pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE pkg2;
+# ACL_NONE + same user + same DB + PACKAGE type in a schema routine
+CREATE PROCEDURE p1 AS
+TYPE cur1_t IS REF CURSOR RETURN pkg1.rec0_t;
+BEGIN
+NULL;
+END;
+$$
+DROP PROCEDURE p1;
+CREATE PROCEDURE p1 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+BEGIN
+NULL;
+END;
+$$
+DROP PROCEDURE p1;
+#
+# ACL_NONE + same user + different DB
+#
+USE test2;
+# ACL_NONE + same user + different DB + PACKAGE type in another PACKAGE
+CREATE PACKAGE pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE pkg2;
+# ACL_NONE + same user + different DB + PACKAGE type in another PACKAGE BODY
+CREATE PACKAGE pkg2 AS
+END;
+$$
+CREATE PACKAGE BODY pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE pkg2;
+# ACL_NONE + same user + different DB + PACKAGE type in a schema routine
+CREATE PROCEDURE p1 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+BEGIN
+NULL;
+END;
+$$
+DROP PROCEDURE p1;
+# End of allowed.inc
+connection conn_user2;
+# Start of denied.inc
+SELECT CURRENT_USER;
+CURRENT_USER
+user2@localhost
+#
+# ACL_NONE + different user + same DB
+#
+connection conn_user2;
+USE test1;
+# ACL_NONE + different user + same DB + PACKAGE type in the same PACKAGE BODY
+CREATE PACKAGE BODY pkg1 AS
+r0 pkg1.rec0_t;
+END;
+$$
+ERROR 42000: execute command denied to user 'user2'@'localhost' for routine 'test1.pkg1'
+CREATE PACKAGE BODY pkg1 AS
+r0 test1.pkg1.rec0_t;
+END;
+$$
+ERROR 42000: execute command denied to user 'user2'@'localhost' for routine 'test1.pkg1'
+# ACL_NONE + different user + same DB + PACKAGE type in another PACKAGE
+CREATE PACKAGE pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN pkg1.rec0_t;
+END;
+$$
+ERROR 42000: execute command denied to user 'user2'@'localhost' for routine 'test1.pkg1'
+CREATE PACKAGE pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+END;
+$$
+ERROR 42000: execute command denied to user 'user2'@'localhost' for routine 'test1.pkg1'
+# ACL_NONE + different user + same DB + PACKAGE type in another PACKAGE BODY
+CREATE PACKAGE pkg2 AS
+END;
+$$
+CREATE PACKAGE BODY pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN pkg1.rec0_t;
+END;
+$$
+ERROR 42000: execute command denied to user 'user2'@'localhost' for routine 'test1.pkg1'
+DROP PACKAGE pkg2;
+CREATE PACKAGE pkg2 AS
+END;
+$$
+CREATE PACKAGE BODY pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+END;
+$$
+ERROR 42000: execute command denied to user 'user2'@'localhost' for routine 'test1.pkg1'
+DROP PACKAGE pkg2;
+# ACL_NONE + different user + same DB + PACKAGE type in a schema routine
+CREATE PROCEDURE p1 AS
+TYPE cur1_t IS REF CURSOR RETURN pkg1.rec0_t;
+BEGIN
+NULL;
+END;
+$$
+ERROR 42000: execute command denied to user 'user2'@'localhost' for routine 'test1.pkg1'
+CREATE PROCEDURE p1 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+BEGIN
+NULL;
+END;
+$$
+ERROR 42000: execute command denied to user 'user2'@'localhost' for routine 'test1.pkg1'
+#
+# ACL_NONE + different user + different DB
+#
+USE test2;
+ACL_NONE + different user + different DB + PACKAGE type in another PACKAGE
+CREATE PACKAGE pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+END;
+$$
+ERROR 42000: execute command denied to user 'user2'@'localhost' for routine 'test1.pkg1'
+ACL_NONE + different user + different DB + PACKAGE type in another PACKAGE BODY
+CREATE PACKAGE pkg2 AS
+END;
+$$
+CREATE PACKAGE BODY pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+END;
+$$
+ERROR 42000: execute command denied to user 'user2'@'localhost' for routine 'test1.pkg1'
+DROP PACKAGE pkg2;
+ACL_NONE + different user + different DB + PACKAGE type in a schema routine
+CREATE PROCEDURE p1 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+BEGIN
+NULL;
+END;
+$$
+ERROR 42000: execute command denied to user 'user2'@'localhost' for routine 'test1.pkg1'
+# End of denied.inc
+connection default;
+GRANT EXECUTE ON PACKAGE test1.pkg1 TO user2@localhost;
+connection conn_user2;
+# Start of allowed.inc
+SELECT CURRENT_USER;
+CURRENT_USER
+user2@localhost
+#
+# ACL_EXEC_test1.pkg1 + different user + same DB
+#
+USE test1;
+# ACL_EXEC_test1.pkg1 + different user + same DB + PACKAGE type in the same PACKAGE BODY
+CREATE PACKAGE BODY pkg1 AS
+r0 pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE BODY pkg1;
+CREATE PACKAGE BODY pkg1 AS
+r0 test1.pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE BODY pkg1;
+# ACL_EXEC_test1.pkg1 + different user + same DB + PACKAGE type in another PACKAGE
+CREATE PACKAGE pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE pkg2;
+CREATE PACKAGE pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE pkg2;
+# ACL_EXEC_test1.pkg1 + different user + same DB + PACKAGE type in another PACKAGE BODY
+CREATE PACKAGE pkg2 AS
+END;
+$$
+CREATE PACKAGE BODY pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE pkg2;
+CREATE PACKAGE pkg2 AS
+END;
+$$
+CREATE PACKAGE BODY pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE pkg2;
+# ACL_EXEC_test1.pkg1 + different user + same DB + PACKAGE type in a schema routine
+CREATE PROCEDURE p1 AS
+TYPE cur1_t IS REF CURSOR RETURN pkg1.rec0_t;
+BEGIN
+NULL;
+END;
+$$
+DROP PROCEDURE p1;
+CREATE PROCEDURE p1 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+BEGIN
+NULL;
+END;
+$$
+DROP PROCEDURE p1;
+#
+# ACL_EXEC_test1.pkg1 + different user + different DB
+#
+USE test2;
+# ACL_EXEC_test1.pkg1 + different user + different DB + PACKAGE type in another PACKAGE
+CREATE PACKAGE pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE pkg2;
+# ACL_EXEC_test1.pkg1 + different user + different DB + PACKAGE type in another PACKAGE BODY
+CREATE PACKAGE pkg2 AS
+END;
+$$
+CREATE PACKAGE BODY pkg2 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+END;
+$$
+DROP PACKAGE pkg2;
+# ACL_EXEC_test1.pkg1 + different user + different DB + PACKAGE type in a schema routine
+CREATE PROCEDURE p1 AS
+TYPE cur1_t IS REF CURSOR RETURN test1.pkg1.rec0_t;
+BEGIN
+NULL;
+END;
+$$
+DROP PROCEDURE p1;
+# End of allowed.inc
+connection default;
+REVOKE EXECUTE ON PACKAGE test1.pkg1 FROM user2@localhost;
+connection default;
+disconnect conn_user1;
+disconnect conn_user2;
+DROP USER user1@localhost;
+DROP USER user2@localhost;
+DROP PACKAGE test1.pkg1;
+DROP DATABASE test1;
+DROP DATABASE test2;
+#
+# MDEV-40136 User without any privileges on the package schema can declare and use the package's record types
+#
+CREATE DATABASE secdb;
+CREATE PACKAGE secdb.pkg AS
+TYPE rec_t IS RECORD (a INT, secret VARCHAR(30));
+FUNCTION f RETURN INT;
+END;
+$$
+CREATE PACKAGE BODY secdb.pkg AS
+FUNCTION f RETURN INT AS
+BEGIN
+RETURN 42;
+END;
+END;
+$$
+CREATE DATABASE appdb;
+CREATE USER u_none@localhost;
+GRANT ALL ON appdb.* TO u_none@localhost;
+connect  cnone, localhost, u_none,, appdb;
+SET sql_mode=ORACLE;
+CREATE PROCEDURE appdb.p AS r secdb.pkg.rec_t;
+BEGIN
+r.a:=1;
+r.secret:='x';
+SELECT r.a;
+END;
+$$
+ERROR 42000: execute command denied to user 'u_none'@'localhost' for routine 'secdb.pkg'
+connection default;
+GRANT EXECUTE ON PACKAGE secdb.pkg TO u_none@localhost;
+connection cnone;
+CREATE PROCEDURE
+appdb.p AS r secdb.pkg.rec_t;
+BEGIN
+r.a:=1;
+r.secret:='x';
+SELECT r.a;
+END;
+$$
+CALL appdb.p;
+r.a
+1
+SELECT secdb.pkg.f();
+ERROR 42000: execute command denied to user 'u_none'@'localhost' for routine 'secdb.pkg'
+connection default;
+GRANT EXECUTE ON PACKAGE BODY secdb.pkg TO u_none@localhost;
+connection cnone;
+SELECT secdb.pkg.f();
+secdb.pkg.f()
+42
+connection default;
+disconnect cnone;
+DROP USER u_none@localhost;
+DROP DATABASE appdb;
+DROP DATABASE secdb;
