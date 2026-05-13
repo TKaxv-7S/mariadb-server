@@ -31,10 +31,6 @@
 #include "heapdef.h"
 #include <string.h>
 
-
-
-
-
 /*
   Try to reclaim deleted records at the tail of the HP_BLOCK tree.
 
@@ -188,7 +184,6 @@ static void hp_write_run_data(HP_SHARE *share, const uchar *data,
   uint32 off= *offset;
   uint32 remaining= data_len - off;
   uint32 chunk;
-  uint16 rec;
 
   if (format & HP_ROW_SINGLE_REC)
   {
@@ -205,13 +200,11 @@ static void hp_write_run_data(HP_SHARE *share, const uchar *data,
     return;
   }
 
-  {
-    /* First record: run header + flags byte */
-    *((uchar**) run_start)= NULL;
-    int2store(run_start + sizeof(uchar*), run_rec_count);
-    run_start[visible]= HP_ROW_ACTIVE | HP_ROW_IS_CONT |
-                         (format & (HP_ROW_CONT_ZEROCOPY | HP_ROW_MULTIPLE_REC));
-  }
+  /* First record: run header + flags byte */
+  *((uchar**) run_start)= NULL;
+  int2store(run_start + sizeof(uchar*), run_rec_count);
+  run_start[visible]= HP_ROW_ACTIVE | HP_ROW_IS_CONT |
+    (format & (HP_ROW_CONT_ZEROCOPY | HP_ROW_MULTIPLE_REC));
 
   /*
     We come here when we need data in the initial run block.
@@ -233,15 +226,19 @@ static void hp_write_run_data(HP_SHARE *share, const uchar *data,
     for single-run blobs (Case B).
   */
   run_start+= recbuffer;
-  for (rec= 1; rec < run_rec_count - 1; rec++, run_start+= recbuffer)
+  if (run_rec_count > 2)
   {
-    DBUG_ASSERT(remaining > recbuffer);
-    memcpy(run_start, data + off, recbuffer);
-    off+= recbuffer;
-    remaining-= recbuffer;
+    /* Copy all remaining blocks except the last one */
+    uint data_length= (run_rec_count - 2) * recbuffer;
+    DBUG_ASSERT(remaining > data_length);
+    memcpy(run_start, data + off, data_length);
+    run_start+= data_length;
+    off+= data_length;
+    remaining-= data_length;
   }
-  if (rec < run_rec_count)
+  if (run_rec_count > 1)
   {
+    /* Copy last, likely part block */
     DBUG_ASSERT(remaining != 0);
     chunk= remaining < recbuffer ? remaining : recbuffer;
     memcpy(run_start, data + off, chunk);
@@ -376,11 +373,12 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
       for (; pos ; pos= *((uchar**) pos))
       {
         /*
-          Only check descending direction: hp_free_run_chain() frees records
-          in ascending address order (j=0..N), so LIFO pushes them onto the
-          delete list in reverse - consecutive delete list entries have descending
-          addresses.  Ascending adjacency from unrelated deletes is ignored
-          intentionally; we only recover runs that were freed together.
+          Only check descending direction: hp_free_run_chain() frees
+          records in ascending address order (j=0..N), so LIFO pushes
+          them onto the delete list in reverse - consecutive delete
+          list entries have descending addresses.  Ascending adjacency
+          from unrelated deletes is ignored intentionally; we only
+          recover runs that were freed together.
         */
         if (run_count == total_records_needed)
           break;                           /* Use this run */
@@ -598,7 +596,8 @@ int hp_write_blobs(HP_INFO *info, const uchar *record, uchar *pos)
     }
 
     has_blob_data= TRUE;
-    memcpy(&data_ptr, record + desc->offset + desc->packlength, sizeof(data_ptr));
+    memcpy(&data_ptr, record + desc->offset + desc->packlength,
+           sizeof(data_ptr));
 
     if (hp_write_one_blob(share, data_ptr, data_len, &first_run))
     {
@@ -619,7 +618,8 @@ int hp_write_blobs(HP_INFO *info, const uchar *record, uchar *pos)
       DBUG_RETURN(my_errno);
     }
 
-    memcpy(pos + desc->offset + desc->packlength, &first_run, sizeof(first_run));
+    memcpy(pos + desc->offset + desc->packlength, &first_run,
+           sizeof(first_run));
   }
 
   pos[share->visible]= has_blob_data ?

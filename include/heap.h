@@ -146,29 +146,29 @@ typedef struct st_heap_share
   ulonglong auto_increment;
   ulong min_records,max_records;	/* Params to open */
   ulong records;			/* Logical (primary) record count */
-  ulong total_records;         /* All active records (primary + blob continuation) */
+  ulong total_records;   /* All active records (primary + blob continuation) */
   ulong blength;			/* records rounded up to 2^n */
   ulong deleted;			/* Deleted records in database */
   uint key_stat_version;                /* version to indicate insert/delete */
   uint key_version;                     /* Updated on key change */
   uint file_version;                    /* Update on clear */
   uint reclength;			/* Length of one record */
-  uint visible;                         /* Offset to the flags byte (active/deleted/continuation) */
+  uint visible;     /* Offset to the flags byte (active/deleted/continuation) */
   uint changed;
   uint keys,max_key_length;
   uint currently_disabled_keys;    /* saved value from "keys" when disabled */
   uint open_count;
-  uint blob_count;             /* Number of blob columns */
-  uchar *del_link;			/* Link to next block with del. rec */
-  HP_BLOB_DESC *blob_descs;    /* Array of blob column descriptors */
-  char * name;			/* Name of "memory-file" */
-  time_t create_time;
-  THR_LOCK lock;
-  my_bool delete_on_close;
-  my_bool internal;                     /* Internal temporary table */
-  LIST open_list;
+  uint blob_count;                      /* Number of blob columns */
   uint auto_key;
   uint auto_key_type;			/* real type of the auto key segment */
+  uchar *del_link;			/* Link to next block with del. rec */
+  HP_BLOB_DESC *blob_descs;             /* Array of blob column descriptors */
+  char * name;			        /* Name of "memory-file" */
+  time_t create_time;
+  THR_LOCK lock;
+  LIST open_list;
+  my_bool delete_on_close;
+  my_bool internal;                     /* Internal temporary table */
 } HP_SHARE;
 
 struct st_hp_hash_info;
@@ -179,12 +179,15 @@ typedef struct st_heap_info
   uchar *current_ptr;
   struct st_hp_hash_info *current_hash_ptr;
   ulong current_record,next_block;
+  /* Hash from last hp_search(), reused by hp_search_next() */
+  ulong last_hash_of_key;
   int lastinx,errkey;
   int  mode;				/* Mode of file (READONLY..) */
   uint opt_flag,update;
+  enum ha_rkey_function last_find_flag;
   uchar *lastkey;			/* Last used key with rkey */
   uchar *recbuf;                         /* Record buffer for rb-tree keys */
-  enum ha_rkey_function last_find_flag;
+  uchar *blob_buff;                      /* Reassembly buffer for blob reads */
   TREE_ELEMENT *parents[MAX_TREE_HEIGHT+1];
   TREE_ELEMENT **last_pos;
   uint key_version;                     /* Version at last read */
@@ -193,8 +196,6 @@ typedef struct st_heap_info
   uint32 blob_buff_len;        /* Current allocated size of blob_buff */
   my_bool implicit_emptied;
   my_bool has_zerocopy_blobs;  /* Last hp_read_blobs produced zero-copy ptrs */
-  uchar *blob_buff;            /* Reassembly buffer for blob reads */
-  ulong last_hash_of_key;      /* Hash from last hp_search(), reused by hp_search_next() */
   THR_LOCK_DATA lock;
   LIST open_list;
 } HP_INFO;
@@ -204,15 +205,15 @@ typedef struct st_heap_create_info
 {
   HP_KEYDEF *keydef;
   HP_BLOB_DESC *blob_descs;
+  ulonglong max_table_size;
+  ulonglong auto_increment;
+  ulong max_records;
+  ulong min_records;
   uint auto_key;                        /* keynr [1 - maxkey] for auto key */
   uint auto_key_type;
   uint keys;
   uint reclength;
   uint blob_count;
-  ulong max_records;
-  ulong min_records;
-  ulonglong max_table_size;
-  ulonglong auto_increment;
   my_bool with_auto_increment;
   my_bool internal_table;
   /*
