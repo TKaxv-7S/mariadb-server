@@ -57,6 +57,8 @@ static void hp_shrink_tail(HP_SHARE *share)
   HP_BLOCK *block= &share->block;
   uint recbuffer= block->recbuffer;
   ulong records_in_block= block->records_in_block;
+  ulong block_pos;
+  uchar *last_blocks, *tail_pos;
 
   DBUG_ASSERT(share->total_records + share->deleted ==
               block->last_allocated);
@@ -64,39 +66,46 @@ static void hp_shrink_tail(HP_SHARE *share)
   if (block->last_allocated > block->high_water_allocated)
     block->high_water_allocated= block->last_allocated;
 
-  while (share->del_link && block->last_allocated > 0)
+  if (!share->del_link)
+    return;
+  DBUG_ASSERT(block->last_allocated);
+
+  if (!(block_pos= block->last_allocated % records_in_block))
   {
-    ulong block_pos= block->last_allocated % records_in_block;
-    uchar *last_blocks= (uchar*) block->level_info[0].last_blocks;
-    uchar *tail_pos;
+    /*
+      We where about to go to a new leaf. Move to end of previous leaf
+    */
+    block_pos= records_in_block;
+  }
+  last_blocks= (uchar*) block->level_info[0].last_blocks;
+  tail_pos= last_blocks + (block_pos - 1) * recbuffer;
 
-    if (block_pos == 0)
-      tail_pos= last_blocks + (records_in_block - 1) * recbuffer;
-    else
-      tail_pos= last_blocks + (block_pos - 1) * recbuffer;
-
-    if (share->del_link != tail_pos)
-      break;
-
+  while (share->del_link == tail_pos)
+  {
     share->del_link= *((uchar**) share->del_link);
     share->deleted--;
     block->last_allocated--;
+    tail_pos-= recbuffer;
+    block_pos--;
 
     /*
-      When the current leaf block becomes empty (block_pos was 1),
+      When the current leaf block becomes empty (block_pos has reached 0),
       find the previous leaf block so subsequent iterations can
       continue reclaiming there.  The empty block stays allocated
       in the tree (freed at table drop).
     */
-    if (block_pos == 1 && block->last_allocated > 0)
+    if (block_pos == 0)
     {
-      uchar *prev_rec= hp_find_block(block, block->last_allocated - 1);
-      ulong prev_offset=
-        (block->last_allocated - 1) % records_in_block;
+      if (!block->last_allocated)
+        break;
+      tail_pos= hp_find_block(block, block->last_allocated - 1);
+      block_pos= records_in_block;
       block->level_info[0].last_blocks=
-        (HP_PTRS*)(prev_rec - prev_offset * recbuffer);
+        (HP_PTRS*)(tail_pos - (records_in_block - 1) * recbuffer);
     }
   }
+  DBUG_ASSERT(share->total_records + share->deleted ==
+              share->block.last_allocated);
 }
 
 
@@ -560,8 +569,6 @@ err:
   {
     hp_free_run_chain(share, first_run);
     hp_shrink_tail(share);
-    DBUG_ASSERT(share->total_records + share->deleted ==
-                share->block.last_allocated);
   }
   *first_run_out= NULL;
   return my_errno;
@@ -622,8 +629,6 @@ int hp_write_blobs(HP_INFO *info, const uchar *record, uchar *pos)
         *((uchar**) (pos + rd->offset + rd->packlength))= NULL;
       }
       hp_shrink_tail(share);
-      DBUG_ASSERT(share->total_records + share->deleted ==
-                  share->block.last_allocated);
       *((uchar**) (pos + desc->offset + desc->packlength))= NULL;
       DBUG_RETURN(my_errno);
     }
