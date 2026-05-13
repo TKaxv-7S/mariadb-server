@@ -319,6 +319,7 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
   uint32 total_records_needed=
     (data_len <= first_payload ? 1 :
      1 + (data_len - first_payload + recbuffer - 1) / recbuffer);
+  my_bool is_only_run;
 
   /*
     Calculate minimum acceptable contiguous run size for delete-list reuse.
@@ -361,13 +362,11 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
   {
     uchar *run_start;
     uint16 run_count= 1;
-    uchar *prev_pos;
     uchar *pos;
     uint32 max_run= MY_MIN(total_records_needed, UINT_MAX16);
 
     if ((run_start= share->del_link))
     {
-      prev_pos= run_start;
       pos= *((uchar**) run_start);
       run_count= 1;
       for (; pos ; pos= *((uchar**) pos))
@@ -383,10 +382,9 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
         if (run_count == total_records_needed)
           break;                           /* Use this run */
 
-        if (prev_pos && pos == prev_pos - recbuffer)
+        if (pos == run_start - recbuffer)
         {
           run_start= pos;
-          prev_pos= pos;
           run_count++;
           if (run_count < max_run)
             continue;
@@ -431,12 +429,13 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
     batch of records within a single leaf block in one call.
     When we hit a block boundary, a new run starts.
   */
+
+  is_only_run= (first_run == NULL && prev_run_start == NULL);
   while (data_offset < data_len)
   {
     uchar *run_start;
     uint run_rec_count;
     uint32 remaining= data_len - data_offset;
-    my_bool is_only_run= (first_run == NULL && prev_run_start == NULL);
 
     /*
       Compute the number of records to request.
@@ -445,12 +444,15 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
       chance.  hp_alloc_from_tail() caps at the remaining slots in
       the current leaf block.
     */
-    if (is_only_run && remaining <= visible)
-      run_rec_count= 1;
-    else if (is_only_run)
+    if (is_only_run)
     {
-      uint64 needed= ((uint64) remaining + recbuffer - 1) / recbuffer + 1;
-      run_rec_count= (uint) MY_MIN(needed, UINT_MAX16);
+      if (remaining <= visible)
+        run_rec_count= 1;
+      else
+      {
+        uint64 needed= ((uint64) remaining + recbuffer - 1) / recbuffer + 1;
+        run_rec_count= (uint) MY_MIN(needed, UINT_MAX16);
+      }
     }
     else
     {
@@ -469,7 +471,7 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
       break;
     DBUG_ASSERT(run_rec_count >= 1);
 
-    if (is_only_run && run_rec_count == 1 && remaining <= visible)
+    if (is_only_run && remaining <= visible)
     {
       /* Case A: single record, no header */
       hp_write_run_data(share, data_ptr, data_len, run_start,
@@ -497,6 +499,7 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
     else
       first_run= run_start;
     prev_run_start= run_start;
+    is_only_run= 0;
   }
 
   /*
@@ -511,7 +514,6 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
   while (data_offset < data_len && share->del_link)
   {
     uchar *run_start= share->del_link;
-    uchar *prev_pos= run_start;
     uchar *pos= *((uchar**) run_start);
     uint16 run_count= 1;
     uint32 remaining= data_len - data_offset;
@@ -520,14 +522,15 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
        1 + (remaining - first_payload + recbuffer - 1) / recbuffer);
     uint32 max_run= MY_MIN(remaining_records, UINT_MAX16);
 
+    /* Traverse the delete link list */
     for (; pos; pos= *((uchar**) pos))
     {
       if (run_count >= max_run)
         break;
-      if (pos == prev_pos - recbuffer)
+      if (pos == run_start - recbuffer)
       {
+        /* Found block directly before current block. Combine them */
         run_start= pos;
-        prev_pos= pos;
         run_count++;
         continue;
       }
@@ -540,7 +543,14 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
   }
 
   if (data_offset < data_len)
+  {
+    /*
+      hp_alloc_from_tail() has set my_errno to HA_ERR_RECORD_FILE_FULL or
+      ENOMEM
+    */
+    DBUG_ASSERT(my_errno);
     goto err;
+  }
 
   *first_run_out= first_run;
   return 0;
