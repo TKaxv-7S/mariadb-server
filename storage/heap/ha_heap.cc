@@ -631,7 +631,7 @@ int heap_prepare_hp_create_info(TABLE *table_arg, bool internal_table,
 {
   TABLE_SHARE *share= table_arg->s;
   uint key, parts, mem_per_row= 0, keys= share->keys;
-  uint auto_key= 0, auto_key_type= 0, blob_count= 0;
+  uint auto_key= 0, auto_key_type= 0;
   ha_rows max_rows;
   HP_KEYDEF *keydef;
   HA_KEYSEG *seg;
@@ -795,13 +795,12 @@ int heap_prepare_hp_create_info(TABLE *table_arg, bool internal_table,
       DBUG_ASSERT(field->type() == MYSQL_TYPE_BLOB ||
                   field->type() == MYSQL_TYPE_GEOMETRY);
 
-      blob_descs[blob_count].offset=
+      blob_descs[blob_index].offset=
         (uint) blob->offset(table_arg->record[0]);
-      blob_descs[blob_count].packlength= blob->length_size();
-      blob_count++;
+      blob_descs[blob_index].packlength= blob->length_size();
     }
     hp_create_info->blob_descs= blob_descs;
-    hp_create_info->blob_count= blob_count;
+    hp_create_info->blob_count= share->blob_fields;
   }
 
   hp_create_info->auto_key= auto_key;

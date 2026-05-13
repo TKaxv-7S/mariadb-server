@@ -67,12 +67,8 @@ int heap_write(HP_INFO *info, const uchar *record)
         NULLs every chain pointer in pos.
       */
       info->errkey= -1;
-      for (keydef= end - 1; keydef >= share->keydef; keydef--)
-      {
-        if ((*keydef->delete_key)(info, keydef, record, pos, 0))
-          break;
-      }
-      goto err_common;
+      keydef= end - 1;
+      goto err_delete_written_keys;
     }
   }
   else
@@ -102,6 +98,8 @@ err:
   {
     keydef--;
   }
+
+err_delete_written_keys:
   while (keydef >= share->keydef)
   {
     if ((*keydef->delete_key)(info, keydef, record, pos, 0))
@@ -115,8 +113,6 @@ err:
     and hp_write_blobs(). The slot at pos still contains stale data from the
     delete list, so hp_free_blobs would chase garbage chain pointers.
   */
-
-err_common:
   share->deleted++;
   share->total_records--;
   *((uchar**) pos)=share->del_link;
@@ -159,16 +155,6 @@ int hp_rb_write_key(HP_INFO *info, HP_KEYDEF *keyinfo, const uchar *record,
   return 0;
 }
 
-/*
-  Find where to place a new record.
-
-  Allocates from the free list (del_link) first; if empty, extends the
-  HP_BLOCK tail.  Both paths maintain the scan-boundary invariant:
-      total_records + deleted == block.last_allocated
-  Free-list allocation does deleted-- + total_records++ (sum unchanged).
-  Tail allocation does last_allocated++ + total_records++ (sum grows by 1,
-  matching the new slot).  heap_scan() relies on this sum to detect EOF.
-*/
 
 /*
   Allocate a contiguous batch of records from the HP_BLOCK tail.
@@ -210,20 +196,22 @@ uchar *hp_alloc_from_tail(HP_SHARE *info, uint *blocks)
                   info->block.last_allocated, info->max_records,
                   info->data_length, info->index_length,
                   info->max_table_size));
-      my_errno=HA_ERR_RECORD_FILE_FULL;
+      my_errno= HA_ERR_RECORD_FILE_FULL;
       DBUG_RETURN(NULL);
     }
 
     if (info->block.last_allocated < info->block.high_water_allocated)
     {
+      /* Block was freed by shrink_tail(). Reclaim block */
       info->block.level_info[0].last_blocks=
         (HP_PTRS*) hp_find_block(&info->block, info->block.last_allocated);
     }
     else
     {
+      /* No available blocks, allocate new ones */
       if (hp_get_new_block(info, &info->block, &length))
         DBUG_RETURN(NULL);
-      info->data_length+=length;
+      info->data_length+= length;
     }
   }
   available= (uint)(info->block.records_in_block - block_pos);
@@ -242,6 +230,17 @@ uchar *hp_alloc_from_tail(HP_SHARE *info, uint *blocks)
 	      block_pos * info->block.recbuffer);
 }
 
+
+/*
+  Find where to place a new record.
+
+  Allocates from the free list (del_link) first; if empty, extends the
+  HP_BLOCK tail.  Both paths maintain the scan-boundary invariant:
+      total_records + deleted == block.last_allocated
+  Free-list allocation does deleted-- + total_records++ (sum unchanged).
+  Tail allocation does last_allocated++ + total_records++ (sum grows by 1,
+  matching the new slot).  heap_scan() relies on this sum to detect EOF.
+*/
 
 uchar *next_free_record_pos(HP_SHARE *info)
 {
