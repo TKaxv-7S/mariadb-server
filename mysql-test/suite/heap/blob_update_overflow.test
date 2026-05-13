@@ -43,7 +43,7 @@ SELECT grp, LENGTH(MAX(val)) AS max_len
 FROM t1 GROUP BY grp ORDER BY grp;
 
 --echo # Verify HEAP->Aria conversion happened
-SHOW STATUS LIKE 'Created_tmp_disk_tables';
+SHOW STATUS LIKE 'Created_tmp_%';
 --enable_cursor_protocol
 --enable_view_protocol
 --enable_ps2_protocol
@@ -63,12 +63,14 @@ FROM seq_1_to_150;
 --echo # Group 1 gets seq=3,6,...,150 -> MAX is REPEAT('a', 30000)
 --echo # Group 2 gets seq=1,4,...,148 -> MAX is REPEAT('a', 29600)
 --echo # Group 3 gets seq=2,5,...,149 -> MAX is REPEAT('a', 29800)
+FLUSH STATUS;
 SELECT grp,
        LENGTH(MAX(val)) AS max_len,
        LEFT(MAX(val), 5) AS prefix,
        RIGHT(MAX(val), 5) AS suffix
 FROM t1 GROUP BY grp ORDER BY grp;
 
+SHOW STATUS LIKE 'Created_tmp_%';
 DROP TABLE t1;
 
 --echo #
@@ -81,11 +83,13 @@ INSERT INTO t1 SELECT (seq % 3) + 1,
   REPEAT('y', seq * 150)
 FROM seq_1_to_150;
 
+FLUSH STATUS;
 SELECT grp,
        LENGTH(MAX(v1)) AS max1_len,
        LENGTH(MAX(v2)) AS max2_len
 FROM t1 GROUP BY grp ORDER BY grp;
 
+SHOW STATUS LIKE 'Created_tmp_%';
 DROP TABLE t1;
 
 --echo #
@@ -108,11 +112,13 @@ INSERT INTO t1 SELECT (seq % 3) + 1,
   END
 FROM seq_1_to_150;
 
+FLUSH STATUS;
 SELECT grp,
        LENGTH(MAX(val)) AS max_len,
        LENGTH(MIN(val)) AS min_len
 FROM t1 GROUP BY grp ORDER BY grp;
 
+SHOW STATUS LIKE 'Created_tmp_%';
 DROP TABLE t1;
 
 --echo #

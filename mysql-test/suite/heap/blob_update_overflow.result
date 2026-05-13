@@ -35,9 +35,11 @@ grp	max_len
 2	29600
 3	29800
 # Verify HEAP->Aria conversion happened
-SHOW STATUS LIKE 'Created_tmp_disk_tables';
+SHOW STATUS LIKE 'Created_tmp_%';
 Variable_name	Value
 Created_tmp_disk_tables	1
+Created_tmp_files	0
+Created_tmp_tables	2
 DROP TABLE t1;
 #
 # Test 2: Verify result correctness after overflow
@@ -50,6 +52,7 @@ FROM seq_1_to_150;
 # Group 1 gets seq=3,6,...,150 -> MAX is REPEAT('a', 30000)
 # Group 2 gets seq=1,4,...,148 -> MAX is REPEAT('a', 29600)
 # Group 3 gets seq=2,5,...,149 -> MAX is REPEAT('a', 29800)
+FLUSH STATUS;
 SELECT grp,
 LENGTH(MAX(val)) AS max_len,
 LEFT(MAX(val), 5) AS prefix,
@@ -59,6 +62,11 @@ grp	max_len	prefix	suffix
 1	30000	aaaaa	aaaaa
 2	29600	aaaaa	aaaaa
 3	29800	aaaaa	aaaaa
+SHOW STATUS LIKE 'Created_tmp_%';
+Variable_name	Value
+Created_tmp_disk_tables	1
+Created_tmp_files	0
+Created_tmp_tables	2
 DROP TABLE t1;
 #
 # Test 3: Multiple blob aggregates (two MAX columns)
@@ -68,6 +76,7 @@ INSERT INTO t1 SELECT (seq % 3) + 1,
 REPEAT('x', seq * 200),
 REPEAT('y', seq * 150)
 FROM seq_1_to_150;
+FLUSH STATUS;
 SELECT grp,
 LENGTH(MAX(v1)) AS max1_len,
 LENGTH(MAX(v2)) AS max2_len
@@ -76,6 +85,11 @@ grp	max1_len	max2_len
 1	30000	22500
 2	29600	22200
 3	29800	22350
+SHOW STATUS LIKE 'Created_tmp_%';
+Variable_name	Value
+Created_tmp_disk_tables	1
+Created_tmp_files	0
+Created_tmp_tables	2
 DROP TABLE t1;
 #
 # Test 4: MIN(TEXT) with monotonically shrinking minimum
@@ -95,6 +109,7 @@ CASE WHEN seq % 2 = 0 THEN REPEAT('b', seq * 200)
 ELSE REPEAT('a', 50)
 END
 FROM seq_1_to_150;
+FLUSH STATUS;
 SELECT grp,
 LENGTH(MAX(val)) AS max_len,
 LENGTH(MIN(val)) AS min_len
@@ -103,6 +118,11 @@ grp	max_len	min_len
 1	30000	50
 2	29600	50
 3	29200	50
+SHOW STATUS LIKE 'Created_tmp_%';
+Variable_name	Value
+Created_tmp_disk_tables	1
+Created_tmp_files	0
+Created_tmp_tables	2
 DROP TABLE t1;
 #
 # Cleanup
