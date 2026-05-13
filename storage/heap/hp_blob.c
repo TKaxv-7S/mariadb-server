@@ -393,10 +393,10 @@ int hp_write_one_blob(HP_SHARE *share, const uchar *data_ptr,
           /* run_count is now UINT_MAX16 */
         }
 
-      /*
-        Discontinuity.  If the accumulated group qualifies, use it.
-        If not, the top of the delete list is fragmented - give up entirely.
-      */
+        /*
+          Discontinuity.  If the accumulated group qualifies, use it.
+          If not, the top of the delete list is fragmented - give up entirely.
+        */
         if (run_count < min_run_records)
           break;
         hp_unlink_and_write_run(share, data_ptr, data_len, run_start,
