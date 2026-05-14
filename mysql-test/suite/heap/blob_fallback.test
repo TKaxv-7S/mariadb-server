@@ -20,7 +20,7 @@ drop table if exists t1;
 set @save_max_heap_table_size=@@max_heap_table_size;
 set max_heap_table_size=1*1024*1024;
 
-create table t1 (a int not null, b blob, primary key(a)) engine=memory;
+create table t1 (a int not null, b blob, hash char(64), primary key(a)) engine=memory;
 
 --echo #
 --echo # Fill table with short-blob rows to consume capacity
@@ -30,7 +30,7 @@ create table t1 (a int not null, b blob, primary key(a)) engine=memory;
 --let $i=0
 while ($i < 500)
 {
-  eval insert into t1 values ($i, repeat('x', 100));
+  eval insert into t1 values ($i, repeat('x', 100), sha2(repeat('x', 100), 256));
   --inc $i
 }
 --enable_query_log
@@ -56,9 +56,12 @@ select count(*) as rows_after_delete from t1;
 --echo #
 --echo # Insert new rows with blobs -- exercises free-list scavenge
 --echo #
-insert into t1 values (10000, repeat('A', 200));
-insert into t1 values (10001, repeat('B', 500));
-insert into t1 values (10002, repeat('C', 50));
+set @b1= concat(repeat('ABCD', 50));
+set @b2= concat(repeat('EFGH', 125));
+set @b3= concat(repeat('IJ', 25));
+insert into t1 values (10000, @b1, sha2(@b1, 256));
+insert into t1 values (10001, @b2, sha2(@b2, 256));
+insert into t1 values (10002, @b3, sha2(@b3, 256));
 
 --echo #
 --echo # Verify data integrity
@@ -66,9 +69,9 @@ insert into t1 values (10002, repeat('C', 50));
 select a, length(b) as blob_len, left(b, 5) as prefix from t1
   where a >= 10000 order by a;
 
-select a, b = repeat('A', 200) as intact from t1 where a=10000;
-select a, b = repeat('B', 500) as intact from t1 where a=10001;
-select a, b = repeat('C', 50)  as intact from t1 where a=10002;
+select a, sha2(b, 256) = hash as intact from t1 where a=10000;
+select a, sha2(b, 256) = hash as intact from t1 where a=10001;
+select a, sha2(b, 256) = hash as intact from t1 where a=10002;
 
 --echo #
 --echo # Verify scan still works correctly
