@@ -935,11 +935,11 @@ int ha_heap::find_unique_row(uchar *record, uint unique_idx)
 
   /*
     Blob path: materialize-then-compare.
+
     Pre-materialize all blobs via hp_read_blobs() before comparison,
-    then compare with info=NULL since both records have direct data
-    pointers. This avoids the double reassembly that would occur if
-    hp_rec_key_cmp() materialized each blob individually and then
-    hp_read_blobs() re-walked the same chains.
+    then compare with info=NULL (do not materialize blob in
+    ha_rec_key_cmp()) since both records have direct data
+    pointers.
   */
   uchar *input_copy= (uchar*) my_safe_alloca(share->reclength);
   if (!input_copy)
@@ -955,7 +955,7 @@ int ha_heap::find_unique_row(uchar *record, uint unique_idx)
     memcpy(record, pos->ptr_to_rec, (size_t) share->reclength);
     if (hp_read_blobs(file, record, pos->ptr_to_rec))
     {
-      result= -1;
+      result= -1;	/* my_errno is set to HA_ERR_OUT_OF_MEM */
       break;
     }
     if (!hp_rec_key_cmp(keyinfo, input_copy, record, NULL))
