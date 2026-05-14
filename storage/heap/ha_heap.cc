@@ -694,7 +694,8 @@ int heap_prepare_hp_create_info(TABLE *table_arg, bool internal_table,
       seg->length=  (uint) key_part->length;
       seg->flag=    key_part->key_part_flag;
       seg->bit_length= 0;
-      seg->bit_start= seg->bit_pos= 0;
+      seg->bit_start= 0;
+      seg->bit_pos= 0;
 
       DBUG_ASSERT((seg->flag & HA_BLOB_PART) ==
                   (field->key_part_flag() & HA_BLOB_PART));
