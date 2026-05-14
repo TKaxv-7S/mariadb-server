@@ -90,3 +90,6 @@ EOF
 --error 1
 --exec $MYSQL_BINLOG --short-form $MYSQL_TMP_DIR/bad-binlog.ibb 2>&1
 --remove_file $MYSQL_TMP_DIR/bad-binlog.ibb
+
+--error 1
+--exec $MYSQL_BINLOG --short-form $MYSQL_TEST_DIR/std_data/corrupt-chunk-len_binlog-000000.ibb 2>&1
