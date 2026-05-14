@@ -14479,14 +14479,18 @@ binlog_checksum_update(MYSQL_THD thd, struct st_mysql_sys_var *var,
   bool check_purge= false;
   ulong UNINIT_VAR(prev_binlog_id);
 
-  mysql_mutex_unlock(&LOCK_global_system_variables);
-  if (opt_binlog_engine_hton && value)
+  if (opt_binlog_engine_hton)
   {
-    sql_print_information("Value of binlog_checksum forced to NONE since "
-                          "binlog_storage_engine is enabled, where "
-                          "per-event checksumming is not needed");
-    value= 0;
+    if (value)
+    {
+      sql_print_information("Value of binlog_checksum forced to NONE since "
+                            "binlog_storage_engine is enabled, where "
+                            "per-event checksumming is not needed");
+    }
+    binlog_checksum_options= 0;
+    return;
   }
+  mysql_mutex_unlock(&LOCK_global_system_variables);
   mysql_mutex_lock(mysql_bin_log.get_log_lock());
   if(mysql_bin_log.is_open())
   {
