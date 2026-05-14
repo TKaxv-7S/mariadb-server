@@ -1061,7 +1061,12 @@ chunk_reader_mysqlbinlog::parse_file_header()
     error("Unsupported version of InnoDB binlog file, cannot read");
     return -1;
   }
-  binlog_page_size= 1 << uint4korr(page_buffer + 4);
+  if (BINLOG_PAGE_SIZE != ((uint32_t)1 << uint4korr(page_buffer + 4)))
+  {
+    error("Invalid/unsupported page size in InnoDB binlog file, cannot read");
+    return -1;
+  }
+  binlog_page_size= BINLOG_PAGE_SIZE;
   s.file_no= uint8korr(page_buffer + 16);
   return 0;
 }
