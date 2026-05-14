@@ -73,7 +73,7 @@ static void hp_shrink_tail(HP_SHARE *share)
   if (!(block_pos= block->last_allocated % records_in_block))
   {
     /*
-      We where about to go to a new leaf. Move to end of previous leaf
+      We were about to go to a new leaf. Move to end of previous leaf
     */
     block_pos= records_in_block;
   }
