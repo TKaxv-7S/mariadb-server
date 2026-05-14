@@ -4,12 +4,18 @@
 # INTERSECT ALL, and EXCEPT ALL, which call find_unique_row() on the
 # HEAP temp table.
 #
+# Blob storage layouts tested:
+#   Tiny   -- fits in a single record without a run header
+#   Medium -- fits in a single contiguous run of records
+#   Large  -- requires multiple runs linked via next_cont pointers
+#
 
 SET @save_max_heap_table_size= @@max_heap_table_size;
 SET @@max_heap_table_size= 32*1024*1024;
 
 --echo #
---echo # EXCEPT with Case C blobs (multi-run, >16KB)
+--echo # SELECT ... EXCEPT SELECT with large blob columns stored in multiple
+--echo # segments (>16KB)
 --echo #
 CREATE TABLE t1 (a INT, b TEXT) ENGINE=HEAP;
 INSERT INTO t1 VALUES (1, REPEAT('a', 20000)), (2, REPEAT('b', 20000)),
@@ -25,7 +31,7 @@ SELECT a, LENGTH(b), LEFT(b, 1) FROM (
 DROP TABLE t1, t2;
 
 --echo #
---echo # INTERSECT with Case C blobs
+--echo # SELECT ... INTERSECT SELECT with large blobs (multiple segments)
 --echo #
 CREATE TABLE t1 (a INT, b TEXT) ENGINE=HEAP;
 INSERT INTO t1 VALUES (1, REPEAT('x', 25000)), (2, REPEAT('y', 25000)),
@@ -41,7 +47,7 @@ SELECT a, LENGTH(b), LEFT(b, 1) FROM (
 DROP TABLE t1, t2;
 
 --echo #
---echo # INTERSECT ALL with Case C blobs -- duplicates preserved
+--echo # INTERSECT ALL with large blobs -- duplicates preserved
 --echo #
 CREATE TABLE t1 (a INT, b TEXT) ENGINE=HEAP;
 INSERT INTO t1 VALUES (1, REPEAT('p', 20000)), (1, REPEAT('p', 20000)),
@@ -58,7 +64,7 @@ SELECT a, LENGTH(b), LEFT(b, 1) FROM (
 DROP TABLE t1, t2;
 
 --echo #
---echo # EXCEPT ALL with Case C blobs -- duplicates tracked
+--echo # EXCEPT ALL with large blobs -- duplicates tracked
 --echo #
 CREATE TABLE t1 (a INT, b TEXT) ENGINE=HEAP;
 INSERT INTO t1 VALUES (1, REPEAT('m', 20000)), (1, REPEAT('m', 20000)),
@@ -74,7 +80,7 @@ SELECT a, LENGTH(b), LEFT(b, 1) FROM (
 DROP TABLE t1, t2;
 
 --echo #
---echo # Multiple blob columns -- all materialized correctly
+--echo # Multiple blob columns -- verify both are materialized for comparison
 --echo #
 CREATE TABLE t1 (a TEXT, b TEXT) ENGINE=HEAP;
 INSERT INTO t1 VALUES (REPEAT('a', 20000), REPEAT('1', 20000)),
@@ -91,7 +97,7 @@ SELECT LENGTH(a), LEFT(a, 1), LENGTH(b), LEFT(b, 1) FROM (
 DROP TABLE t1, t2;
 
 --echo #
---echo # Mixed blob sizes: Case A (tiny), Case B (medium), Case C (large)
+--echo # Mixed blob sizes: tiny (single record), medium (single run), large (multiple segments)
 --echo #
 CREATE TABLE t1 (a INT, b TEXT) ENGINE=HEAP;
 INSERT INTO t1 VALUES (1, 'hi'), (2, REPEAT('m', 5000)),
