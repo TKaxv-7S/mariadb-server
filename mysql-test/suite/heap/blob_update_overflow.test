@@ -33,6 +33,7 @@ CREATE TABLE t1 (grp INT, val TEXT);
 INSERT INTO t1 SELECT (seq % 3) + 1, REPEAT('a', seq * 200)
 FROM seq_1_to_150;
 
+--disable_ps_protocol
 --disable_ps2_protocol
 --disable_view_protocol
 --disable_cursor_protocol
@@ -47,6 +48,7 @@ SHOW STATUS LIKE 'Created_tmp_%';
 --enable_cursor_protocol
 --enable_view_protocol
 --enable_ps2_protocol
+--enable_ps_protocol
 
 DROP TABLE t1;
 
@@ -63,6 +65,10 @@ FROM seq_1_to_150;
 --echo # Group 1 gets seq=3,6,...,150 -> MAX is REPEAT('a', 30000)
 --echo # Group 2 gets seq=1,4,...,148 -> MAX is REPEAT('a', 29600)
 --echo # Group 3 gets seq=2,5,...,149 -> MAX is REPEAT('a', 29800)
+--disable_ps_protocol
+--disable_ps2_protocol
+--disable_view_protocol
+--disable_cursor_protocol
 FLUSH STATUS;
 SELECT grp,
        LENGTH(MAX(val)) AS max_len,
@@ -71,6 +77,10 @@ SELECT grp,
 FROM t1 GROUP BY grp ORDER BY grp;
 
 SHOW STATUS LIKE 'Created_tmp_%';
+--enable_cursor_protocol
+--enable_view_protocol
+--enable_ps2_protocol
+--enable_ps_protocol
 DROP TABLE t1;
 
 --echo #
@@ -83,6 +93,10 @@ INSERT INTO t1 SELECT (seq % 3) + 1,
   REPEAT('y', seq * 150)
 FROM seq_1_to_150;
 
+--disable_ps_protocol
+--disable_ps2_protocol
+--disable_view_protocol
+--disable_cursor_protocol
 FLUSH STATUS;
 SELECT grp,
        LENGTH(MAX(v1)) AS max1_len,
@@ -90,6 +104,10 @@ SELECT grp,
 FROM t1 GROUP BY grp ORDER BY grp;
 
 SHOW STATUS LIKE 'Created_tmp_%';
+--enable_cursor_protocol
+--enable_view_protocol
+--enable_ps2_protocol
+--enable_ps_protocol
 DROP TABLE t1;
 
 --echo #
@@ -112,6 +130,10 @@ INSERT INTO t1 SELECT (seq % 3) + 1,
   END
 FROM seq_1_to_150;
 
+--disable_ps_protocol
+--disable_ps2_protocol
+--disable_view_protocol
+--disable_cursor_protocol
 FLUSH STATUS;
 SELECT grp,
        LENGTH(MAX(val)) AS max_len,
@@ -119,6 +141,10 @@ SELECT grp,
 FROM t1 GROUP BY grp ORDER BY grp;
 
 SHOW STATUS LIKE 'Created_tmp_%';
+--enable_cursor_protocol
+--enable_view_protocol
+--enable_ps2_protocol
+--enable_ps_protocol
 DROP TABLE t1;
 
 --echo #
