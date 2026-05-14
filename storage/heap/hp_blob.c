@@ -185,7 +185,7 @@ void hp_free_run_chain(HP_SHARE *share, uchar *chain)
 static void hp_write_run_data(HP_SHARE *share, const uchar *data,
                               uint32 data_len, uchar *run_start,
                               uint16 run_rec_count,
-                              uchar format,
+                              uint8 format,
                               uint32 *offset)
 {
   uint visible= share->visible;
