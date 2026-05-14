@@ -1,7 +1,8 @@
 SET @save_max_heap_table_size= @@max_heap_table_size;
 SET @@max_heap_table_size= 32*1024*1024;
 #
-# EXCEPT with Case C blobs (multi-run, >16KB)
+# SELECT ... EXCEPT SELECT with large blob columns stored in multiple
+# segments (>16KB)
 #
 CREATE TABLE t1 (a INT, b TEXT) ENGINE=HEAP;
 INSERT INTO t1 VALUES (1, REPEAT('a', 20000)), (2, REPEAT('b', 20000)),
@@ -15,7 +16,7 @@ a	LENGTH(b)	LEFT(b, 1)
 1	20000	a
 DROP TABLE t1, t2;
 #
-# INTERSECT with Case C blobs
+# SELECT ... INTERSECT SELECT with large blobs (multiple segments)
 #
 CREATE TABLE t1 (a INT, b TEXT) ENGINE=HEAP;
 INSERT INTO t1 VALUES (1, REPEAT('x', 25000)), (2, REPEAT('y', 25000)),
@@ -29,7 +30,7 @@ a	LENGTH(b)	LEFT(b, 1)
 2	25000	y
 DROP TABLE t1, t2;
 #
-# INTERSECT ALL with Case C blobs — duplicates preserved
+# INTERSECT ALL with large blobs — duplicates preserved
 #
 CREATE TABLE t1 (a INT, b TEXT) ENGINE=HEAP;
 INSERT INTO t1 VALUES (1, REPEAT('p', 20000)), (1, REPEAT('p', 20000)),
@@ -45,7 +46,7 @@ a	LENGTH(b)	LEFT(b, 1)
 2	20000	q
 DROP TABLE t1, t2;
 #
-# EXCEPT ALL with Case C blobs — duplicates tracked
+# EXCEPT ALL with large blobs — duplicates tracked
 #
 CREATE TABLE t1 (a INT, b TEXT) ENGINE=HEAP;
 INSERT INTO t1 VALUES (1, REPEAT('m', 20000)), (1, REPEAT('m', 20000)),
@@ -60,7 +61,7 @@ a	LENGTH(b)	LEFT(b, 1)
 1	20000	m
 DROP TABLE t1, t2;
 #
-# Multiple blob columns — all materialized correctly
+# Multiple blob columns — verify both are materialized for comparison
 #
 CREATE TABLE t1 (a TEXT, b TEXT) ENGINE=HEAP;
 INSERT INTO t1 VALUES (REPEAT('a', 20000), REPEAT('1', 20000)),
@@ -76,7 +77,7 @@ LENGTH(a)	LEFT(a, 1)	LENGTH(b)	LEFT(b, 1)
 20000	c	20000	3
 DROP TABLE t1, t2;
 #
-# Mixed blob sizes: Case A (tiny), Case B (medium), Case C (large)
+# Mixed blob sizes: tiny (single record), medium (single run), large (multiple segments)
 #
 CREATE TABLE t1 (a INT, b TEXT) ENGINE=HEAP;
 INSERT INTO t1 VALUES (1, 'hi'), (2, REPEAT('m', 5000)),
