@@ -19983,7 +19983,7 @@ static MYSQL_SYSVAR_BOOL(reduce_pessimistic_update_fallbacks,
   " through to a page split instead. Trades some B-tree self-healing"
   " for a lower rate of pessimistic update fallbacks and the index-lock"
   " upgrades they induce",
-  NULL, NULL, FALSE);
+  NULL, NULL, TRUE);
 
 #ifdef UNIV_DEBUG
 static MYSQL_SYSVAR_UINT(limit_optimistic_insert_debug,
