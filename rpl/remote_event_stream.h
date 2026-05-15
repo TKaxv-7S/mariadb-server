@@ -25,6 +25,7 @@ using MYSQL_RES_P= struct st_mysql_res *;
 
 struct Rpl_slave_connection
 {
+  ///@deprecated won't need this with @ref Semi_sync_graceful_killer gone
   struct Connection_options
   {
     char *host, *user, *password;
@@ -123,6 +124,7 @@ struct Remote_event_stream: Rpl_slave_connection
 };
 
 
+///@deprecated obsolete; remove in MDEV-39583
 struct Semi_sync_graceful_killer: Rpl_slave_connection
 {
   Semi_sync_graceful_killer(

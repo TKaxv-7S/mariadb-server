@@ -33,7 +33,8 @@ void Remote_event_stream::Connection_options::operator()(MYSQL *connector) const
   */
   connector->host= host; connector->user= user; connector->passwd= password;
   connector->port= port;
-  if (ssl_options)
+  //TODO: port Zero-Configuration TLS to Connector/C
+  if (ssl_options && ssl_options->ssl_key[0] && ssl_options->ssl_cert[0])
   {
     mysql_ssl_set(connector,
       ssl_options->ssl_key, ssl_options->ssl_cert,
@@ -44,7 +45,12 @@ void Remote_event_stream::Connection_options::operator()(MYSQL *connector) const
                   &ssl_options->ssl_verify_server_cert);
   }
   else
-    //mysql_optionsv(connector, MYSQL_OPT_SSL_ENFORCE, &use_ssl);
+  /*
+  {
+    constexpr unsigned char NO= false;
+    mysql_optionsv(connector, MYSQL_OPT_SSL_ENFORCE, &NO);
+  }
+  */
     connector->options.use_ssl= false;
   mysql_options(connector, MYSQL_SET_CHARSET_NAME, charset_name);
   // In case the master asks for an external authentication plugin
@@ -69,12 +75,12 @@ Remote_event_stream::Remote_event_stream(
 {
   if (!connector)
     return;
-  unsigned char yes= true;
+  constexpr unsigned char YES= true;
   //@deprecated not applicable with Connector/C
-  mysql_options(connector, MYSQL_OPT_USE_THREAD_SPECIFIC_MEMORY, &yes);
+  mysql_options(connector, MYSQL_OPT_USE_THREAD_SPECIFIC_MEMORY, &YES);
   //mysql_options(connector, MYSQL_OPT_MAX_ALLOWED_PACKET, &max_allowed_packet);
   connector->options.max_allowed_packet= max_allowed_packet;
-  mysql_options(connector, MYSQL_OPT_RECONNECT, &yes);
+  mysql_options(connector, MYSQL_OPT_RECONNECT, &YES);
 }
 
 Semi_sync_graceful_killer::Semi_sync_graceful_killer(
@@ -155,14 +161,15 @@ bool Remote_event_stream::semisync_ack(
   constexpr size_t HEAD_SIZE= /* Semi-Sync Header */1 + sizeof(next_pos);
   char payload[HEAD_SIZE + (FN_REFLEN+1)]= {'\xEF'};
   int8store(&(payload[1]), next_pos);
-  log_name.copy(&(payload[HEAD_SIZE]), sizeof(payload)-HEAD_SIZE);
+  size_t strlen=
+    log_name.copy(&(payload[HEAD_SIZE]), sizeof(payload)-HEAD_SIZE);
   NET *net= &connector->net;
   //@deprecated: not required in Connector/C
   net->pkt_nr_can_be_reset= true;
   // Connector/C might not require resetting; better be safe until confirmed.
   net_clear(net, false);
   return my_net_write(net, reinterpret_cast<const unsigned char *>(payload),
-    HEAD_SIZE + (log_name.size()+1)) || net_flush(net);
+    HEAD_SIZE + (strlen+1)) || net_flush(net);
 }
 
 void Remote_event_stream::abort()

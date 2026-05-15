@@ -3425,7 +3425,7 @@ static std::basic_string_view<unsigned char> read_event(
 
   DBUG_PRINT("exit", ("len: %zu  net->read_pos[4]: %d",
                       len, packet[4]));
-  DBUG_RETURN(packet);
+  DBUG_RETURN(packet.substr(1));
 }
 
 
