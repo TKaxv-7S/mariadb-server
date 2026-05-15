@@ -26,6 +26,8 @@ Completed 2011/7/10 Sunny and Jimmy Yang
 
 ***********************************************************************/
 
+#define MYSQL_SERVER
+
 #include "fts0fts.h"
 #include "fts0exec.h"
 #include "row0sel.h"
@@ -39,6 +41,7 @@ Completed 2011/7/10 Sunny and Jimmy Yang
 #include "fts0opt.h"
 #include "fts0vlc.h"
 #include "wsrep.h"
+#include "sql_class.h"
 
 #ifdef WITH_WSREP
 extern Atomic_relaxed<bool> wsrep_sst_disable_writes;
@@ -1761,6 +1764,26 @@ fts_optimize_table(dict_table_t *table, THD *thd)
 		return DB_READ_ONLY;
 	}
 
+	/* Serialize concurrent fts_optimize_table() on the same table:
+	acquire MDL_EXCLUSIVE first so a second caller blocks here, then
+	downgrade to MDL_SHARED_UPGRADABLE so other operations can proceed
+	while optimization is in progress. */
+	MDL_ticket*	mdl_ticket = nullptr;
+	dict_sys.freeze(SRW_LOCK_CALL);
+	if (dict_acquire_mdl<false, true>(table, thd, &mdl_ticket)
+	      != table) {
+		dict_sys.unfreeze();
+		if (mdl_ticket) {
+			thd->mdl_context.release_lock(mdl_ticket);
+		}
+		return DB_TABLE_NOT_FOUND;
+	}
+	dict_sys.unfreeze();
+
+	if (mdl_ticket) {
+		mdl_ticket->downgrade_lock(MDL_SHARED_UPGRADABLE);
+	}
+
 	dberr_t		error = DB_SUCCESS;
 	fts_optimize_t*	optim = NULL;
 	fts_t*		fts = table->fts;
@@ -1775,6 +1798,9 @@ fts_optimize_table(dict_table_t *table, THD *thd)
 	if (error != DB_SUCCESS) {
 err_exit:
 		fts_optimize_free(optim);
+		if (mdl_ticket) {
+			thd->mdl_context.release_lock(mdl_ticket);
+		}
 		return error;
 	}
 
@@ -1844,6 +1870,10 @@ err_exit:
 	}
 
 	fts_optimize_free(optim);
+
+	if (mdl_ticket) {
+		thd->mdl_context.release_lock(mdl_ticket);
+	}
 
 	return(error);
 }
@@ -2108,8 +2138,8 @@ static void fts_optimize_sync_table(dict_table_t *table,
                                     bool process_message= false)
 {
   MDL_ticket* mdl_ticket= nullptr;
-  dict_table_t *sync_table= dict_acquire_mdl_shared<true>(table, fts_opt_thd,
-                                                          &mdl_ticket);
+  dict_table_t *sync_table= dict_acquire_mdl<true>(table, fts_opt_thd,
+                                                   &mdl_ticket);
 
   if (!sync_table)
     return;
