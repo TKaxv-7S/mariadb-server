@@ -42,8 +42,12 @@
 /* Key buffer: null_byte + 4B_blob_len + 8B_blob_ptr = 13 bytes max */
 #define KEY_BUF_SIZE     64
 
-/* Avoids -Wsizeof-pointer-memaccess with sizeof(uchar*) */
-#define PTR_SIZE portable_sizeof_char_ptr
+/*
+  Use sizeof(void*) for memcpy of actual pointer values, matching
+  HP_PTR_SIZE in hp_hash.c. The record slot is portable_sizeof_char_ptr
+  bytes wide (always 8), but only sizeof(void*) bytes are meaningful.
+*/
+#define PTR_SIZE sizeof(void*)
 
 
 static void setup_blob_keyseg(HA_KEYSEG *seg, my_bool nullable)
