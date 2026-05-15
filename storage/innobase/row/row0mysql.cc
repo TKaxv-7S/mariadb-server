@@ -885,11 +885,11 @@ row_create_prebuilt(
 	}
 
 	prebuilt->pcur = static_cast<btr_pcur_t*>(
-				mem_heap_zalloc(prebuilt->heap,
-					       sizeof(btr_pcur_t)));
+			mem_heap_zalloc(prebuilt->heap,
+					sizeof(btr_pcur_t)));
 	prebuilt->clust_pcur = static_cast<btr_pcur_t*>(
-					mem_heap_zalloc(prebuilt->heap,
-						       sizeof(btr_pcur_t)));
+			mem_heap_zalloc(prebuilt->heap,
+					sizeof(btr_pcur_t)));
 	btr_pcur_reset(prebuilt->pcur);
 	btr_pcur_reset(prebuilt->clust_pcur);
 
@@ -935,8 +935,13 @@ void row_prebuilt_free(row_prebuilt_t *prebuilt)
 	prebuilt->magic_n = ROW_PREBUILT_FREED;
 	prebuilt->magic_n2 = ROW_PREBUILT_FREED;
 
-	btr_pcur_reset(prebuilt->pcur);
-	btr_pcur_reset(prebuilt->clust_pcur);
+	if (prebuilt->pcur) {
+		btr_pcur_reset(prebuilt->pcur);
+	}
+
+	if (prebuilt->clust_pcur) {
+		btr_pcur_reset(prebuilt->clust_pcur);
+	}
 
 	ut_free(prebuilt->mysql_template);
 
