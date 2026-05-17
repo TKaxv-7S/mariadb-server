@@ -3389,7 +3389,7 @@ static std::string_view read_event(Remote_event_stream &mysql, Master_info *mi,
     measure pre-decompress (network) byte count, not post-decompress count,
     but this statistic is not exported by Connector/C.
   */
-  *network_read_len= len;
+  *network_read_len= static_cast<ulong>(len);
   if (unlikely(!len))
   {
     if (mysql_errno(mysql) == ER_NET_READ_INTERRUPTED)
@@ -4735,7 +4735,7 @@ connected:
 #endif
       std::string_view packet=
         read_event(mysql, mi, &suppress_warnings, &network_read_len);
-      event_len= packet.size();
+      event_len= static_cast<ulong>(packet.size());
       if (check_io_slave_killed(mi, NullS))
         goto err;
 
