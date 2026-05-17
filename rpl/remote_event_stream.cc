@@ -133,12 +133,12 @@ unsigned long Remote_event_stream::thread_id()
 
 
 ///TODO: Split this part from Connector/C's mariadb_rpl_fetch()
-std::basic_string_view<unsigned char> Remote_event_stream::next()
+std::string_view Remote_event_stream::next()
 {
   auto strlen= static_cast<size_t>(mysql_net_read_packet(connector));
   if (strlen == packet_error)
-    return std::basic_string_view<unsigned char>();
-  return {connector->net.read_pos, strlen};
+    return std::string_view();
+  return {reinterpret_cast<char *>(connector->net.read_pos), strlen};
 }
 
 bool Remote_event_stream::semisync_ack(

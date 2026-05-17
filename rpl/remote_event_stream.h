@@ -108,7 +108,7 @@ struct Remote_event_stream: Rpl_slave_connection
     * an EOF packet
     * an empty string, which represents error
   */
-  std::basic_string_view<unsigned char> next();
+  std::string_view next();
   /**
     @return `false` on success, or `true` on error
     @note Acknowledgement comes after the caller has safely recorded the

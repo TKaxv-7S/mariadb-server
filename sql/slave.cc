@@ -178,7 +178,7 @@ MYSQL_RES_P server_mysql_store_result(Remote_event_stream &stream)
 #define simple_command(stream, command, args, strlen, skip_check) \
   stream.send_command(command, args, strlen, skip_check)
 #undef packet_error
-static constexpr auto packet_error= std::basic_string_view<unsigned char>();
+static constexpr auto packet_error= std::string_view();
 
 /*
   Function to set the slave's max_allowed_packet based on the value
@@ -3367,8 +3367,7 @@ static int request_dump(Remote_event_stream &mysql, Master_info* mi,
     std::string_view    Packet
 */
 
-static std::basic_string_view<unsigned char> read_event(
-  Remote_event_stream &mysql, Master_info *mi,
+static std::string_view read_event(Remote_event_stream &mysql, Master_info *mi,
   bool* suppress_warnings, ulong* network_read_len)
 {
   DBUG_ENTER("read_event");
@@ -3383,7 +3382,7 @@ static std::basic_string_view<unsigned char> read_event(
     DBUG_RETURN(packet_error);
 #endif
 
-  std::basic_string_view<unsigned char> packet= mysql.next();
+  std::string_view packet= mysql.next();
   size_t len= packet.size();
   /*FIXME:
     In `@@slave_compressed_protocol`, `@@read_binlog_speed_limit` should
@@ -4734,7 +4733,7 @@ connected:
                         DBUG_SET("-d,pause_before_io_read_event");
                       };);
 #endif
-      std::basic_string_view<unsigned char> packet=
+      std::string_view packet=
         read_event(mysql, mi, &suppress_warnings, &network_read_len);
       event_len= packet.size();
       if (check_io_slave_killed(mi, NullS))
@@ -4773,7 +4772,7 @@ Stopping slave I/O thread due to out-of-memory error from master");
 
       thd->set_time_for_next_stage();
       THD_STAGE_INFO(thd, stage_queueing_master_event_to_the_relay_log);
-      event_buf= packet.data();
+      event_buf= reinterpret_cast<const uchar *>(packet.data());
       mi->semi_ack= 0;
       if (repl_semisync_slave.
           slave_read_sync_header(event_buf,
