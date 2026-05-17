@@ -124,7 +124,7 @@ SET (SQL_SOURCE
                protocol.cc records.cc repl_failsafe.cc rpl_filter.cc
                session_tracker.cc
                sql_path.cc
-               set_var.cc ../rpl/remote_event_stream.cc
+               set_var.cc
                slave.cc sp.cc sp_cache.cc sp_head.cc sp_pcontext.cc
                sp_rcontext.cc sp_cursor.cc
                spatial.cc sql_acl.cc sql_analyse.cc sql_base.cc
@@ -250,7 +250,7 @@ ADD_LIBRARY(sql STATIC ${SQL_SOURCE})
 MAYBE_DISABLE_IPO(sql)
 DTRACE_INSTRUMENT(sql)
 TARGET_LINK_LIBRARIES(sql
-  mysys mysys_ssl dbug strings vio pcre2-8
+  rpl mysys mysys_ssl dbug strings vio pcre2-8
   tpool
   online_alter_log
   ${LIBWRAP} ${LIBCRYPT} ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT}
