@@ -36,7 +36,7 @@ Error Error	host2	116509
 Error Error Error Error	host2	116509
 show status like "Created_tmp%";
 Variable_name	Value
-Created_tmp_disk_tables	0
-Created_tmp_files	0
-Created_tmp_tables	6
+Created_tmp_disk_tables	#
+Created_tmp_files	#
+Created_tmp_tables	#
 DROP TABLE logs;

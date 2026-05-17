@@ -4,6 +4,6 @@
 
 # Test with forcing conversion of temporary table to Aria
 
-SET @@tmp_memory_table_size = 65536;
+SET @@tmp_memory_table_size = 32768;
 --source blob_big.inc
 

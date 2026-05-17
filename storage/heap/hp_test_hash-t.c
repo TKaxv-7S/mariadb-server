@@ -521,9 +521,9 @@ static void test_distinct_key_format(void)
 
     /* Write into rec_lookup's blob field */
     bl= (uint32) varchar_len;
-    memcpy(rec_lookup + REC_BLOB_OFFSET, &bl, REC_BLOB_PACKLEN);
+    int2store(rec_lookup + REC_BLOB_OFFSET, bl);
     memcpy(rec_lookup + REC_BLOB_OFFSET + REC_BLOB_PACKLEN,
-           &varchar_data, PTR_SIZE);
+           &varchar_data, sizeof(varchar_data));
   }
 
   /* Step 5: hp_make_key from rec_lookup, then hash the record */
@@ -631,9 +631,9 @@ static void test_group_by_key_format(void)
     varchar_data= key_pos + 2;
 
     bl= (uint32) varchar_len;
-    memcpy(rec_lookup + REC_BLOB_OFFSET, &bl, REC_BLOB_PACKLEN);
+    int2store(rec_lookup + REC_BLOB_OFFSET, bl);
     memcpy(rec_lookup + REC_BLOB_OFFSET + REC_BLOB_PACKLEN,
-           &varchar_data, PTR_SIZE);
+           &varchar_data, sizeof(varchar_data));
   }
 
   lookup_hash= hp_rec_hashnr(&keydef, rec_lookup);
@@ -1103,7 +1103,7 @@ static void test_blob_blob_multi_segment(void)
   hp_make_key(&keydef, key_buf, rec1);
   {
     uint32 key_blob1_len= uint4korr(key_buf);
-    uint32 key_blob2_len= uint4korr(key_buf + 4 + PTR_SIZE);
+    uint32 key_blob2_len= uint4korr(key_buf + 4 + portable_sizeof_char_ptr);
 
     ok(key_blob1_len == data_a1.length,
        "blob+blob: hp_make_key blob1 length = %u (expected %u)",

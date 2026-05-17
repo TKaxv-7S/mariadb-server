@@ -5,10 +5,14 @@
     byte 0:       null bitmap (1 byte)
     bytes 1-4:    int4 field (4 bytes)
     bytes 5-6:    blob packlength=2 (length, little-endian)
-    bytes 7-14:   blob data pointer (8 bytes on x86_64)
+    bytes 7-14:   blob data pointer (portable_sizeof_char_ptr = 8 bytes always)
   reclength = 15
   visible_offset = MAX(15, 8) = 15
   recbuffer = ALIGN(15 + 1, 8) = 16
+
+  The pointer slot is always portable_sizeof_char_ptr (8) bytes in the record
+  (same on 32-bit and 64-bit), but only sizeof(void*) bytes are meaningful.
+  The rest is zero-padded by memset.
 */
 
 #ifndef HP_TEST_HELPERS_H
@@ -26,8 +30,6 @@
 #define BLOB_OFFSET   5
 #define BLOB_PACKLEN  2
 
-#define PTR_SIZE portable_sizeof_char_ptr
-
 
 static void build_record(uchar *rec, int32 int_val,
                          const uchar *blob_data, uint16 blob_len)
@@ -35,7 +37,7 @@ static void build_record(uchar *rec, int32 int_val,
   memset(rec, 0, REC_LENGTH);
   int4store(rec + INT_OFFSET, int_val);
   int2store(rec + BLOB_OFFSET, blob_len);
-  memcpy(rec + BLOB_OFFSET + BLOB_PACKLEN, &blob_data, PTR_SIZE);
+  memcpy(rec + BLOB_OFFSET + BLOB_PACKLEN, &blob_data, sizeof(blob_data));
 }
 
 
