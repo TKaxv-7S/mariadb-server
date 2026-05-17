@@ -178,7 +178,7 @@ MYSQL_RES_P server_mysql_store_result(Remote_event_stream &stream)
 #define simple_command(stream, command, args, strlen, skip_check) \
   stream.send_command(command, args, strlen, skip_check)
 #undef packet_error
-#define packet_error std::basic_string_view<unsigned char>()
+static constexpr auto packet_error= std::basic_string_view<unsigned char>();
 
 /*
   Function to set the slave's max_allowed_packet based on the value

@@ -141,7 +141,7 @@ bool Remote_event_stream::send_command(
   int command, const unsigned char *args, size_t strlen, bool skip_check)
 {
   return simple_command(connector, static_cast<enum_server_command>(command),
-    args, static_cast<unsigned long>(strlen), false);
+    args, static_cast<unsigned long>(strlen), skip_check);
 }
 
 unsigned long Remote_event_stream::thread_id()
