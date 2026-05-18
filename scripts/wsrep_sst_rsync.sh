@@ -246,7 +246,7 @@ if [ "${SSLMODE#VERIFY}" != "$SSLMODE" ]; then
         exit 22 # EINVAL
     fi
     if [ -n "$WSREP_SST_OPT_REMOTE_USER" ]; then
-        CHECK_OPT="checkHost = $WSREP_SST_OPT_REMOTE_USER"
+        CHECK_OPT="checkHost = $(safe WSREP_SST_OPT_REMOTE_USER)"
     elif [ "$WSREP_SST_OPT_ROLE" = 'donor' ]; then
         # check if the address is an ip-address (v4 or v6):
         if echo "$WSREP_SST_OPT_HOST_UNESCAPED" | \
@@ -640,7 +640,8 @@ FILTER="-f '- /lost+found'
     echo "$STATE" > "$MAGIC_FILE"
 
     if [ -n "$WSREP_SST_OPT_REMOTE_PSWD" ]; then
-        # Let joiner know that we know its secret
+        # Let joiner know that we know its secret.
+        WSREP_SST_OPT_REMOTE_PSWD=$(safe WSREP_SST_OPT_REMOTE_PSWD)
         echo "$SECRET_TAG $WSREP_SST_OPT_REMOTE_PSWD" >> "$MAGIC_FILE"
     fi
 
