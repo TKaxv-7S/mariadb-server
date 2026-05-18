@@ -2234,6 +2234,8 @@ i_s_fts_deleted_generic_fill(
 
 	trx = trx_create();
 	trx->op_info = "Select for FTS DELETE TABLE";
+	trx->mysql_thd = thd;
+	trx_start_internal(trx);
 
 	FTSQueryExecutor executor(trx, user_table);
 	fts_table_fetch_doc_ids(
@@ -2853,7 +2855,6 @@ int i_s_fts_read_aux_index_words(
       if (UNIV_LIKELY(error == DB_SUCCESS ||
                       error == DB_FTS_EXCEED_RESULT_CACHE_LIMIT))
       {
-        fts_sql_commit(trx);
         has_more= error == DB_FTS_EXCEED_RESULT_CACHE_LIMIT;
         break;
       }
@@ -2865,6 +2866,8 @@ int i_s_fts_read_aux_index_words(
           sql_print_warning("InnoDB: Lock wait timeout"
                             " while reading FTS index. Retrying!");
           trx->error_state= DB_SUCCESS;
+          /* Restart transaction after rollback to restore will_lock flag */
+          trx_start_internal(trx);
 	  /* Clear words and retry */
 	  i_s_fts_index_table_free_one_fetch(words);
 	  reader.reset_total_memory();  /* Reset memory counter on retry */
@@ -2926,8 +2929,11 @@ i_s_fts_index_table_fill_one_index(
 				 sizeof(fts_word_t), 256);
 
 	trx_t* trx= trx_create();
+	trx->mysql_thd = thd;
 	trx->op_info= "fetching FTS index nodes";
-        FTSQueryExecutor executor(trx, index->table);
+	trx_start_internal(trx);
+
+	FTSQueryExecutor executor(trx, index->table);
         dberr_t error= executor.open_all_aux_tables(index);
 
 	if (error) return 1;
@@ -2946,6 +2952,7 @@ i_s_fts_index_table_fill_one_index(
 	}
 
 func_exit:
+	fts_sql_commit(trx);
 	trx->free();
 	mem_heap_free(heap);
 
@@ -3131,6 +3138,9 @@ i_s_fts_config_fill(
 
 	trx = trx_create();
 	trx->op_info = "Select for FTS CONFIG TABLE";
+	trx->mysql_thd= thd;
+	trx_start_internal(trx);
+
 	FTSQueryExecutor executor(trx, user_table);
 	if (!ib_vector_is_empty(user_table->fts->indexes)) {
 		index = (dict_index_t*) ib_vector_getp_const(

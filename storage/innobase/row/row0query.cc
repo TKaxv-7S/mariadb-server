@@ -145,14 +145,37 @@ dberr_t QueryExecutor::insert_record(dict_table_t *table,
                                      dtuple_t *tuple) noexcept
 {
   dict_index_t* index= dict_table_get_first_index(table);
-  return row_ins_clust_index_entry(index, tuple, m_thr, 0);
+  dberr_t err;
+
+retry:
+  err = row_ins_clust_index_entry(index, tuple, m_thr, 0);
+
+  if (err == DB_LOCK_WAIT)
+  {
+    err = handle_wait(err, false);
+    if (err == DB_SUCCESS)
+      goto retry;
+  }
+
+  return err;
 }
 
 dberr_t QueryExecutor::lock_table(dict_table_t *table, lock_mode mode) noexcept
 {
   ut_ad(m_trx);
-  trx_start_if_not_started(m_trx, true);
-  return ::lock_table(table, nullptr, mode, m_thr);
+  trx_start_if_not_started(m_trx, mode == LOCK_IX ? true : false);
+  m_thr->graph->trx= m_trx;
+
+  dberr_t err;
+retry:
+  err = ::lock_table(table, nullptr, mode, m_thr);
+  if (err == DB_LOCK_WAIT)
+  {
+    err= handle_wait(err, true);
+    if (err == DB_SUCCESS)
+      goto retry;
+  }
+  return err;
 }
 
 dberr_t QueryExecutor::handle_wait(dberr_t err, bool table_lock) noexcept
