@@ -6083,8 +6083,8 @@ err:
     This matches the downgrade pattern at the end of
     mysql_alter_table().
   */
-  if (thd->locked_tables_mode && table_list->table &&
-      table_list->table->mdl_ticket)
+  if (thd->locked_tables_mode && table &&
+      table->mdl_ticket)
   {
     table_list->table->mdl_ticket->downgrade_lock(
         MDL_SHARED_NO_READ_WRITE);
