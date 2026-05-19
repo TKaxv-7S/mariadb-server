@@ -2496,6 +2496,10 @@ void THD::cleanup_after_query()
       (not just in the end of a stored routine individual statement).
     */
     statement_rcontext_reinit();
+    delete opt_ctx_recorder;
+    opt_ctx_recorder= NULL;
+    delete opt_ctx_replay;
+    opt_ctx_replay= NULL;
   }
 
   /*
@@ -2563,10 +2567,6 @@ void THD::cleanup_after_query()
     wsrep_affected_rows= 0;
 #endif /* WITH_WSREP */
   gap_tracker_data.init();
-  delete opt_ctx_recorder;
-  opt_ctx_recorder= NULL;
-  delete opt_ctx_replay;
-  opt_ctx_replay= NULL;
   DBUG_VOID_RETURN;
 }
 
