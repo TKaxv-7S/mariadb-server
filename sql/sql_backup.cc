@@ -63,6 +63,7 @@ send_step(int in_fd, int out_fd, size_t count, off_t *offset) noexcept
   return sendfile(out_fd, in_fd, offset, count);
 }
 # else
+#  include "aligned.h"
 #  include <sys/mman.h>
 /** Copy a file using a memory mapping.
 @param in_fd   source file
