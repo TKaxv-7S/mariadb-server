@@ -1013,7 +1013,7 @@ fts_optimize_word(
 		src_node = (fts_node_t*) ib_vector_get(word->nodes, i);
 
 		if (dst_node == NULL
-		    || dst_node->last_doc_id > src_node->first_doc_id) {
+		    || dst_node->last_doc_id >= src_node->first_doc_id) {
 
 			dst_node = static_cast<fts_node_t*>(
 				ib_vector_push(nodes, NULL));
