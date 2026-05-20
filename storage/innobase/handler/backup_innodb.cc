@@ -498,7 +498,6 @@ private:
     const bool move{!clone && old_size};
 
 #ifdef _WIN32
-    const bool closed{clone && log_sys.close_file_if_at(lsn)};
     std::string b{target.path};
     b.push_back('/');
     b.append(clone ? "ib_logfile101" : basename);
@@ -512,8 +511,6 @@ private:
       fail:
         err= GetLastError();
       got_err:
-        if (closed)
-          log_sys.resume_file();
         my_osmaperr(err);
         my_error(ER_ERROR_ON_RENAME, MYF(ME_ERROR_LOG), path, basename, errno);
         return -1;
@@ -535,8 +532,6 @@ private:
     }
     else if (clone)
       *clone= true;
-    if (closed)
-      log_sys.resume_file();
 #else
     ut_ad(target.directory);
     if (move
