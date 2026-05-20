@@ -23,11 +23,6 @@
 
 #ifdef _WIN32
 #elif defined __APPLE__
-# include <sys/attr.h>
-# include <sys/clonefile.h>
-# include <copyfile.h>
-# define copy_file(src, dst, off) \
-  fcopyfile(src, dst, nullptr, COPYFILE_ALL | COPYFILE_CLONE)
 #else
 using copying_step= ssize_t(int,int,size_t,off_t*);
 template<copying_step step>
@@ -263,8 +258,10 @@ bool Sql_cmd_backup::execute(THD *thd)
   /* The final part must not interfere with the use of the server datadir.
   Release the locks. */
   thd->mdl_context.release_lock(mdl_request.ticket);
-  plugin_foreach_with_mask(thd, backup_finalize, MYSQL_STORAGE_ENGINE_PLUGIN,
-                           PLUGIN_IS_DELETED|PLUGIN_IS_READY, &dir);
+  fail= plugin_foreach_with_mask(thd, backup_finalize,
+                                 MYSQL_STORAGE_ENGINE_PLUGIN,
+                                 PLUGIN_IS_DELETED|PLUGIN_IS_READY, &dir) ||
+    fail;
 #ifndef _WIN32
   close(dir.fd);
 #endif

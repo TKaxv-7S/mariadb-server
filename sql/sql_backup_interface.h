@@ -13,10 +13,18 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA */
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-#ifndef _WIN32
+#ifdef _WIN32
+/* You have to use CopyFileEx() and friends manually */
+#elif defined __APPLE__
+# include <sys/attr.h>
+# include <sys/clonefile.h>
+# include <copyfile.h>
+# define copy_file(src, dst, off) \
+  fcopyfile(src, dst, nullptr, COPYFILE_ALL | COPYFILE_CLONE)
+#else
+# ifdef __cplusplus
+extern "C"
+# endif
 /** Copy a file.
 @param src  source file descriptor
 @param dst  target to append src to
@@ -24,7 +32,4 @@ extern "C" {
 @return error code (negative)
 @retval 0   on success */
 int copy_file(int src, int dst, off_t size);
-#endif
-#ifdef __cplusplus
-};
 #endif

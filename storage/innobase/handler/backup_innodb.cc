@@ -499,7 +499,8 @@ private:
 
 #ifdef _WIN32
     const bool closed{clone && log_sys.close_file_if_at(lsn)};
-    std::string b= target.path;
+    std::string b{target.path};
+    p.push_back('/');
     b.append(clone ? "ib_logfile101" : basename);
     const char *destname= b.c_str();
 
