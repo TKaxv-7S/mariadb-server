@@ -9534,7 +9534,7 @@ fill_record(THD *thd, TABLE *table, Field **ptr, List<Item> &values,
     if (use_value)
       value->save_val(field);
     else
-      if (value->save_in_field(field, 0) < 0)
+      if (value->save_in_field(field, 0) < 0 && thd->is_error())
         goto err;
     field->set_has_explicit_value();
   }

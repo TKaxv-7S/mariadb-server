@@ -727,6 +727,77 @@ int finalize_replace(TABLE *table, enum_duplicates handle_duplicates,
 }
 
 
+class Wrong_value_errors_to_warnings_handler : public Internal_error_handler
+{
+public:
+  Wrong_value_errors_to_warnings_handler() = default;
+  bool handle_condition(THD *,
+                        uint sql_errno,
+                        const char*,
+                        Sql_condition::enum_warning_level *level,
+                        const char*,
+                        Sql_condition ** cond_hdl) override
+  {
+    *cond_hdl= NULL;
+    if (sql_errno == ER_WRONG_VALUE)
+      *level= Sql_condition::WARN_LEVEL_WARN;
+    return(0);
+  }
+};
+
+
+static inline bool
+fill_record_n_invoke_before_triggers_set_handler(THD *thd, TABLE *table,
+                                                 Field **fields,
+                                                 List<Item> *values, 
+                                                 bool *skip_row_indicator,
+                                                 bool insert_ignore)
+{
+  Wrong_value_errors_to_warnings_handler err_h;
+  int result;
+
+  if (insert_ignore)
+  {
+    thd->push_internal_handler(&err_h);
+  }
+
+  result= fill_record_n_invoke_before_triggers(thd, table, fields,
+                                               *values, 0, TRG_EVENT_INSERT,
+                                               skip_row_indicator);
+
+  if (insert_ignore)
+    thd->pop_internal_handler();
+
+  return result;
+}
+
+
+static inline bool
+fill_record_n_invoke_before_triggers_set_handler(THD *thd, TABLE *table,
+                                                 List<Item> &fields,
+                                                 List<Item> *values, 
+                                                 bool *skip_row_indicator,
+                                                 bool insert_ignore)
+{
+  Wrong_value_errors_to_warnings_handler err_h;
+  int result;
+
+  if (insert_ignore)
+  {
+    thd->push_internal_handler(&err_h);
+  }
+
+  result= fill_record_n_invoke_before_triggers(thd, table, fields,
+                                               *values, 0, TRG_EVENT_INSERT,
+                                               skip_row_indicator);
+
+  if (insert_ignore)
+    thd->pop_internal_handler();
+
+  return result;
+}
+
+
 /**
   INSERT statement implementation
 
@@ -1143,10 +1214,8 @@ bool mysql_insert(THD *thd, TABLE_LIST *table_list,
         restore_default_record_for_insert(table);
         table->reset_default_fields();
 
-        if (unlikely(fill_record_n_invoke_before_triggers(thd, table, fields,
-                                                          *values, 0,
-                                                          TRG_EVENT_INSERT,
-                                                          &trg_skip_row)))
+        if (unlikely(fill_record_n_invoke_before_triggers_set_handler(
+                       thd, table, fields, values, &trg_skip_row, ignore)))
         {
           if (values_list.elements != 1 && ! thd->is_error())
           {
@@ -1191,12 +1260,9 @@ bool mysql_insert(THD *thd, TABLE_LIST *table_list,
         }
         table->reset_default_fields();
 
-        if (unlikely(fill_record_n_invoke_before_triggers(thd, table,
-                                                          table->
-                                                          field_to_fill(),
-                                                          *values, 0,
-                                                          TRG_EVENT_INSERT,
-                                                          &trg_skip_row)))
+        if (unlikely(fill_record_n_invoke_before_triggers_set_handler(
+                       thd, table, table->field_to_fill(), values,
+                       &trg_skip_row, ignore)))
         {
           if (values_list.elements != 1 && ! thd->is_error())
 	  {
@@ -4508,8 +4574,21 @@ int select_insert::send_data(List<Item> &values)
   bool trg_skip_row= false;
 
   thd->count_cuted_fields= CHECK_FIELD_WARN;	// Calculate cuted fields
-  if (store_values(values, &trg_skip_row))
-    DBUG_RETURN(1);
+  if (info.ignore)
+  {
+    Wrong_value_errors_to_warnings_handler err_h;
+    int res;
+    thd->push_internal_handler(&err_h);
+    res= store_values(values, &trg_skip_row);
+    thd->pop_internal_handler();
+    if (res && thd->is_error())
+      DBUG_RETURN(1);
+  }
+  else
+  {
+    if (store_values(values, &trg_skip_row))
+      DBUG_RETURN(1);
+  }
   thd->count_cuted_fields= CHECK_FIELD_ERROR_FOR_NULL;
   if (unlikely(thd->is_error()))
   {

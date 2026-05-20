@@ -359,4 +359,69 @@ ERROR HY000: Incorrect XMLTYPE value: 'a'
 SET sql_mode= default;
 DROP PROCEDURE sp;
 DROP TABLE t;
+#
+# MDEV-39669 INSERT IGNORE with invalid xmltype value should not end up with an error, but warning.
+#
+CREATE TABLE t1 (x XMLTYPE);
+INSERT INTO t1 VALUES ('a');
+ERROR HY000: Incorrect XMLTYPE value: 'a'
+SELECT * FROM t1;
+x
+INSERT IGNORE INTO t1 VALUES ('a');
+Warnings:
+Warning	1525	Incorrect XMLTYPE value: 'a'
+SELECT * FROM t1;
+x
+NULL
+TRUNCATE t1;
+CREATE TABLE t2 (i INT);
+INSERT INTO t2 VALUES (1),(2),(3),(4);
+INSERT INTO t1 SELECT i FROM t2;
+ERROR HY000: Cannot cast 'int' as 'xmltype' in assignment of `test`.`t1`.`x`
+SELECT * FROM t1;
+x
+INSERT IGNORE INTO t1 SELECT i FROM t2;
+Warnings:
+Warning	4078	Cannot cast 'int' as 'xmltype' in assignment of `test`.`t1`.`x`
+Warning	1525	Incorrect XMLTYPE value: '1'
+Warning	1525	Incorrect XMLTYPE value: '2'
+Warning	1525	Incorrect XMLTYPE value: '3'
+Warning	1525	Incorrect XMLTYPE value: '4'
+SELECT * FROM t1;
+x
+NULL
+NULL
+NULL
+NULL
+DROP TABLE t1;
+CREATE TABLE t1 (x XMLTYPE NOT NULL);
+INSERT INTO t1 VALUES ('a');
+ERROR HY000: Incorrect XMLTYPE value: 'a'
+SELECT * FROM t1;
+x
+INSERT IGNORE INTO t1 VALUES ('a');
+Warnings:
+Warning	1525	Incorrect XMLTYPE value: 'a'
+SELECT * FROM t1;
+x
+<invalid_xml_replaced />
+TRUNCATE t1;
+INSERT INTO t1 SELECT i FROM t2;
+ERROR HY000: Cannot cast 'int' as 'xmltype' in assignment of `test`.`t1`.`x`
+SELECT * FROM t1;
+x
+INSERT IGNORE INTO t1 SELECT i FROM t2;
+Warnings:
+Warning	4078	Cannot cast 'int' as 'xmltype' in assignment of `test`.`t1`.`x`
+Warning	1525	Incorrect XMLTYPE value: '1'
+Warning	1525	Incorrect XMLTYPE value: '2'
+Warning	1525	Incorrect XMLTYPE value: '3'
+Warning	1525	Incorrect XMLTYPE value: '4'
+SELECT * FROM t1;
+x
+<invalid_xml_replaced />
+<invalid_xml_replaced />
+<invalid_xml_replaced />
+<invalid_xml_replaced />
+DROP TABLE t1, t2;
 # End of 12.3 tests
