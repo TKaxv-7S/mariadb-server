@@ -333,7 +333,10 @@ public:
         else
         {
           fail= copy_file(s, d,
-                          ((trx->commit_lsn - first_lsn) + 4095) & ~4095ULL);
+                          std::max<lsn_t>(log_sys.FILE_SIZE_MIN,
+                                          log_sys.START_OFFSET +
+                                          (((trx->commit_lsn - first_lsn) +
+                                            4095) & ~4095ULL)));
           if (close(d) || fail)
             goto fail;
           if (unlinkat(target.fd, "ib_logfile101", 0))
