@@ -1022,6 +1022,7 @@ ATTRIBUTE_COLD dberr_t ibuf_upgrade()
 
 dberr_t ibuf_upgrade_needed()
 {
+  ut_ad(srv_force_recovery < SRV_FORCE_NO_LOG_REDO);
   mtr_t mtr{nullptr};
   mtr.start();
   mtr.x_lock_space(fil_system.sys_space);

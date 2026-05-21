@@ -557,7 +557,7 @@ ATTRIBUTE_COLD static dberr_t srv_undo_tablespaces_reinit()
                  dict_hdr->page.frame, srv_undo_space_id_start);
 
   /* Re-create the new undo tablespaces */
-  err= srv_undo_tablespaces_init(true, &mtr);
+  err= srv_undo_tablespaces_init(&mtr);
 func_exit:
   mtr.commit();
 
@@ -903,17 +903,12 @@ unused_undo:
 
 PRAGMA_DISABLE_CHECK_STACK_FRAME
 
-/** Open the configured number of dedicated undo tablespaces.
-@param[in]	create_new_undo	whether the undo tablespaces has to be created
-@param[in,out]	mtr		mini-transaction
-@return DB_SUCCESS or error code */
-dberr_t srv_undo_tablespaces_init(bool create_new_undo, mtr_t *mtr)
+dberr_t srv_undo_tablespaces_init(mtr_t *mtr)
 {
   srv_undo_tablespaces_open= 0;
 
-  ut_ad(!create_new_undo || mtr);
   ut_a(srv_undo_tablespaces <= TRX_SYS_N_RSEGS);
-  ut_a(!create_new_undo || srv_operation <= SRV_OPERATION_EXPORT_RESTORED);
+  ut_a(!mtr || srv_operation <= SRV_OPERATION_EXPORT_RESTORED);
 
   if (srv_undo_tablespaces == 1)
     srv_undo_tablespaces= 0;
@@ -921,7 +916,7 @@ dberr_t srv_undo_tablespaces_init(bool create_new_undo, mtr_t *mtr)
   /* Create the undo spaces only if we are creating a new
   instance. We don't allow creating of new undo tablespaces
   in an existing instance (yet). */
-  if (create_new_undo)
+  if (mtr)
   {
     DBUG_EXECUTE_IF("innodb_undo_upgrade", srv_undo_space_id_start= 3;);
 
@@ -943,12 +938,12 @@ dberr_t srv_undo_tablespaces_init(bool create_new_undo, mtr_t *mtr)
   already exist. */
   srv_undo_tablespaces_active= srv_undo_tablespaces;
 
-  uint32_t n_undo= (create_new_undo || srv_operation == SRV_OPERATION_BACKUP ||
+  uint32_t n_undo= (mtr || srv_operation == SRV_OPERATION_BACKUP ||
                     srv_operation == SRV_OPERATION_RESTORE_DELTA)
     ? srv_undo_tablespaces : TRX_SYS_N_RSEGS;
 
   mysql_mutex_lock(&recv_sys.mutex);
-  dberr_t err= srv_all_undo_tablespaces_open(create_new_undo, n_undo);
+  dberr_t err= srv_all_undo_tablespaces_open(mtr != nullptr, n_undo);
   mysql_mutex_unlock(&recv_sys.mutex);
 
   /* Initialize srv_undo_space_id_start=0 when there are no
@@ -956,7 +951,7 @@ dberr_t srv_undo_tablespaces_init(bool create_new_undo, mtr_t *mtr)
   if (srv_undo_tablespaces_open == 0)
     srv_undo_space_id_start= 0;
 
-  if (create_new_undo)
+  if (mtr)
     for (uint32_t i= 0; err == DB_SUCCESS && i < srv_undo_tablespaces; ++i)
       err= fsp_header_init(fil_space_get(srv_undo_space_id_start + i),
                            SRV_UNDO_TABLESPACE_SIZE_IN_PAGES, mtr);
@@ -1294,6 +1289,70 @@ static dberr_t srv_load_tables(bool must_upgrade_ibuf) noexcept
   return err;
 }
 
+/** Attempt to start up a previously created database.
+@return error code */
+static dberr_t srv_start_recovery()
+{
+  ut_ad(srv_force_recovery < SRV_FORCE_NO_LOG_REDO);
+  dberr_t err= recv_recovery_from_checkpoint_start();
+  recv_sys.close_files();
+
+  bool must_upgrade_ibuf= false;
+
+  switch (srv_operation) {
+  case SRV_OPERATION_NORMAL:
+  case SRV_OPERATION_EXPORT_RESTORED:
+  case SRV_OPERATION_RESTORE_EXPORT:
+    if (err != DB_SUCCESS)
+      return err;
+    err= ibuf_upgrade_needed();
+    if (UNIV_UNLIKELY(err == DB_FAIL))
+    {
+      must_upgrade_ibuf= true;
+      err= ibuf_log_rebuild_if_needed();
+    }
+    if (err == DB_SUCCESS)
+      err= dict_boot();
+    /* fall through */
+  case SRV_OPERATION_RESTORE:
+    if (err != DB_SUCCESS)
+      return err;
+    srv_undo_tablespaces_active= trx_rseg_get_n_undo_tablespaces();
+    break;
+  default:
+    ut_ad("wrong mariabackup mode" == 0);
+  }
+
+  ut_ad(err == DB_SUCCESS);
+
+  /* Apply the hashed log records to the respective file pages, for
+  the last batch of recv_group_scan_log_recs(). Since it may generate
+  huge batch of threadpool tasks, for read io task group, scale down
+  thread creation rate by temporarily restricting tpool concurrency. */
+  srv_thread_pool->set_concurrency(srv_n_read_io_threads);
+  mysql_mutex_lock(&recv_sys.mutex);
+  recv_sys.apply(true);
+  mysql_mutex_unlock(&recv_sys.mutex);
+  srv_thread_pool->set_concurrency();
+
+  if (recv_sys.is_corrupt_log() || recv_sys.is_corrupt_fs())
+    return DB_CORRUPTION;
+
+  DBUG_PRINT("ib_log", ("apply completed"));
+  if (srv_operation != SRV_OPERATION_RESTORE)
+  {
+    err= srv_load_tables(must_upgrade_ibuf);
+    if (err == DB_SUCCESS)
+    init_lists:
+      err= trx_lists_init_at_db_start();
+    if (err == DB_SUCCESS && recv_needed_recovery)
+      trx_sys_print_mysql_binlog_offset();
+  }
+  else if (recv_needed_recovery)
+    goto init_lists;
+  return err;
+}
+
 /** Start InnoDB.
 @param[in]	create_new_db	whether to create a new database
 @return DB_SUCCESS or error code */
@@ -1396,65 +1455,26 @@ dberr_t srv_start(bool create_new_db)
 		return srv_init_abort(DB_ERROR);
 	}
 
+	trx_sys.create();
+	ulint sum_of_new_sizes;
+
 	/* Check if undo tablespaces and redo log files exist before creating
 	a new system tablespace */
 	if (create_new_db) {
+		ut_ad(!srv_read_only_mode);
 		err = srv_check_undo_redo_logs_exists();
 		if (err != DB_SUCCESS) {
 			return(srv_init_abort(DB_ERROR));
 		}
 		recv_sys.debug_free();
-	} else {
-		ut_ad(srv_operation <= SRV_OPERATION_EXPORT_RESTORED
-		      || srv_operation == SRV_OPERATION_RESTORE
-		      || srv_operation == SRV_OPERATION_RESTORE_EXPORT);
-		ut_ad(!recv_sys.recovery_on);
-		/* Suppress warnings in fil_space_t::create() for files
-		that are being read before dict_boot() has recovered
-		DICT_HDR_MAX_SPACE_ID. */
-		fil_system.space_id_reuse_warned = true;
 
-		if (srv_force_recovery >= SRV_FORCE_NO_LOG_REDO) {
-			sql_print_information("InnoDB: innodb_force_recovery=6"
-					      " skips redo log apply");
-		} else {
-			log_sys.latch.wr_lock();
-			err = recv_sys.find_checkpoint();
-			log_sys.latch.wr_unlock();
-			if (err != DB_SUCCESS) {
-				return srv_init_abort(err);
-			}
+		/* Open or create the data files. */
+		err = srv_sys_space.open_or_create(false, true,
+						   &sum_of_new_sizes);
+		if (err != DB_SUCCESS) {
+			return srv_init_abort(err);
 		}
-	}
 
-	/* Open or create the data files. */
-	ulint	sum_of_new_sizes;
-
-	err = srv_sys_space.open_or_create(
-		false, create_new_db, &sum_of_new_sizes);
-
-	switch (err) {
-	case DB_SUCCESS:
-		break;
-	case DB_CANNOT_OPEN_FILE:
-		ib::error()
-			<< "Could not open or create the system tablespace. If"
-			" you tried to add new data files to the system"
-			" tablespace, and it failed here, you should now"
-			" edit innodb_data_file_path in my.cnf back to what"
-			" it was, and remove the new ibdata files InnoDB"
-			" created in this failed attempt. InnoDB only wrote"
-			" those files full of zeros, but did not yet use"
-			" them in any way. But be careful: do not remove"
-			" old data files which contain your precious data!";
-		/* fall through */
-	default:
-		/* Other errors might be flagged by
-		Datafile::validate_first_page() */
-		return srv_init_abort(err);
-	}
-
-	if (create_new_db) {
 		lsn_t flushed_lsn = log_sys.init_lsn();
 		log_sys.latch.wr_lock();
 		mysql_mutex_lock(&buf_pool.flush_list_mutex);
@@ -1475,38 +1495,19 @@ dberr_t srv_start(bool create_new_db)
 		}
 
 		srv_undo_space_id_start = 1;
-	}
 
-	/* Open data files in the system tablespace: we keep
-	them open until database shutdown */
-	mysql_mutex_lock(&recv_sys.mutex);
-	ut_d(fil_system.sys_space->recv_size = srv_sys_space_size_debug);
-	err = fil_system.sys_space->open(create_new_db)
-		? DB_SUCCESS : DB_ERROR;
-	mysql_mutex_unlock(&recv_sys.mutex);
+		if (!fil_system.sys_space->open(true)) {
+			return srv_init_abort(DB_ERROR);
+		}
 
-	if (err == DB_SUCCESS) {
 		mtr.start();
-		err= srv_undo_tablespaces_init(create_new_db, &mtr);
+		err = srv_undo_tablespaces_init(&mtr);
 		mtr.commit();
-	}
-	else {
-		err= DB_ERROR;
-	}
 
-	/* If the force recovery is set very high then we carry on regardless
-	of all errors. Basically this is fingers crossed mode. */
+		if (err != DB_SUCCESS) {
+			return srv_init_abort(DB_ERROR);
+		}
 
-	if (err != DB_SUCCESS
-	    && srv_force_recovery < SRV_FORCE_NO_UNDO_LOG_SCAN) {
-
-		return(srv_init_abort(err));
-	}
-
-	trx_sys.create();
-
-	if (create_new_db) {
-		ut_ad(!srv_read_only_mode);
 
 		mtr.start();
 		ut_ad(fil_system.sys_space->id == 0);
@@ -1561,99 +1562,54 @@ dberr_t srv_start(bool create_new_db)
 			return(srv_init_abort(DB_ERROR));
 		}
 	} else {
-		/* We always try to do a recovery, even if the database had
-		been shut down normally: this is the normal startup path */
+		ut_ad(!recv_sys.recovery_on);
+		/* Suppress warnings in fil_space_t::create() for files
+		that are being read before dict_boot() has recovered
+		DICT_HDR_MAX_SPACE_ID. */
+		fil_system.space_id_reuse_warned = true;
 
-		err = recv_recovery_from_checkpoint_start();
-		recv_sys.close_files();
-
-		bool must_upgrade_ibuf = false;
-
-		switch (srv_operation) {
-                case SRV_OPERATION_NORMAL:
-		case SRV_OPERATION_EXPORT_RESTORED:
-		case SRV_OPERATION_RESTORE_EXPORT:
-			if (err != DB_SUCCESS) {
-				break;
-			}
-
-			err = ibuf_upgrade_needed();
-
-			if (UNIV_UNLIKELY(err == DB_FAIL)) {
-				must_upgrade_ibuf = true;
-				err = ibuf_log_rebuild_if_needed();
-			}
+		if (srv_force_recovery >= SRV_FORCE_NO_LOG_REDO) {
+			sql_print_information("InnoDB: innodb_force_recovery=6"
+					      " skips redo log apply");
+			recv_sys.rpo = LSN_MAX;
+		} else {
+			/* We always try to do a recovery, even if the
+			database had been shut down normally */
+			log_sys.latch.wr_lock();
+			err = recv_sys.find_checkpoint();
+			log_sys.latch.wr_unlock();
 
 			if (err != DB_SUCCESS) {
-				break;
+				return srv_init_abort(err);
 			}
-
-			err = dict_boot();
-			/* fall through */
-		case SRV_OPERATION_RESTORE:
-			if (err != DB_SUCCESS) {
-				break;
-			}
-
-			srv_undo_tablespaces_active
-				= trx_rseg_get_n_undo_tablespaces();
-			break;
-		default:
-			ut_ad("wrong mariabackup mode" == 0);
 		}
 
+		/* Open or create the data files. */
+		err = srv_sys_space.open_or_create(false, false,
+						   &sum_of_new_sizes);
 		if (err != DB_SUCCESS) {
 			return srv_init_abort(err);
 		}
 
-		if (srv_force_recovery < SRV_FORCE_NO_LOG_REDO) {
-			/* Apply the hashed log records to the
-			respective file pages, for the last batch of
-			recv_group_scan_log_recs().
-			Since it may generate huge batch of threadpool tasks,
-			for read io task group, scale down thread creation rate
-			by temporarily restricting tpool concurrency.
-			*/
-			srv_thread_pool->set_concurrency(srv_n_read_io_threads);
+		/* Open data files in the system tablespace: we keep
+		them open until database shutdown */
+		mysql_mutex_lock(&recv_sys.mutex);
+		ut_d(fil_system.sys_space->recv_size = srv_sys_space_size_debug);
+		err = fil_system.sys_space->open(false) ? DB_SUCCESS : DB_ERROR;
+		mysql_mutex_unlock(&recv_sys.mutex);
 
-			mysql_mutex_lock(&recv_sys.mutex);
-			recv_sys.apply(true);
-			mysql_mutex_unlock(&recv_sys.mutex);
+		if (err == DB_SUCCESS) {
+			err = srv_undo_tablespaces_init(nullptr);
 
-			srv_thread_pool->set_concurrency();
-
-			if (recv_sys.is_corrupt_log()
-			    || recv_sys.is_corrupt_fs()) {
-				return(srv_init_abort(DB_CORRUPTION));
+			if (err == DB_SUCCESS) {
+				err = srv_start_recovery();
 			}
 
-			if (srv_operation != SRV_OPERATION_RESTORE
-			    || recv_needed_recovery) {
+			if (err != DB_SUCCESS) {
+				return srv_init_abort(err);
 			}
-
-			DBUG_PRINT("ib_log", ("apply completed"));
-
-			if (srv_operation != SRV_OPERATION_RESTORE) {
-				err = srv_load_tables(must_upgrade_ibuf);
-				if (err != DB_SUCCESS) {
-					return srv_init_abort(err);
-				}
-
-				err = trx_lists_init_at_db_start();
-				if (err != DB_SUCCESS) {
-					return srv_init_abort(err);
-				}
-
-				if (recv_needed_recovery) {
-					trx_sys_print_mysql_binlog_offset();
-				}
-			} else if (recv_needed_recovery) {
-				err = trx_lists_init_at_db_start();
-				if (err != DB_SUCCESS) {
-					return srv_init_abort(err);
-				}
-				trx_sys_print_mysql_binlog_offset();
-			}
+		} else if (srv_force_recovery < SRV_FORCE_NO_UNDO_LOG_SCAN) {
+			return srv_init_abort(err);
 		}
 
 		fil_system.space_id_reuse_warned = false;

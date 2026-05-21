@@ -5798,13 +5798,6 @@ dberr_t recv_recovery_from_checkpoint_start()
 	ut_ad(UT_LIST_GET_LEN(buf_pool.unzip_LRU) == 0);
 	ut_d(mysql_mutex_unlock(&buf_pool.flush_list_mutex));
 
-	if (srv_force_recovery >= SRV_FORCE_NO_LOG_REDO) {
-		sql_print_information("InnoDB: innodb_force_recovery=6"
-				      " skips redo log apply");
-		recv_sys.rpo = LSN_MAX;
-		return err;
-	}
-
 	recv_sys.recovery_on = true;
 	recv_sys_rpo_exceeded = 0;
 

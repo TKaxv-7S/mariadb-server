@@ -4462,7 +4462,7 @@ xb_load_tablespaces()
 	}
 
 	/* Add separate undo tablespaces to fil_system */
-	err = srv_undo_tablespaces_init(false, nullptr);
+	err = srv_undo_tablespaces_init(nullptr);
 
 	if (err != DB_SUCCESS) {
 		return(err);
