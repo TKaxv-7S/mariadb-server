@@ -2,9 +2,8 @@
 #define SQL_PARALLEL_WORKERS_H
 
 #include "mariadb.h"
-#include "sql_select.h"
-#include "sql_lex.h"
 #include "sql_class.h"
+#include "mysqld.h"
 #include "sql_error.h"
 
 extern MYSQL_THD create_background_thd();
@@ -70,7 +69,7 @@ public:
 /*
   Class to create, manage and eventually destroy a "team" of worker threads.
 */
-class pwt_management
+class pwt_management : public Sql_alloc 
 {
 public:
   pwt_worker        *workers;

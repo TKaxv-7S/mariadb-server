@@ -26,6 +26,7 @@
 */
 
 #include "mariadb.h"
+#include "mysqld_error.h"
 #include "sql_priv.h"
 #include "unireg.h"
 #include "sql_select.h"
@@ -4903,7 +4904,6 @@ bool JOIN::save_explain_data(Explain_query *output, bool can_overwrite,
 int JOIN::exec()
 {
   int res;
-  pwt_management pwt;
 
   DBUG_ASSERT(optimization_state == OPTIMIZATION_DONE);
   DBUG_EXECUTE_IF("show_explain_probe_join_exec_start", 
@@ -4913,17 +4913,22 @@ int JOIN::exec()
                         dbug_serve_apcs(thd, 1);
                  );
 
+  // TEMPORARY-PARALLEL-WORK-TEST:
   // If we are a top level select statement
   if (!select_lex->outer_select() && thd->lex->sql_command == SQLCOM_SELECT &&
-      !pwt.init_parallel_workers(thd))
-    return 1;
+      !parallel_work_manager)
+  {
+    if (!(parallel_work_manager= new (thd->mem_root) pwt_management) ||
+          !parallel_work_manager->init_parallel_workers(thd))
+    {
+      my_error(ER_INTERNAL_ERROR, MYF(0), "Failed to initialize parallel work mgr");
+      return 1;
+    } 
+  }
 
   ANALYZE_START_TRACKING(thd, &explain->time_tracker);
   res= exec_inner();
   ANALYZE_STOP_TRACKING(thd, &explain->time_tracker);
-
-  if (pwt.workers)
-    pwt.join_parallel_workers(thd);
 
   DBUG_EXECUTE_IF("show_explain_probe_join_exec_end", 
                   if (dbug_user_var_equals_int(thd, 
@@ -17327,6 +17332,16 @@ void JOIN::cleanup(bool full)
 
   if (full)
     have_query_plan= QEP_DELETED;
+
+  // TEMPORARY-PARALLEL-WORK-TEST:
+  if (parallel_work_manager)
+  {
+    // Finish work and delete the manager
+    if (parallel_work_manager->workers)
+      parallel_work_manager->join_parallel_workers(thd);
+    delete parallel_work_manager;
+    parallel_work_manager= NULL;
+  }
 
   if (original_join_tab)
   {
