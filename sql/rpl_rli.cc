@@ -2442,6 +2442,8 @@ void rpl_group_info::slave_close_thread_tables(THD *thd)
 /*
   The method computes weather the requestor's replicatated transaction
   can be grouped with the holder's one to share BACKUP MDL.
+  The requestor must be slave parallel worker or the driver thread
+  having special sub-id == zero.
 
   The method returns
     false
@@ -2463,18 +2465,19 @@ rpl_group_info::ignore_mdl_priority(const THD* holder, const THD* requestor)
   DBUG_ASSERT(requestor->system_thread == SYSTEM_THREAD_SLAVE_SQL);
   DBUG_ASSERT(requestor->rgi_slave->is_parallel_exec); // func is for parallel
 
-  rpl_group_info *rgi_hol= holder->rgi_slave;
-  rpl_group_info *rgi_req= requestor->rgi_slave;
+  rpl_group_info *rgi_holder= holder->rgi_slave;
+  rpl_group_info *rgi_requestor= requestor->rgi_slave;
 
-  if (unlikely(rgi_req->gtid_sub_id == 0))
+  if (unlikely(rgi_requestor->gtid_sub_id == 0))
     return false; ; // requestor is not a slave worker executing commit
 
   bool do_ignore=
     holder->system_thread == SYSTEM_THREAD_SLAVE_SQL &&
-    (rgi_hol->rli == rgi_req->rli &&
-     rgi_hol->current_gtid.domain_id == rgi_req->current_gtid.domain_id &&
-     rgi_hol->gtid_sub_id > 0 &&
-     rgi_hol->gtid_sub_id > rgi_req->gtid_sub_id);
+    (rgi_holder->rli == rgi_requestor->rli &&
+     rgi_holder->current_gtid.domain_id == rgi_requestor->current_gtid.domain_id
+     &&
+     rgi_holder->gtid_sub_id > 0 &&
+     rgi_holder->gtid_sub_id > rgi_requestor->gtid_sub_id);
 
   return do_ignore;
 }
