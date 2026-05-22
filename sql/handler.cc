@@ -1791,7 +1791,7 @@ int ha_commit_trans(THD *thd, bool all)
                                                         &no_rollback);
   /* rw_trans is TRUE when we in a transaction changing data */
   bool rw_trans= is_real_trans && rw_ha_count > 0;
-  MDL_request mdl_request, *mdl_ptr= nullptr;
+  MDL_request mdl_request, *mdl_ptr= &mdl_request;
   DBUG_PRINT("info", ("is_real_trans: %d  rw_trans:  %d  rw_ha_count: %d",
                       is_real_trans, rw_trans, rw_ha_count));
 
@@ -1813,17 +1813,24 @@ int ha_commit_trans(THD *thd, bool all)
     */
     if (!WSREP(thd))
     {
+      auto lock_type= MDL_BACKUP_COMMIT;
+      rpl_group_info *rgi= thd->rgi_slave;
+      bool is_parallel_slave= rgi && rgi->is_parallel_exec;
+
+      if (is_parallel_slave)
+      {
+	mdl_ptr= new (&thd->transaction->mem_root) MDL_request();
+      }
       /*
         Allocate slave's lock in greater scope mem-root due to MDEV-7458
         requirements, see error case's rollback comments further down.
       */
-      mdl_ptr= (thd->rgi_slave && thd->rgi_slave->is_parallel_exec) ?
-	       new (&thd->transaction->mem_root) MDL_request() : &mdl_request;
-      MDL_REQUEST_INIT(mdl_ptr, MDL_key::BACKUP, "", "", MDL_BACKUP_COMMIT,
+      MDL_REQUEST_INIT(mdl_ptr, MDL_key::BACKUP, "", "", lock_type,
                        MDL_EXPLICIT);
-      if (thd->rgi_slave && thd->rgi_slave->is_parallel_exec)
+      if (is_parallel_slave)
 	mdl_ptr->is_teammate_callback=
 	  &rpl_group_info::ignore_mdl_priority;
+
       if (thd->mdl_context.acquire_lock(mdl_ptr,
                                         thd->variables.lock_wait_timeout))
       {
