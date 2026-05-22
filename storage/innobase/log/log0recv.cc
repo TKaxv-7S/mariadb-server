@@ -1057,6 +1057,25 @@ public:
   void clear() { inits.clear(); i= inits.end(); }
 };
 
+/** Note that a non-system tablespace has been modified
+by redo log.
+@param[in,out]	space	tablespace */
+static void fil_names_dirty(fil_space_t *space) noexcept
+{
+  ut_ad(recv_recovery_is_on());
+  ut_ad(!srv_read_only_mode);
+  ut_ad(log_sys.get_lsn() != 0);
+  ut_ad(space->max_lsn == 0);
+  ut_ad(space->id);
+
+  if (UNIV_UNLIKELY(recv_sys.rpo != 0))
+    /* The log is read-only; do not write to it */
+    return;
+
+  fil_system.named_spaces.push_back(*space);
+  space->max_lsn= log_sys.get_lsn();
+}
+
 static mlog_init_t mlog_init;
 
 /** Try to recover a tablespace that was not readable earlier
@@ -3256,11 +3275,16 @@ log_parse_file(const page_id_t id, bool if_exists,
         goto file_rec_error;
     }
 
-    if (space_id == TRX_SYS_SPACE || srv_is_undo_tablespace(space_id))
+    if (space_id == TRX_SYS_SPACE || fnend - l < 4)
       goto file_rec_error;
-    if (fnend - l < 4 ||
-        (memcmp(fnend - 4, DOT_IBD, 4) && memcmp(fnend - 4, DOT_IBB, 4)))
-      goto file_rec_error;
+    if (memcmp(fnend - 4, DOT_IBD, 4) && memcmp(fnend - 4, DOT_IBB, 4))
+    {
+      uint32_t u; int n{0};
+      if (fn2 ||
+          1 != sscanf(reinterpret_cast<const char*>(l), "undo%03" PRIu32 "%n",
+                      &u, &n) || fnend - l != n || u > 127)
+        goto file_rec_error;
+    }
 
     if (UNIV_UNLIKELY(!recv_needed_recovery && srv_read_only_mode))
       break;
@@ -5782,26 +5806,40 @@ dberr_t recv_sys_t::find_checkpoint_archived(lsn_t first_lsn, bool silent)
   return DB_SUCCESS;
 }
 
-/** Start recovering from a redo log checkpoint.
-of first system tablespace page
+/** Open the system and undo tablespaces.
+@param sum_new_sizes   sum of sizes of the new files added to system tablespace
 @return error code or DB_SUCCESS */
-dberr_t recv_recovery_from_checkpoint_start()
+static dberr_t recv_recovery_tablespaces_open(ulint *sum_of_new_sizes)
 {
-	bool rescan = false;
-	dberr_t err = DB_SUCCESS;
+  if (dberr_t err= srv_sys_space.open_or_create(false, false,
+                                                sum_of_new_sizes))
+    return err;
 
-	ut_ad(srv_operation <= SRV_OPERATION_EXPORT_RESTORED
-	      || srv_operation == SRV_OPERATION_RESTORE
-	      || srv_operation == SRV_OPERATION_RESTORE_EXPORT);
-	ut_d(mysql_mutex_lock(&buf_pool.flush_list_mutex));
-	ut_ad(UT_LIST_GET_LEN(buf_pool.LRU) == 0);
-	ut_ad(UT_LIST_GET_LEN(buf_pool.unzip_LRU) == 0);
-	ut_d(mysql_mutex_unlock(&buf_pool.flush_list_mutex));
+  mysql_mutex_lock(&recv_sys.mutex);
+  ut_d(fil_system.sys_space->recv_size= srv_sys_space_size_debug);
+  const bool success{fil_system.sys_space->open(false)};
+  mysql_mutex_unlock(&recv_sys.mutex);
+
+  if (!success)
+    return DB_ERROR;
+
+  dberr_t err= srv_undo_tablespaces_init(nullptr);
+  if (err != DB_SUCCESS && srv_force_recovery >= SRV_FORCE_NO_UNDO_LOG_SCAN)
+    err= DB_SUCCESS;
+  return err;
+}
+
+/** Start recovering from a redo log checkpoint.
+@param sum_new_sizes   sum of sizes of the new files added to system tablespace
+@return error code or DB_SUCCESS */
+dberr_t recv_recovery_from_checkpoint_start(ulint *sum_of_new_sizes)
+{
+	ut_ad(log_sys.latch_have_wr());
+	bool rescan = false;
 
 	recv_sys.recovery_on = true;
 	recv_sys_rpo_exceeded = 0;
 
-	log_sys.latch.wr_lock();
 	log_sys.set_capacity();
 
 	/* Start reading the log from the checkpoint lsn. */
@@ -5809,9 +5847,7 @@ dberr_t recv_recovery_from_checkpoint_start()
 	ut_ad(recv_sys.pages.empty());
 
 	if (log_sys.format == log_t::FORMAT_3_23) {
-func_exit:
-		log_sys.latch.wr_unlock();
-		return err;
+		return recv_recovery_tablespaces_open(sum_of_new_sizes);
 	}
 
 	recv_sys_t::parser parser[2];
@@ -5827,8 +5863,7 @@ func_exit:
 					recv_sys.recovery_start,
 					log_sys.last_checkpoint_lsn.load(),
 					recv_sys.lsn);
-			err = DB_CORRUPTION;
-			goto func_exit;
+			return DB_CORRUPTION;
 		}
 		const bool rewind = recv_sys.lsn
 			!= log_sys.last_checkpoint_lsn;
@@ -5842,18 +5877,17 @@ read_only_recovery:
 					  " and " LSN_PF,
 					  log_sys.last_checkpoint_lsn.load(),
 					  recv_sys.lsn);
-			err = DB_READ_ONLY;
 			recv_sys.rpo = recv_sys.scanned_lsn;
-			goto func_exit;
+			return DB_READ_ONLY;
 		}
 		if (recv_sys.is_corrupt_log()) {
 corrupt_log:
 			sql_print_error("InnoDB: Log scan aborted at LSN "
 					LSN_PF, recv_sys.lsn);
-			goto err_exit;
+			return DB_CORRUPTION;
 		}
 		if (recv_sys.is_corrupt_fs()) {
-			goto err_exit;
+			return DB_CORRUPTION;
 		}
 		ut_ad(recv_sys.file_checkpoint);
 		ut_ad(log_sys.get_flushed_lsn() >= recv_sys.scanned_lsn);
@@ -5867,6 +5901,13 @@ corrupt_log:
 				goto corrupt_log;
 			}
 		}
+
+		if (log_sys.archive) {
+		} else if (dberr_t err =
+			   recv_recovery_tablespaces_open(sum_of_new_sizes)) {
+			return err;
+		}
+
 		rescan = recv_scan_log(false, parser);
 
 		if (srv_read_only_mode) {
@@ -5880,7 +5921,7 @@ corrupt_log:
 			goto corrupt_log;
 		}
 		if (recv_sys.is_corrupt_fs()) {
-			goto err_exit;
+			return DB_CORRUPTION;
 		}
 	}
 
@@ -5893,11 +5934,9 @@ corrupt_log:
 	if (recv_needed_recovery) {
 		bool missing_tablespace = false;
 
-		err = recv_init_crash_recovery_spaces(
-			rescan, missing_tablespace);
-
-		if (err != DB_SUCCESS) {
-			goto func_exit;
+		if (dberr_t err = recv_init_crash_recovery_spaces(
+			    rescan, missing_tablespace)) {
+			return err;
 		}
 
 		if (missing_tablespace) {
@@ -5908,18 +5947,16 @@ corrupt_log:
 			do {
 				rescan = recv_scan_log(false, parser);
 
-				if (recv_sys.is_corrupt_log() ||
-				    recv_sys.is_corrupt_fs()) {
-					goto err_exit;
+				if (recv_sys.is_corrupt_log()
+				    || recv_sys.is_corrupt_fs()) {
+					return DB_ERROR;
 				}
 
 				missing_tablespace = false;
 
-				err = recv_validate_tablespace(
-					rescan, missing_tablespace);
-
-				if (err != DB_SUCCESS) {
-					goto func_exit;
+				if (dberr_t err = recv_validate_tablespace(
+					    rescan, missing_tablespace)) {
+					return err;
 				}
 			} while (missing_tablespace);
 
@@ -5953,7 +5990,7 @@ corrupt_log:
 			if ((recv_sys.is_corrupt_log()
 			     && !srv_force_recovery)
 			    || recv_sys.is_corrupt_fs()) {
-				goto err_exit;
+				return DB_ERROR;
 			}
 
 			/* In case of multi-batch recovery,
@@ -5967,47 +6004,48 @@ corrupt_log:
 
 	if (log_sys.is_recoverable()) {
 		if (recv_sys_rpo_exceeded || recv_sys.validate_checkpoint()) {
-err_exit:
-			err = DB_ERROR;
-			goto func_exit;
+			return DB_ERROR;
 		}
 
 		if (!srv_read_only_mode) {
 			log_sys.set_recovered();
 			if (UNIV_UNLIKELY(recv_sys.was_archive)
 			    && !log_sys.archive_rename()) {
-				goto err_exit;
+				return DB_ERROR;
 			}
 		}
 	}
 
-	DBUG_EXECUTE_IF("before_final_redo_apply", goto err_exit;);
+	DBUG_EXECUTE_IF("before_final_redo_apply", return DB_ERROR;);
 	mysql_mutex_lock(&recv_sys.mutex);
 	if (UNIV_UNLIKELY(recv_sys.scanned_lsn != recv_sys.lsn)
 	    && log_sys.is_recoverable()) {
 		ut_ad("log parsing error" == 0);
 		mysql_mutex_unlock(&recv_sys.mutex);
-		err = DB_CORRUPTION;
-		goto func_exit;
+		return DB_CORRUPTION;
 	}
 	recv_sys.apply_log_recs = true;
 	ut_d(recv_no_log_write = srv_operation == SRV_OPERATION_RESTORE
 	     || srv_operation == SRV_OPERATION_RESTORE_EXPORT);
-	if (srv_operation == SRV_OPERATION_NORMAL) {
-		err = recv_rename_files();
-	}
+
+	dberr_t err = srv_operation == SRV_OPERATION_NORMAL
+		? recv_rename_files() : DB_SUCCESS;
 
 	mysql_mutex_unlock(&recv_sys.mutex);
 
-	/* The database is now ready to start almost normal processing of user
-	transactions: transaction rollbacks and the application of the log
-	records in the hash table can be run in background. */
-	if (err == DB_SUCCESS && deferred_spaces.reinit_all()
-	    && !srv_force_recovery) {
-		err = DB_CORRUPTION;
+	if (err == DB_SUCCESS && log_sys.archive) {
+		err = recv_recovery_tablespaces_open(sum_of_new_sizes);
 	}
 
-	goto func_exit;
+	if (err != DB_SUCCESS) {
+		return err;
+	}
+
+	if (deferred_spaces.reinit_all() && !srv_force_recovery) {
+		return DB_CORRUPTION;
+	}
+
+	return DB_SUCCESS;
 }
 
 bool recv_dblwr_t::validate_page(const page_id_t page_id, lsn_t max_lsn,

@@ -2795,8 +2795,7 @@ static void buf_flush_page_cleaner() noexcept
                      _db_keyword_(nullptr, "ib_log_checkpoint_avoid_hard", 1)))
                   continue,);
         if (log_sys.check_for_checkpoint() ||
-            (!srv_startup_is_before_trx_rollback_phase &&
-             srv_operation <= SRV_OPERATION_EXPORT_RESTORED))
+            srv_operation <= SRV_OPERATION_EXPORT_RESTORED)
           create_spare_archive= log_checkpoint();
       }
       while (false);

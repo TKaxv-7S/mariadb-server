@@ -45,9 +45,9 @@ ATTRIBUTE_COLD MY_ATTRIBUTE((nonnull, warn_unused_result))
 bool recv_recover_page(fil_space_t* space, buf_page_t* bpage);
 
 /** Start recovering from a redo log checkpoint.
-of first system tablespace page
+@param sum_new_sizes   sum of sizes of the new files added to system tablespace
 @return error code or DB_SUCCESS */
-dberr_t recv_recovery_from_checkpoint_start();
+dberr_t recv_recovery_from_checkpoint_start(ulint *sum_of_new_sizes);
 
 /** Report an operation to create, delete, or rename a file during backup.
 @param[in]	space_id	tablespace identifier
