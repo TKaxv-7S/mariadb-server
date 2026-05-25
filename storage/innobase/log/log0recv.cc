@@ -1134,7 +1134,9 @@ fil_space_t *recv_sys_t::recover_deferred(const recv_sys_t::map::iterator &p,
       mysql_mutex_unlock(&fil_system.mutex);
       if (!space->acquire())
         goto release_and_fail;
+      log_sys.latch.wr_lock();
       fil_names_dirty(space);
+      log_sys.latch.wr_unlock();
       const bool is_compressed= fil_space_t::is_compressed(flags);
 #ifdef _WIN32
       const bool is_sparse= is_compressed;
@@ -1771,6 +1773,7 @@ dberr_t recv_sys_t::find_checkpoint()
   lsn_t first_lsn= 0;
   bool read_only{srv_read_only_mode || srv_operation >= SRV_OPERATION_BACKUP};
   os_offset_t size= 0;
+  dberr_t err= DB_ERROR;
 
   ut_ad(pages.empty());
   ut_ad(log_archive.empty());
@@ -1792,11 +1795,11 @@ dberr_t recv_sys_t::find_checkpoint()
       {
         sql_print_error("InnoDB: innodb_log_archive=ON but %s exists",
                         path.c_str());
-        return DB_ERROR;
+        goto err_exit;
       }
     }
     else if (archive < 0 || srv_operation != SRV_OPERATION_NORMAL)
-      return DB_ERROR;
+      goto err_exit;
     else
     {
       path.reserve(strlen(srv_log_group_home_dir) +
@@ -1806,7 +1809,10 @@ dberr_t recv_sys_t::find_checkpoint()
         tmp_buf= static_cast<byte*>
           (ut_malloc_dontdump(tmp_buf_size, PSI_INSTRUMENT_ME));
         if (!tmp_buf)
-          return DB_OUT_OF_MEMORY;
+        {
+          err= DB_OUT_OF_MEMORY;
+          goto err_exit;
+        }
       }
 #ifdef _WIN32
       WIN32_FIND_DATAA entry;
@@ -1831,7 +1837,7 @@ dberr_t recv_sys_t::find_checkpoint()
       {
         sql_print_error("InnoDB: innodb_log_archive files not found in '%s'",
                         srv_log_group_home_dir);
-        return DB_ERROR;
+        goto err_exit;
       }
       archive= -1;
       goto retry;
@@ -1919,7 +1925,7 @@ dberr_t recv_sys_t::find_checkpoint()
       {
         sql_print_error("InnoDB: No matching file found for"
                         " innodb_log_recovery_start=" LSN_PF, recovery_start);
-        return DB_ERROR;
+        goto err_exit;
       }
 
       i= log_archive.end();
@@ -1953,7 +1959,7 @@ dberr_t recv_sys_t::find_checkpoint()
                               c_str(), OS_FILE_OPEN, OS_LOG_FILE,
                               open_read_only, &success);
         if (file == OS_FILE_CLOSED)
-          return DB_ERROR;
+          goto err_exit;
 
         if (UNIV_UNLIKELY(log_sys.buf_size > i->second.end - i->first))
           log_sys.buf_size= unsigned(i->second.end - i->first);
@@ -1962,9 +1968,9 @@ dberr_t recv_sys_t::find_checkpoint()
                             log_t::START_OFFSET, log_t::READ_ONLY))
         {
           os_file_close(file);
-          return DB_ERROR;
+          goto err_exit;
         }
-        const dberr_t err=
+        err=
           find_checkpoint_archived(i->first, !read_only && i != start);
         if (!uint16_t(~last_checkpoint_no))
         {
@@ -2032,7 +2038,11 @@ dberr_t recv_sys_t::find_checkpoint()
 
         if ((recovery_start ? i == found_recovery_start : read_only) ||
             i == start)
-          return err;
+        {
+          if (err != DB_SUCCESS)
+            goto err_exit;
+          return DB_SUCCESS;
+        }
       next:
         log_sys.stash_archive_file();
       }
@@ -2051,12 +2061,12 @@ dberr_t recv_sys_t::find_checkpoint()
       {
       too_small:
         sql_print_error("InnoDB: File %s is too small", path.c_str());
-      err_exit:
+      read_error:
         os_file_close(file);
-        return DB_ERROR;
+        goto err_exit;
       }
       else if (!log_sys.attach(file, size, log_t::log_access(read_only)))
-        goto err_exit;
+        goto read_error;
       else
         file= OS_FILE_CLOSED;
     }
@@ -2088,7 +2098,7 @@ dberr_t recv_sys_t::find_checkpoint()
     if (!size)
     {
       if (first_lsn == LSN_MAX)
-        return DB_CORRUPTION;
+        goto corrupted;
       lsn= log_sys.last_checkpoint_lsn;
       log_sys.format= log_t::FORMAT_3_23;
       goto upgrade;
@@ -2102,18 +2112,27 @@ dberr_t recv_sys_t::find_checkpoint()
   ut_ad(!file_checkpoint);
   lsn= 0;
   buf= my_assume_aligned<4096>(log_sys.buf);
-  if (!log_sys.is_mmap())
-    if (dberr_t err= log_sys.log.read(0, {buf, log_sys.START_OFFSET}))
-      return err;
+  if (!log_sys.is_mmap() &&
+      (err= log_sys.log.read(0, {buf, log_sys.START_OFFSET})) != DB_SUCCESS)
+  {
+  err_exit:
+    found_corrupt_log= true;
+    return err;
+  }
   /* Check the header page checksum. There was no
   checksum in the first redo log format (version 0). */
   log_sys.format= mach_read_from_4(buf + LOG_HEADER_FORMAT);
   if (log_sys.format == log_t::FORMAT_3_23)
   {
     if (first_lsn == LSN_MAX)
-      return DB_CORRUPTION;
-    if (dberr_t err= recv_log_recover_pre_10_2())
-      return err;
+    {
+    corrupted:
+      err= DB_CORRUPTION;
+      goto err_exit;
+    }
+    err= recv_log_recover_pre_10_2();
+    if (err != DB_SUCCESS)
+      goto err_exit;
   upgrade:
     memset_aligned<4096>(const_cast<byte*>(field_ref_zero), 0, 4096);
     /* Mark the redo log for upgrading. */
@@ -2123,7 +2142,7 @@ dberr_t recv_sys_t::find_checkpoint()
     {
       sql_print_error("InnoDB: cannot fulfill innodb_log_recovery_target=%"
                       PRIu64 "!=%" PRIu64, rpo, lsn);
-      return DB_CORRUPTION;
+      goto corrupted;
     }
     if (UNIV_LIKELY(lsn != 0))
       scanned_lsn= lsn;
@@ -2134,7 +2153,7 @@ dberr_t recv_sys_t::find_checkpoint()
   if (!recv_check_log_block(buf))
   {
     sql_print_error("InnoDB: Invalid log header checksum");
-    return DB_CORRUPTION;
+    goto corrupted;
   }
 
   first_lsn= mach_read_from_8(buf + LOG_HEADER_START_LSN);
@@ -2150,13 +2169,14 @@ dberr_t recv_sys_t::find_checkpoint()
   default:
     sql_print_error("InnoDB: Unsupported redo log format."
                     " The redo log was created with %s.", creator);
-    return DB_ERROR;
+    err= DB_ERROR;
+    goto err_exit;
   case log_t::FORMAT_ENC_11:
   case log_t::FORMAT_10_8:
     if (files.size() != 1)
     {
       sql_print_error("InnoDB: Expecting only ib_logfile0");
-      return DB_CORRUPTION;
+      goto corrupted;
     }
 
     if (*reinterpret_cast<const uint32_t*>(buf + LOG_HEADER_FORMAT + 4) ||
@@ -2164,7 +2184,7 @@ dberr_t recv_sys_t::find_checkpoint()
     {
       sql_print_error("InnoDB: Invalid ib_logfile0 header block;"
                       " the log was created with %s.", creator);
-      return DB_CORRUPTION;
+      goto corrupted;
     }
 
     if (!mach_read_from_4(buf + LOG_HEADER_CREATOR_END) &&
@@ -2219,7 +2239,7 @@ dberr_t recv_sys_t::find_checkpoint()
     if (files.size() != 1)
     {
       sql_print_error("InnoDB: Expecting only ib_logfile0");
-      return DB_CORRUPTION;
+      goto corrupted;
     }
     /* fall through */
   case log_t::FORMAT_10_2:
@@ -2266,13 +2286,16 @@ dberr_t recv_sys_t::find_checkpoint()
   got_no_checkpoint:
     sql_print_error("InnoDB: No valid checkpoint was found;"
                     " the log was created with %s.", creator);
-    return DB_ERROR;
+    err= DB_ERROR;
+    goto err_exit;
   }
 
   if (first_lsn == LSN_MAX)
-    return DB_CORRUPTION;
+    goto corrupted;
 
-  if (dberr_t err= recv_log_recover_10_5(lsn_offset))
+  err= recv_log_recover_10_5(lsn_offset);
+
+  if (err != DB_SUCCESS)
   {
     const char *msg1, *msg2, *msg3;
     msg1= srv_operation == SRV_OPERATION_NORMAL
@@ -2292,7 +2315,7 @@ dberr_t recv_sys_t::find_checkpoint()
 
     sql_print_error("%s The redo log was created with %s%s%s",
                     msg1, creator, msg2, msg3);
-    return err;
+    goto err_exit;
   }
 
   goto upgrade;
@@ -5808,8 +5831,9 @@ dberr_t recv_sys_t::find_checkpoint_archived(lsn_t first_lsn, bool silent)
 
 /** Open the system and undo tablespaces.
 @param sum_new_sizes   sum of sizes of the new files added to system tablespace
-@return error code or DB_SUCCESS */
-static dberr_t recv_recovery_tablespaces_open(ulint *sum_of_new_sizes)
+@return error code
+@retval DB_SUCCESS on success */
+dberr_t recv_recovery_tablespaces_open(ulint *sum_of_new_sizes)
 {
   if (dberr_t err= srv_sys_space.open_or_create(false, false,
                                                 sum_of_new_sizes))
@@ -5831,7 +5855,8 @@ static dberr_t recv_recovery_tablespaces_open(ulint *sum_of_new_sizes)
 
 /** Start recovering from a redo log checkpoint.
 @param sum_new_sizes   sum of sizes of the new files added to system tablespace
-@return error code or DB_SUCCESS */
+@return error code
+@retval DB_SUCCESS on success */
 dberr_t recv_recovery_from_checkpoint_start(ulint *sum_of_new_sizes)
 {
 	ut_ad(log_sys.latch_have_wr());
@@ -5851,6 +5876,7 @@ dberr_t recv_recovery_from_checkpoint_start(ulint *sum_of_new_sizes)
 	}
 
 	recv_sys_t::parser parser[2];
+	bool sys_opened{false};
 
 	if (log_sys.is_recoverable()) {
 		if (recv_sys.recovery_start > recv_sys.lsn) {
@@ -5902,7 +5928,9 @@ corrupt_log:
 			}
 		}
 
-		if (log_sys.archive) {
+		sys_opened = !log_sys.archive;
+
+		if (!sys_opened) {
 		} else if (dberr_t err =
 			   recv_recovery_tablespaces_open(sum_of_new_sizes)) {
 			return err;
@@ -6033,16 +6061,13 @@ corrupt_log:
 
 	mysql_mutex_unlock(&recv_sys.mutex);
 
-	if (err == DB_SUCCESS && log_sys.archive) {
+	if (err == DB_SUCCESS && !sys_opened) {
 		err = recv_recovery_tablespaces_open(sum_of_new_sizes);
-	}
 
-	if (err != DB_SUCCESS) {
-		return err;
-	}
-
-	if (deferred_spaces.reinit_all() && !srv_force_recovery) {
-		return DB_CORRUPTION;
+		if (err == DB_SUCCESS
+		    && deferred_spaces.reinit_all() && !srv_force_recovery) {
+			err = DB_CORRUPTION;
+		}
 	}
 
 	return DB_SUCCESS;

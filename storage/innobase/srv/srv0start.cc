@@ -1305,21 +1305,31 @@ static dberr_t srv_load_tables(bool must_upgrade_ibuf) noexcept
 @return error code */
 static dberr_t srv_start_recovery(ulint *sum_of_new_sizes)
 {
-  ut_ad(srv_force_recovery < SRV_FORCE_NO_LOG_REDO);
   ut_d(mysql_mutex_lock(&buf_pool.flush_list_mutex));
   ut_ad(UT_LIST_GET_LEN(buf_pool.LRU) == 0);
   ut_ad(UT_LIST_GET_LEN(buf_pool.unzip_LRU) == 0);
   ut_d(mysql_mutex_unlock(&buf_pool.flush_list_mutex));
 
-  log_sys.latch.wr_lock();
-  dberr_t err= recv_sys.find_checkpoint();
-  if (err == DB_SUCCESS)
-  {
-    err= recv_recovery_from_checkpoint_start(sum_of_new_sizes);
-    recv_sys.close_files();
-  }
+  dberr_t err;
 
-  log_sys.latch.wr_unlock();
+  if (UNIV_UNLIKELY(srv_force_recovery >= SRV_FORCE_NO_LOG_REDO))
+  {
+    sql_print_information("InnoDB: innodb_force_recovery=6"
+                          " skips redo log apply");
+    recv_sys.rpo= LSN_MAX;
+    err= recv_recovery_tablespaces_open(sum_of_new_sizes);
+  }
+  else
+  {
+    log_sys.latch.wr_lock();
+    err= recv_sys.find_checkpoint();
+    if (err == DB_SUCCESS)
+    {
+      err= recv_recovery_from_checkpoint_start(sum_of_new_sizes);
+      recv_sys.close_files();
+    }
+    log_sys.latch.wr_unlock();
+  }
 
   bool must_upgrade_ibuf= false;
 
@@ -1591,18 +1601,12 @@ dberr_t srv_start(bool create_new_db)
 		DICT_HDR_MAX_SPACE_ID. */
 		fil_system.space_id_reuse_warned = true;
 
-		if (srv_force_recovery >= SRV_FORCE_NO_LOG_REDO) {
-			sql_print_information("InnoDB: innodb_force_recovery=6"
-					      " skips redo log apply");
-			recv_sys.rpo = LSN_MAX;
-		} else {
-			/* We always try to do a recovery, even if the
-			database had been shut down normally */
-			err = srv_start_recovery(&sum_of_new_sizes);
+		/* We always try to do a recovery, even if the
+		database had been shut down normally */
+		err = srv_start_recovery(&sum_of_new_sizes);
 
-			if (err != DB_SUCCESS) {
-				return srv_init_abort(err);
-			}
+		if (err != DB_SUCCESS) {
+			return srv_init_abort(err);
 		}
 
 		fil_system.space_id_reuse_warned = false;

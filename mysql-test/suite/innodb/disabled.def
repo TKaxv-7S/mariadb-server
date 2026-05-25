@@ -1,11 +1,7 @@
+blob-crash : FIXME
 doublewrite_debug : FIXME
 import_hidden_fts : FIXME
-import_tablespace_race : FIXME
-innodb.log_file : FIXME
-innodb.log_file_overwrite : FIXME
-innodb_force_recovery : FIXME
-log_archive_recovery : FIXME (this is a new test)
-log_corruption : FIXME
+log_archive_recovery : FIXME
+log_corruption_recovery : FIXME
 log_file_size_online : FIXME
-temp_truncate : FIXME
 undo_upgrade_debug : FIXME
