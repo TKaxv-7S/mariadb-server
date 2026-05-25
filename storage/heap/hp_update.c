@@ -131,13 +131,13 @@ int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
           has_blob_data= TRUE;
         }
         else
-          *((uchar**) (pos + desc->offset + desc->packlength))= NULL;
+          bzero(pos + desc->offset + desc->packlength, sizeof(char*));
         continue;
       }
 
       new_len= hp_blob_length(desc, heap_new);
       if (new_len == 0)
-        *((uchar**) (pos + desc->offset + desc->packlength))= NULL;
+        bzero(pos + desc->offset + desc->packlength, sizeof(char*));
       else
       {
         const uchar *data_ptr;

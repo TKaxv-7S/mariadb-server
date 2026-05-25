@@ -634,7 +634,7 @@ int hp_write_blobs(HP_INFO *info, const uchar *record, uchar *pos)
 
     if (data_len == 0)
     {
-      *((uchar**) (pos + desc->offset + desc->packlength))= NULL;
+      bzero(pos + desc->offset + desc->packlength, sizeof(char*));
       continue;
     }
 
@@ -652,10 +652,10 @@ int hp_write_blobs(HP_INFO *info, const uchar *record, uchar *pos)
         memcpy(&chain, pos + rd->offset + rd->packlength, sizeof(chain));
         if (chain)
           hp_free_run_chain(share, chain);
-        *((uchar**) (pos + rd->offset + rd->packlength))= NULL;
+        bzero(pos + rd->offset + rd->packlength, sizeof(char*));
       }
       hp_shrink_tail(share);
-      *((uchar**) (pos + desc->offset + desc->packlength))= NULL;
+      bzero(pos + desc->offset + desc->packlength, sizeof(char*));
       DBUG_RETURN(my_errno);
     }
 
