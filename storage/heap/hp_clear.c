@@ -24,6 +24,7 @@
 
 void heap_clear(HP_INFO *info)
 {
+  info->has_pending_blob_free= FALSE;
   hp_clear(info->s);
 }
 

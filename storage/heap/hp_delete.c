@@ -26,6 +26,7 @@ int heap_delete(HP_INFO *info, const uchar *record)
   DBUG_PRINT("enter",("info: %p  record: %p", info, record));
 
   test_active(info);
+  hp_flush_pending_blob_free(info);
 
   if (info->opt_flag & READ_CHECK_USED && hp_rectest(info,record))
     DBUG_RETURN(my_errno);			/* Record changed */
@@ -42,15 +43,45 @@ int heap_delete(HP_INFO *info, const uchar *record)
       goto err;
   }
 
-  /*
-    Free blob continuation chains first (if any), then free the head
-    record slot.  Both hp_free_run_chain() and the code below maintain
-    the scan-boundary invariant:
-        total_records + deleted == block.last_allocated
-    by doing total_records-- and deleted++ for each freed slot.
-  */
-  if (share->blob_count)
-    hp_free_blobs(share, pos);
+  if (share->blob_count && hp_has_cont(pos, share->visible))
+  {
+    if (share->internal)
+    {
+      /*
+        Internal temporary tables are never binlogged, so blob chains
+        can be freed immediately.
+      */
+      hp_free_blobs(share, pos);
+    }
+    else
+    {
+      /*
+        Defer blob chain free: save chain pointers for later cleanup.
+
+        The handler layer calls binlog_log_row() AFTER delete_row()
+        returns, reading blob data from the record buffer via zero-copy
+        pointers into HP_BLOCK chain records.  Freeing chains here would
+        overwrite those records with del_link pointers, making the
+        zero-copy pointers dangle.
+
+        Save the chain head pointers and free them on the next mutating
+        operation (write/update/delete) or on reset/close.
+      */
+      HP_BLOB_DESC *desc;
+      uint i;
+      for (i= 0, desc= share->blob_descs; i < share->blob_count; i++, desc++)
+      {
+        if (hp_blob_length(desc, pos) == 0)
+        {
+          info->pending_blob_chains[i]= NULL;
+          continue;
+        }
+        memcpy(&info->pending_blob_chains[i],
+               pos + desc->offset + desc->packlength, sizeof(uchar*));
+      }
+      info->has_pending_blob_free= TRUE;
+    }
+  }
   info->update=HA_STATE_DELETED;
   *((uchar**) pos)=share->del_link;
   share->del_link=pos;

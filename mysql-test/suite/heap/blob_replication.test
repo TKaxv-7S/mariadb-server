@@ -1,0 +1,68 @@
+--source include/have_binlog_format_row.inc
+--source include/master-slave.inc
+
+#
+# Row-based replication of DML on HEAP tables with BLOB/TEXT columns.
+#
+# Tests that INSERT, UPDATE, and DELETE on HEAP blob tables replicate
+# correctly to the slave, covering two scenarios:
+#
+# 1. Table with a PRIMARY KEY -- the slave uses rnd_pos_by_record()
+#    to locate rows.  Validates that hp_free_blobs() does not chase
+#    stale pointers for zero-length blob columns.
+#
+# 2. Table without a PRIMARY KEY -- the slave uses a full table scan
+#    with record_compare() to locate rows.  Validates that the
+#    master's binlog before-image contains valid blob data (not
+#    dangling zero-copy pointers freed by hp_free_blobs()).
+#
+
+--echo #
+--echo # Test 1: HEAP blob replication with PRIMARY KEY
+--echo #
+
+CREATE TABLE t (
+  pk INT AUTO_INCREMENT PRIMARY KEY,
+  a TEXT,
+  b TEXT,
+  c INT
+) ENGINE=HEAP;
+
+INSERT INTO t VALUES (1,'','',0);
+UPDATE t SET a = 'foo';
+DELETE FROM t;
+
+--sync_slave_with_master
+
+--echo # Verify slave is consistent
+SELECT * FROM t;
+
+--connection master
+DROP TABLE t;
+--sync_slave_with_master
+
+--echo #
+--echo # Test 2: HEAP blob replication without PRIMARY KEY
+--echo #
+
+--connection master
+
+CREATE TABLE t2 (
+  a TEXT,
+  b TEXT,
+  c INT
+) ENGINE=HEAP;
+
+INSERT INTO t2 VALUES ('','',0);
+UPDATE t2 SET a = 'foo';
+DELETE FROM t2;
+
+--sync_slave_with_master
+
+--echo # Verify slave is consistent
+SELECT * FROM t2;
+
+--connection master
+DROP TABLE t2;
+
+--source include/rpl_end.inc

@@ -1,0 +1,40 @@
+include/master-slave.inc
+[connection master]
+#
+# Test 1: HEAP blob replication with PRIMARY KEY
+#
+CREATE TABLE t (
+pk INT AUTO_INCREMENT PRIMARY KEY,
+a TEXT,
+b TEXT,
+c INT
+) ENGINE=HEAP;
+INSERT INTO t VALUES (1,'','',0);
+UPDATE t SET a = 'foo';
+DELETE FROM t;
+connection slave;
+# Verify slave is consistent
+SELECT * FROM t;
+pk	a	b	c
+connection master;
+DROP TABLE t;
+connection slave;
+#
+# Test 2: HEAP blob replication without PRIMARY KEY
+#
+connection master;
+CREATE TABLE t2 (
+a TEXT,
+b TEXT,
+c INT
+) ENGINE=HEAP;
+INSERT INTO t2 VALUES ('','',0);
+UPDATE t2 SET a = 'foo';
+DELETE FROM t2;
+connection slave;
+# Verify slave is consistent
+SELECT * FROM t2;
+a	b	c
+connection master;
+DROP TABLE t2;
+include/rpl_end.inc

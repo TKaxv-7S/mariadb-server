@@ -28,6 +28,7 @@ int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
   DBUG_ENTER("heap_update");
 
   test_active(info);
+  hp_flush_pending_blob_free(info);
   pos=info->current_ptr;
 
   if (info->opt_flag & READ_CHECK_USED && hp_rectest(info,old))
@@ -117,6 +118,11 @@ int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
           Restore old chain pointer, from the old current_ptr, where the blob
           data is in heap memory. This is not the same as the pointer in 'old'
           as this may have been allocated from a segmented blob.
+
+          When there is no saved chain (zero-length blob with no continuation
+          data), NULL out the pointer that memcpy(pos, heap_new) left behind.
+          Without this, a stale SQL-layer pointer (e.g. from replication event
+          buffer) would be interpreted as a chain head by hp_free_blobs().
         */
         if (saved_chains[i])
         {
@@ -124,6 +130,8 @@ int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
                  &saved_chains[i], sizeof(saved_chains[i]));
           has_blob_data= TRUE;
         }
+        else
+          *((uchar**) (pos + desc->offset + desc->packlength))= NULL;
         continue;
       }
 

@@ -41,6 +41,7 @@ int heap_write(HP_INFO *info, const uchar *record)
     DBUG_RETURN(my_errno=EACCES);
   }
 #endif
+  hp_flush_pending_blob_free(info);
   if (!(pos=next_free_record_pos(share)))
     DBUG_RETURN(my_errno);
   share->changed=1;

@@ -75,9 +75,9 @@ static void test_freelist_contiguity_multirecord(void)
      "last_allocated unchanged after delete (%lu)",
      last_alloc_after_delete);
 
-  ok(share->deleted == last_alloc_after_delete,
-     "all %lu records on free list (deleted=%lu)",
-     last_alloc_after_delete, (ulong) share->deleted);
+  ok(share->deleted == 1,
+     "primary on free list, blob chains deferred (deleted=%lu)",
+     (ulong) share->deleted);
 
   /* Insert row 2 with same blob size - should fully reuse free list */
   build_record(rec, 2, blob_data, sizeof(blob_data));

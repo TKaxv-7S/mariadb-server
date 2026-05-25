@@ -188,6 +188,7 @@ typedef struct st_heap_info
   uchar *lastkey;			/* Last used key with rkey */
   uchar *recbuf;                         /* Record buffer for rb-tree keys */
   uchar *blob_buff;                      /* Reassembly buffer for blob reads */
+  uchar **pending_blob_chains;  /* Chain pointers saved by deferred delete */
   TREE_ELEMENT *parents[MAX_TREE_HEIGHT+1];
   TREE_ELEMENT **last_pos;
   uint key_version;                     /* Version at last read */
@@ -196,6 +197,7 @@ typedef struct st_heap_info
   uint32 blob_buff_len;        /* Current allocated size of blob_buff */
   my_bool implicit_emptied;
   my_bool has_zerocopy_blobs;  /* Last hp_read_blobs produced zero-copy ptrs */
+  my_bool has_pending_blob_free; /* pending_blob_chains awaits freeing */
   THR_LOCK_DATA lock;
   LIST open_list;
 } HP_INFO;

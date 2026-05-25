@@ -237,6 +237,13 @@ extern int hp_write_blobs(HP_INFO *info, const uchar *record, uchar *pos);
 extern int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos);
 extern void hp_free_blobs(HP_SHARE *share, uchar *pos);
 extern void hp_free_run_chain(HP_SHARE *share, uchar *chain);
+extern void hp_flush_pending_blob_free_impl(HP_INFO *info);
+
+static inline void hp_flush_pending_blob_free(HP_INFO *info)
+{
+  if (info->has_pending_blob_free)
+    hp_flush_pending_blob_free_impl(info);
+}
 
 extern mysql_mutex_t THR_LOCK_heap;
 

@@ -110,6 +110,32 @@ static void hp_shrink_tail(HP_SHARE *share)
 
 
 /*
+  Flush deferred blob chain free from a previous heap_delete().
+
+  heap_delete() saves chain pointers instead of freeing them
+  immediately, so that callers (binlog writer, AFTER DELETE triggers)
+  can still read blob data from the record buffer after delete_row()
+  returns.  This function does the actual free.
+
+  @param info  Table handle with pending_blob_chains to free
+*/
+
+void hp_flush_pending_blob_free_impl(HP_INFO *info)
+{
+  HP_SHARE *share= info->s;
+  uint i;
+  DBUG_ASSERT(info->has_pending_blob_free);
+  for (i= 0; i < share->blob_count; i++)
+  {
+    if (info->pending_blob_chains[i])
+      hp_free_run_chain(share, info->pending_blob_chains[i]);
+  }
+  hp_shrink_tail(share);
+  info->has_pending_blob_free= FALSE;
+}
+
+
+/*
   Free one continuation chain of variable-length runs.
 
   Walks from the first run, reads run_rec_count from each, frees all
@@ -884,6 +910,8 @@ void hp_free_blobs(HP_SHARE *share, uchar *pos)
   {
     uchar *chain;
 
+    if (hp_blob_length(desc, pos) == 0)
+      continue;
     memcpy(&chain, pos + desc->offset + desc->packlength, sizeof(chain));
     hp_free_run_chain(share, chain);
   }
