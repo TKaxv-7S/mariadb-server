@@ -619,10 +619,11 @@ int hp_key_cmp(HP_KEYDEF *keydef, const uchar *rec, const uchar *key,
     else if (seg->type == HA_KEYTYPE_VARTEXT4)
     {
       /*
-        Blob segment: rec side is stored (chain pointers), key side has
-        4-byte length + data pointer from hp_make_key.
+        Blob segment: rec side uses packlength-byte (1-4) length prefix
+        followed by a chain pointer; key side is the normalized format
+        from hp_make_key(): always 4-byte length + data pointer.
       */
-      uint packlength= 4;
+      uint packlength= seg->bit_start;
       uchar *pos= (uchar*) rec + seg->start;
       size_t rec_blob_len= hp_blob_key_length(packlength, pos);
       uint32 key_blob_len= uint4korr(key);
@@ -715,8 +716,9 @@ void hp_make_key(HP_KEYDEF *keydef, uchar *key, const uchar *rec)
     if (seg->type == HA_KEYTYPE_VARTEXT4)
     {
       /*
-        Blob segment in input record: store 4-byte length + data pointer
-        in key buffer for later use by hp_hashnr/hp_key_cmp.
+        Blob segment: read packlength-byte (1-4) length from input record,
+        normalize to 4-byte length + data pointer in key buffer for
+        hp_hashnr/hp_key_cmp.
       */
       uint packlength= seg->bit_start;
       uint32 blob_len= (uint32) hp_blob_key_length(packlength, pos);
