@@ -140,7 +140,7 @@ static const LEX_STRING backup_lock_types[]=
   { C_STRING_WITH_LEN("MDL_BACKUP_BLOCK_DDL") },
   { C_STRING_WITH_LEN("MDL_BACKUP_ALTER_COPY") },
   { C_STRING_WITH_LEN("MDL_BACKUP_COMMIT") },
-  { C_STRING_WITH_LEN("MDL_BACKUP_COMMIT_RPL") }
+  { C_STRING_WITH_LEN("MDL_BACKUP_COMMIT_HIGH_PRIO") }
 };
 
 
@@ -1023,7 +1023,6 @@ void MDL_request::init_with_source(MDL_key::enum_mdl_namespace mdl_namespace,
   ticket= NULL;
   m_src_file= src_file;
   m_src_line= src_line;
-  is_teammate_callback= nullptr;
 }
 
 
@@ -1048,7 +1047,6 @@ void MDL_request::init_by_key_with_source(const MDL_key *key_arg,
   ticket= NULL;
   m_src_file= src_file;
   m_src_line= src_line;
-  is_teammate_callback= nullptr;
 }
 
 
@@ -1633,7 +1631,7 @@ MDL_lock::MDL_object_lock::m_waiting_incompatible[MDL_TYPE_END]=
     BLOCK_DDL |  -   +   +   +   +   +   +   +   +   +   -   +   +   +  +  |
     ALTER_COP |  +   +   +   +   +   -   -   +   +   +   +   +   +   +  +  |
     COMMIT    |  +   +   +   +   -   +   -   +   +   +   +   +   +   +  +  |
-    COMMIT_RPL|  +   +   +   +   -   +   -   +   +   +   +   +   +   +  +  |
+    COMMIT_HIGH_PRIO|  +   +   +   +   -   +   -   +   +   +   +   +   +   +  +  |
 
   The second array specifies if particular type of request can be satisfied
   if there is already waiting request for the backup lock of certain type.
@@ -1656,7 +1654,7 @@ MDL_lock::MDL_object_lock::m_waiting_incompatible[MDL_TYPE_END]=
     BLOCK_DDL |  +   +   +   +   +   +   +   +   +   +   +   +   +   +  +  |
     ALTER_COP |  +   +   +   +   +   -   -   +   +   +   +   +   +   +  +  |
     COMMIT    |  +   +   +   +   -   +   -   +   +   +   +   +   +   +  +  |
-    COMMIT_RPL|  +   +   +   +   +   +   +   +   +   +   +   +   +   +  +  |
+    COMMIT_HIGH_PRIO|  +   +   +   +   +   +   +   +   +   +   +   +   +   +  +  |
 
   Here: "+" -- means that request can be satisfied
         "-" -- means that request can't be satisfied and should wait
@@ -1691,7 +1689,7 @@ MDL_lock::MDL_backup_lock::m_granted_incompatible[MDL_BACKUP_END]=
   MDL_BIT(MDL_BACKUP_FTWRL1) | MDL_BIT(MDL_BACKUP_FTWRL2),
   /* MDL_BACKUP_COMMIT */
   MDL_BIT(MDL_BACKUP_WAIT_COMMIT) | MDL_BIT(MDL_BACKUP_FTWRL2),
-  /* MDL_BACKUP_COMMIT_RPL */
+  /* MDL_BACKUP_COMMIT_HIGH_PRIO */
   MDL_BIT(MDL_BACKUP_WAIT_COMMIT) | MDL_BIT(MDL_BACKUP_FTWRL2)
 };
 
@@ -1720,7 +1718,7 @@ MDL_lock::MDL_backup_lock::m_waiting_incompatible[MDL_BACKUP_END]=
   MDL_BIT(MDL_BACKUP_FTWRL1) | MDL_BIT(MDL_BACKUP_FTWRL2),
   /* MDL_BACKUP_COMMIT */
   MDL_BIT(MDL_BACKUP_WAIT_COMMIT) | MDL_BIT(MDL_BACKUP_FTWRL2),
- /* MDL_BACKUP_COMMIT_RPL: is highest priority allowing to bypass any waiter */
+ /* MDL_BACKUP_COMMIT_HIGH_PRIO: is highest priority allowing to bypass any waiter */
   0
 };
 
@@ -2319,58 +2317,6 @@ MDL_context::acquire_lock(MDL_request *mdl_request, double lock_wait_timeout)
     DBUG_PRINT("mdl", ("Seized:   %s", dbug_print_mdl(mdl_request->ticket)));
     DBUG_RETURN(FALSE);
   }
-  /*
-    Teammate-Aware Escalation Check:
-    If this request failed due to a waiting lock, inspect if there is an
-    active parallel teammate already granted in the matrix. If a teammate
-    is found, mutate type to MDL_BACKUP_COMMIT_RPL to leapfrog natively.
-    This search might be designe with maintaining by slave the max sub-id
-    grantee.
-  */
-  lock= ticket->m_lock;
-  if (mdl_request->is_teammate_callback &&
-      mdl_request->type == MDL_BACKUP_COMMIT)
-  {
-    const THD *requestor_thd= this->get_thd();
-    bool has_teammate= false;
-
-    for (const auto &granted_ticket : lock->m_granted)
-    {
-      THD *holder_thd= granted_ticket.get_ctx()->get_thd();
-      if (holder_thd &&
-          granted_ticket.get_type() == MDL_BACKUP_COMMIT &&
-          mdl_request->is_teammate_callback(holder_thd, requestor_thd))
-      {
-        has_teammate= true;
-        break;
-      }
-    }
-
-    if (has_teammate)
-    {
-      mdl_request->type= MDL_BACKUP_COMMIT_RPL;
-
-      /* Unlock and dispose of the failed standard ticket before retrying */
-      mysql_prlock_unlock(&lock->m_rwlock);
-      MDL_ticket::destroy(ticket);
-
-      if (try_acquire_lock_impl(mdl_request, &ticket))
-      {
-        DBUG_PRINT("mdl", ("OOM during lock type upgrade"));
-        DBUG_RETURN(TRUE);
-      }
-
-      if (mdl_request->ticket)
-      {
-        DBUG_PRINT("info", ("Got upgraded RPL lock without waiting"));
-        DBUG_RETURN(FALSE);
-      }
-
-      /* If still blocked (e.g., by an active FTWRL), preserve lock pointer */
-      lock= ticket->m_lock;
-    }
-  }
-
 
 #ifdef DBUG_TRACE
     const char *ticket_msg= dbug_print_mdl(ticket);

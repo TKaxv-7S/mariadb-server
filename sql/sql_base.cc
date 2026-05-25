@@ -2385,16 +2385,16 @@ retry_share:
 
       if (table_list->table_options & TL_OPTION_GTID_TABLE_SLAVE)
       {
-	/*
-          This is a request of a committing phase of slave transaction
-          though done on behalf on implicnt gtid table insert statement.
-          It must be able to bypass any waiting lock by backup process
-          even without yet knowking whether the transaction is going to
-          slave group commit leader. When it turns out not the case
-          the strong MDL_STATEMENT requested lock would've been already
-          relinquished.
+        /*
+          This is a request from the committing phase of a slave
+          transaction, done on behalf of the implicit gtid_slave_pos
+          insert statement. It must be able to bypass any waiting lock
+          by the backup process even without yet knowing whether the
+          transaction is going to be a slave group-commit leader. When
+          it turns out not to be, the strong MDL_STATEMENT-requested
+          lock would already have been relinquished.
         */
-	mdl_type= MDL_BACKUP_COMMIT_RPL;
+        mdl_type= MDL_BACKUP_COMMIT_HIGH_PRIO;
       }
       MDL_REQUEST_INIT(&protection_request, MDL_key::BACKUP, "", "", mdl_type,
                        MDL_STATEMENT);

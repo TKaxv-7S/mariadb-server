@@ -1813,31 +1813,45 @@ int ha_commit_trans(THD *thd, bool all)
     */
     if (!WSREP(thd))
     {
-      auto lock_type= MDL_BACKUP_COMMIT;
       rpl_group_info *rgi= thd->rgi_slave;
-      bool is_parallel_slave= rgi && rgi->is_parallel_exec;
+      bool is_parallel_slave= rgi && rgi->is_parallel_exec &&
+                              rgi->gtid_sub_id > 0;
 
-      if (is_parallel_slave)
-      {
-	mdl_ptr= new (&thd->transaction->mem_root) MDL_request();
-      }
       /*
-        Allocate slave's lock in greater scope mem-root due to MDEV-7458
-        requirements, see error case's rollback comments further down.
+        Allocate the slave worker's MDL_request in the transaction
+        mem-root: the lock may have to outlive ha_commit_trans()'s frame
+        because, per MDEV-7458, an errored-out parallel-slave worker
+        defers rollback (and the paired MDL release) to cleanup_context.
       */
+      if (is_parallel_slave)
+        mdl_ptr= new (&thd->transaction->mem_root) MDL_request();
+
+      /*
+        Parallel-slave: register and decide atomically. See
+        Backup_commit_team::join_and_decide() for the rule. The matrix
+        grants MDL_BACKUP_COMMIT_HIGH_PRIO past a waiting BACKUP X-request.
+      */
+      enum_mdl_type lock_type= MDL_BACKUP_COMMIT;
+      if (is_parallel_slave)
+        lock_type= rgi->rli->backup_team.join_and_decide(
+            rgi->current_gtid.domain_id, rgi->gtid_sub_id);
+
       MDL_REQUEST_INIT(mdl_ptr, MDL_key::BACKUP, "", "", lock_type,
                        MDL_EXPLICIT);
-      if (is_parallel_slave)
-	mdl_ptr->is_teammate_callback=
-	  &rpl_group_info::ignore_mdl_priority;
 
       if (thd->mdl_context.acquire_lock(mdl_ptr,
                                         thd->variables.lock_wait_timeout))
       {
+        if (is_parallel_slave)
+          rgi->rli->backup_team.leave(rgi->current_gtid.domain_id,
+                                      rgi->gtid_sub_id);
         my_error(ER_ERROR_DURING_COMMIT, MYF(0), 1);
         ha_rollback_trans(thd, all);
         DBUG_RETURN(1);
       }
+      if (is_parallel_slave)
+        rgi->rli->backup_team.mark_granted(rgi->current_gtid.domain_id,
+                                           rgi->gtid_sub_id);
       thd->backup_commit_lock= mdl_ptr;
     }
     DEBUG_SYNC(thd, "ha_commit_trans_after_acquire_commit_lock");
@@ -2102,6 +2116,12 @@ end:
     if (mdl_ptr->ticket)
       thd->mdl_context.release_lock(mdl_ptr->ticket);
     thd->backup_commit_lock= nullptr;
+    /* Paired with backup_team.join() above. */
+    if (thd->rgi_slave && thd->rgi_slave->is_parallel_exec &&
+        thd->rgi_slave->gtid_sub_id > 0)
+      thd->rgi_slave->rli->backup_team.leave(
+          thd->rgi_slave->current_gtid.domain_id,
+          thd->rgi_slave->gtid_sub_id);
   }
 #ifdef WITH_WSREP
   if (wsrep_is_active(thd) && is_real_trans && !error &&
@@ -2266,6 +2286,11 @@ commit_one_phase_2(THD *thd, bool all, THD_TRANS *trans, bool is_real_trans)
       */
       thd->mdl_context.release_lock(thd->backup_commit_lock->ticket);
       thd->backup_commit_lock= nullptr;
+      /* Paired with backup_team.join() in ha_commit_trans. */
+      if (thd->rgi_slave->gtid_sub_id > 0)
+        thd->rgi_slave->rli->backup_team.leave(
+            thd->rgi_slave->current_gtid.domain_id,
+            thd->rgi_slave->gtid_sub_id);
     }
     thd->transaction->cleanup();
     if (count >= 2)
@@ -2437,11 +2462,16 @@ int ha_rollback_trans(THD *thd, bool all)
     {
       /*
         MDL BACKUP unlocking by parallel slave is done after the transaction
-        rolls back. The MDL lock must be released before its memory allocatioon
+        rolls back. The MDL lock must be released before its memory allocation
         in transaction root is cleaned.
       */
       thd->mdl_context.release_lock(thd->backup_commit_lock->ticket);
       thd->backup_commit_lock= nullptr;
+      /* Paired with backup_team.join() in ha_commit_trans. */
+      if (thd->rgi_slave->gtid_sub_id > 0)
+        thd->rgi_slave->rli->backup_team.leave(
+            thd->rgi_slave->current_gtid.domain_id,
+            thd->rgi_slave->gtid_sub_id);
     }
 
     thd->transaction->cleanup();

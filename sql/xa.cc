@@ -523,13 +523,31 @@ bool trans_xa_end(THD *thd)
 static bool trans_xa_get_backup_lock(THD *thd, MDL_request *mdl_request)
 {
   DBUG_ASSERT(thd->backup_commit_lock == 0);
-  MDL_REQUEST_INIT(mdl_request, MDL_key::BACKUP, "", "", MDL_BACKUP_COMMIT,
+  rpl_group_info *rgi= thd->rgi_slave;
+  bool is_parallel_slave= rgi && rgi->is_parallel_exec && rgi->gtid_sub_id > 0;
+
+  /* Parallel-slave: atomic register-and-decide. See ha_commit_trans
+     and Backup_commit_team::join_and_decide() for the rule. */
+  enum_mdl_type lock_type= MDL_BACKUP_COMMIT;
+  if (is_parallel_slave)
+    lock_type= rgi->rli->backup_team.join_and_decide(
+        rgi->current_gtid.domain_id, rgi->gtid_sub_id);
+
+  MDL_REQUEST_INIT(mdl_request, MDL_key::BACKUP, "", "", lock_type,
                    MDL_EXPLICIT);
-  if (thd->rgi_slave && thd->rgi_slave->is_parallel_exec)
-    mdl_request->is_teammate_callback= rpl_group_info::ignore_mdl_priority;
+
   if (thd->mdl_context.acquire_lock(mdl_request,
                                     thd->variables.lock_wait_timeout))
+  {
+    if (is_parallel_slave)
+      rgi->rli->backup_team.leave(rgi->current_gtid.domain_id,
+                                  rgi->gtid_sub_id);
     return 1;
+  }
+  if (is_parallel_slave)
+    rgi->rli->backup_team.mark_granted(rgi->current_gtid.domain_id,
+                                       rgi->gtid_sub_id);
+
   thd->backup_commit_lock= mdl_request;
   return 0;
 }
@@ -540,6 +558,11 @@ static inline void trans_xa_release_backup_lock(THD *thd)
   {
     thd->mdl_context.release_lock(thd->backup_commit_lock->ticket);
     thd->backup_commit_lock= 0;
+    /* Paired with join() in trans_xa_get_backup_lock. */
+    rpl_group_info *rgi= thd->rgi_slave;
+    if (rgi && rgi->is_parallel_exec && rgi->gtid_sub_id > 0)
+      rgi->rli->backup_team.leave(rgi->current_gtid.domain_id,
+                                  rgi->gtid_sub_id);
   }
 }
 
