@@ -172,7 +172,9 @@ set @xs= '<?xml version="1.0"?>
 
 </xs:schema>';
 
+--error ER_UNKNOWN_ERROR
 select XMLISVALID(@xs, '<a> If <b> 123 </b> </a>');
+select XMLISVALID('<a> If <b> 123 </b> </a>', @xs);
 
 --echo # End of 11.8 tests
 

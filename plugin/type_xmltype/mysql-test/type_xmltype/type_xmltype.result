@@ -243,6 +243,8 @@ set @xs= '<?xml version="1.0"?>
 
 </xs:schema>';
 select XMLISVALID(@xs, '<a> If <b> 123 </b> </a>');
-XMLISVALID(@xs, '<a> If <b> 123 </b> </a>')
+ERROR HY000: Invalid XML Schema.
+select XMLISVALID('<a> If <b> 123 </b> </a>', @xs);
+XMLISVALID('<a> If <b> 123 </b> </a>', @xs)
 0
 # End of 11.8 tests

@@ -3160,6 +3160,9 @@ struct xs_word
   {
     return len == m_w.length && memcmp(m_w.str, name, len) == 0;
   }
+
+  size_t length() const { return m_w.length; }
+  const char *str() const { return m_w.str; }
 };
 
 /* XML schema keywords. */
@@ -3226,7 +3229,12 @@ static xs_word xs_value(STRING_WITH_LEN("value"));
 static xs_word xs_version(STRING_WITH_LEN("version"));
 static xs_word xs_whiteSpace(STRING_WITH_LEN("whiteSpace"));
 static xs_word xs_xml(STRING_WITH_LEN("xml"));
+static xs_word xs_xmlns(STRING_WITH_LEN("xmlns"));
 static xs_word xs_xml_lang(STRING_WITH_LEN("xml:lang"));
+
+static xs_word xs_uri_short(STRING_WITH_LEN("http://w3.org"));
+static xs_word xs_uri_www(STRING_WITH_LEN("http://www.w3.org"));
+static xs_word xs_uri(STRING_WITH_LEN("http://www.w3.org/2001/XMLSchema"));
 
 class XMLSchema_tag;
 class XMLSchema_attribute;
@@ -3235,18 +3243,9 @@ class XMLSchema_schema;
 class XMLSchema_attributeGroup_reference;
 class XMLSchema_type;
 
-class XMLSchema_item
+class XMLSchema_item: public Sql_alloc
 {
 public:
-  static void *operator new(size_t size, MEM_ROOT *mem_root) throw ()
-  {
-    return alloc_root(mem_root, size);
-  }
-  static void operator delete(void *ptr __attribute__((unused)),
-                              size_t size __attribute__((unused)))
-  { TRASH_FREE(ptr, size); }
-
-  static void operator delete(void *, MEM_ROOT*) {}
   virtual ~XMLSchema_item() = default;
 
 
@@ -3260,11 +3259,18 @@ public:
     return MY_XML_OK;
   }
   virtual bool leave(MY_XML_VALIDATION_DATA *st, const char *attr, size_t len);
+  /*
+    If the type can't be resolved, the function returns TRUE and
+    sets the unresolved name in the 'bad_type'.
+  */
+  virtual bool resolve_type(MY_XML_VALIDATION_DATA *st, LEX_CSTRING *bad_type)
+  {
+    return false;
+  }
 
   /* Validation of an XML. */
   virtual bool validate_name(const char *attr, size_t len) { return false; }
   virtual void validate_prepare() {}
-  virtual bool validate_done() { return MY_XML_OK; }
 
   virtual bool validate_value(MY_XML_VALIDATION_DATA *st,
                               const char *attr, size_t len)
@@ -3405,6 +3411,15 @@ public:
 };
 
 
+class XMLSchema_tag_xmlns_attribute: public XMLSchema_tag_attribute
+{
+public:
+  LEX_CSTRING m_ns_name;
+  XMLSchema_tag_xmlns_attribute();
+  bool value(MY_XML_VALIDATION_DATA *st, const char *attr, size_t len) override;
+};
+
+
 class XMLSchema_tag_integer_attribute: public XMLSchema_tag_attribute
 {
   int m_error;
@@ -3473,7 +3488,7 @@ public:
 };
 
 
-class MY_XML_VALIDATION_DATA
+class MY_XML_VALIDATION_DATA: public Sql_alloc
 {
 public:
   int validation_failed;
@@ -3487,12 +3502,7 @@ public:
   XMLSchema_xml *xml;
   MEM_ROOT *mem_root;
 
-  static void *operator new(size_t size, MEM_ROOT *mem_root) throw ()
-  { return alloc_root(mem_root, size); }
-  static void operator delete(void *ptr __attribute__((unused)),
-                              size_t size __attribute__((unused)))
-  { TRASH_FREE(ptr, size); }
-  static void operator delete(void *, MEM_ROOT*) {}
+  LEX_CSTRING schema_namespace{NULL, 0};
 
   MY_XML_VALIDATION_DATA():
     s_stack(&root), schema(NULL), xml(NULL), mem_root(NULL)
@@ -3507,6 +3517,39 @@ public:
   }
 
   void pop() { s_stack= s_stack->m_next; }
+
+  void add_item_to_resolve(XMLSchema_item *t);
+  bool set_schema_namespace(const LEX_CSTRING *ns)
+  {
+    /*
+      It's weird feature of the XML Schema.
+      <nsp:schema xmlns:nsp="http://www.w3.org">
+      Here the namespace for the <schema> and the namespace
+      declared with the xmlns must exactly coincide.
+      So we don't actually set anything. It supposed to be set at this point.
+      Just do the necessary check.
+    */
+
+    if (ns->length == 0)
+    {
+      return schema_namespace.length;
+    }
+
+    if (schema_namespace.length != ns->length+1 ||
+        memcmp(schema_namespace.str, ns->str, ns->length) != 0)
+      return true;
+
+    return false;
+  }
+  bool namespace_not_specified() const
+  {
+    return schema_namespace.str == NULL;
+  }
+  bool xs_namespace(const char **name, size_t *len) const;
+  bool namespace_empty() const
+  {
+    return schema_namespace.str != NULL && schema_namespace.length == 0;
+  }
 };
 
 
@@ -3639,6 +3682,8 @@ public:
                  const char *attr, size_t len) override;
   bool leave(MY_XML_VALIDATION_DATA *st,
              const char *attr, size_t len) override;
+  bool resolve_type(MY_XML_VALIDATION_DATA *st,
+                    LEX_CSTRING *bad_type) override;
 
   void validate_prepare() override;
   bool validate_value(MY_XML_VALIDATION_DATA *st,
@@ -3775,20 +3820,11 @@ public:
 };
 
 
-class XMLSchema_builtin_type
+class XMLSchema_builtin_type: public Sql_alloc
 {
 protected:
   virtual ~XMLSchema_builtin_type() = default;
 public:
-  static void *operator new(size_t size, MEM_ROOT *mem_root) throw ()
-  {
-    return alloc_root(mem_root, size);
-  }
-  static void operator delete(void *ptr __attribute__((unused)),
-                              size_t size __attribute__((unused)))
-  { TRASH_FREE(ptr, size); }
-  static void operator delete(void *, MEM_ROOT*) {}
-
   virtual bool valid_value(const char *value, size_t len) { return TRUE; }
   static XMLSchema_builtin_type *get_builtin_type_by_name(
            MY_XML_VALIDATION_DATA *st, const char *name, size_t len);
@@ -4360,10 +4396,6 @@ public:
     m_level++;
     return MY_XML_OK;
   }
-  bool validate_done() override
-  {
-    return m_level == 0 ? MY_XML_OK : MY_XML_ERROR;
-  }
 };
 
 
@@ -4710,6 +4742,11 @@ public:
     for (XMLSchema_tag *cur= m_tags; cur; cur= cur->m_next_tag)
       cur->validate_prepare();
   }
+
+  bool validate_tag(MY_XML_VALIDATION_DATA *st,
+                    const char *attr, size_t len) override;
+  bool validate_leave(MY_XML_VALIDATION_DATA *st,
+                      const char *attr, size_t len) override;
 };
 
 
@@ -4723,8 +4760,6 @@ public:
   {
     m_cur_tag= NULL;
   }
-  bool validate_done() override { return m_cur_tag == NULL; }
-
   bool validate_tag(MY_XML_VALIDATION_DATA *st,
                     const char *attr, size_t len) override;
   bool validate_leave(MY_XML_VALIDATION_DATA *st,
@@ -4734,6 +4769,23 @@ public:
 
 class XMLSchema_choice: public XMLSchema_sequence
 {
+  int m_found;
+  int m_optional;
+public:
+  void validate_prepare() override
+  {
+    m_found= m_optional= 0;
+    for (XMLSchema_tag *cur= m_tags; cur; cur= cur->m_next_tag)
+    {
+      cur->validate_prepare();
+      if (cur->validate_min_counter())
+        m_optional++;
+    }
+  }
+  bool validate_tag(MY_XML_VALIDATION_DATA *st,
+                    const char *attr, size_t len) override;
+  bool validate_leave(MY_XML_VALIDATION_DATA *st,
+                      const char *attr, size_t len) override;
 };
 
 
@@ -4808,6 +4860,8 @@ public:
   }
   bool enter_tag(MY_XML_VALIDATION_DATA *st,
                  const char *attr, size_t len) override;
+  bool resolve_type(MY_XML_VALIDATION_DATA *st,
+                    LEX_CSTRING *bad_type) override;
   bool validate_attr(MY_XML_VALIDATION_DATA *st,
                      const char *attr, size_t len) override;
   bool validate_value(MY_XML_VALIDATION_DATA *st,
@@ -4926,6 +4980,7 @@ class XMLSchema_schema: public XMLSchema_tag
   XMLSchema_tag_attribute m_atr_attributeFormDefault;
   XMLSchema_tag_attribute m_atr_version;
   XMLSchema_tag_attribute m_atr_xml_lang;
+  XMLSchema_tag_xmlns_attribute m_atr_xmlns;
 
 public:
   XMLSchema_user_type *m_global_simpleTypes;
@@ -4933,6 +4988,7 @@ public:
   XMLSchema_attribute *m_global_attributes;
   XMLSchema_element_global *m_global_elements;
   XMLSchema_attributeGroup_def *m_global_attr_groups;
+  List<XMLSchema_item> m_items_to_resolve;
 
   /*
   TODO: should be supported.
@@ -4960,6 +5016,8 @@ public:
     declare_attribute(&m_atr_xml_lang);
   }
 
+  XMLSchema_type *find_simple_type_by_name(MY_XML_VALIDATION_DATA *st,
+                                           const char *name, size_t len) const;
   XMLSchema_type *find_type_by_name(MY_XML_VALIDATION_DATA *st,
                                     const char *name, size_t len) const;
   XMLSchema_attributeGroup_def *find_attribute_group_by_name(const char *name,
@@ -4982,6 +5040,9 @@ public:
                         const char *attr, size_t len);
   bool enter_tag(MY_XML_VALIDATION_DATA *st,
                  const char *attr, size_t len) override;
+  bool enter_attr(MY_XML_VALIDATION_DATA *st,
+                  const char *attr, size_t len) override;
+
   XMLSchema_type *find_simple_type(const char *name, size_t len) const;
   XMLSchema_type *find_complex_type(const char *name, size_t len) const;
 };
@@ -5145,6 +5206,26 @@ XMLSchema_builtin_type *XMLSchema_builtin_type::get_builtin_type_by_name(
 }
 
 
+void MY_XML_VALIDATION_DATA::add_item_to_resolve(XMLSchema_item *t)
+{
+  schema->m_items_to_resolve.push_back(t, mem_root);
+}
+
+
+bool MY_XML_VALIDATION_DATA::xs_namespace(const char **name, size_t *len) const
+{
+  if (*len > schema_namespace.length &&
+      memcmp(*name, schema_namespace.str, schema_namespace.length) == 0)
+  {
+    (*name)+= schema_namespace.length;
+    (*len)-= schema_namespace.length;
+    return true;
+  }
+
+  return false;
+}
+
+
 bool XMLSchema_root::enter_tag(MY_XML_VALIDATION_DATA *st,
                                const char *attr, size_t len)
 {
@@ -5174,6 +5255,30 @@ bool XMLSchema_root::validate_tag(MY_XML_VALIDATION_DATA *st,
   else
   {
     return st->schema->validate_element(st, attr, len);
+  }
+
+  return MY_XML_OK;
+}
+
+
+XMLSchema_tag_xmlns_attribute::XMLSchema_tag_xmlns_attribute():
+  XMLSchema_tag_attribute(&xs_xmlns)
+{}
+
+
+bool XMLSchema_tag_xmlns_attribute::value(
+         MY_XML_VALIDATION_DATA *st, const char *attr, size_t len)
+{
+  m_val= attr;
+  m_val_len= len;
+
+  if ((len >= xs_uri_short.length() &&
+       memcmp(xs_uri_short.str(), attr, xs_uri_short.length()) == 0) ||
+      (len >= xs_uri_www.length() &&
+       memcmp(xs_uri_www.str(), attr, xs_uri_www.length()) == 0))
+  {
+    if (st->set_schema_namespace(&m_ns_name))
+      return MY_XML_ERROR;
   }
 
   return MY_XML_OK;
@@ -5275,13 +5380,24 @@ bool XMLSchema_attribute::leave(MY_XML_VALIDATION_DATA *st,
   }
   else
   {
-    m_type= st->schema->find_type_by_name(
-                          st, m_atr_type.m_val, m_atr_type.m_val_len);
-    if (!m_type)
-      return MY_XML_ERROR;
+    st->add_item_to_resolve(this);
   }
 
   return XMLSchema_item::leave(st, attr, len);
+}
+
+
+bool XMLSchema_attribute::resolve_type(
+                            MY_XML_VALIDATION_DATA *st, LEX_CSTRING *bad_type)
+{
+  m_type= st->schema->find_simple_type_by_name(
+                        st, m_atr_type.m_val, m_atr_type.m_val_len);
+  if (m_type)
+    return MY_XML_OK;
+
+  bad_type->str= m_atr_type.m_val;
+  bad_type->length= m_atr_type.m_val_len;
+  return MY_XML_ERROR;
 }
 
 
@@ -5662,6 +5778,38 @@ bool XMLSchema_all::enter_tag(MY_XML_VALIDATION_DATA *st,
 }
 
 
+bool XMLSchema_all::validate_leave(MY_XML_VALIDATION_DATA *st,
+                                   const char *attr, size_t len)
+{
+  for (XMLSchema_tag *cur= m_tags; cur; cur= cur->m_next_tag)
+  {
+    if (!cur->validate_min_counter())
+    {
+      return validate_failed(st);
+    }
+  }
+  return MY_XML_OK;
+}
+
+
+bool XMLSchema_all::validate_tag(MY_XML_VALIDATION_DATA *st,
+                                 const char *attr, size_t len)
+{
+  for (XMLSchema_tag *cur= m_tags; cur; cur= cur->m_next_tag)
+  {
+    if (cur->validate_name(attr, len))
+    {
+      if (!cur->validate_max_counter())
+        break;
+
+      cur->push_self(st);
+      return MY_XML_OK;
+    }
+  }
+  return validate_failed(st);
+}
+
+
 bool XMLSchema_sequence::enter_tag(MY_XML_VALIDATION_DATA *st,
                                    const char *attr, size_t len)
 {
@@ -5749,6 +5897,37 @@ bool XMLSchema_sequence::validate_leave(MY_XML_VALIDATION_DATA *st,
 }
 
 
+bool XMLSchema_choice::validate_leave(MY_XML_VALIDATION_DATA *st,
+                                   const char *attr, size_t len)
+{
+  if (m_found + m_optional == 0)
+  {
+    return validate_failed(st);
+  }
+  return MY_XML_OK;
+}
+
+
+bool XMLSchema_choice::validate_tag(MY_XML_VALIDATION_DATA *st,
+                                 const char *attr, size_t len)
+{
+  if (m_found)
+    return validate_failed(st);
+
+  for (XMLSchema_tag *cur= m_tags; cur; cur= cur->m_next_tag)
+  {
+    if (cur->validate_name(attr, len))
+    {
+      cur->push_self(st);
+      m_found++;
+      return MY_XML_OK;
+    }
+  }
+
+  return validate_failed(st);
+}
+
+
 bool XMLSchema_group_def::enter_tag(MY_XML_VALIDATION_DATA *st,
                                     const char *attr, size_t len)
 {
@@ -5809,6 +5988,20 @@ bool XMLSchema_element_global::enter_tag(MY_XML_VALIDATION_DATA *st,
   st->push(def);
 
   return MY_XML_OK;
+}
+
+
+bool XMLSchema_element_global::resolve_type(
+                            MY_XML_VALIDATION_DATA *st, LEX_CSTRING *bad_type)
+{
+  m_type= st->schema->find_type_by_name(
+                        st, m_atr_type.m_val, m_atr_type.m_val_len);
+  if (m_type)
+    return MY_XML_OK;
+
+  bad_type->str= m_atr_type.m_val;
+  bad_type->length= m_atr_type.m_val_len;
+  return MY_XML_ERROR;
 }
 
 
@@ -5891,6 +6084,35 @@ bool XMLSchema_schema::enter_tag(MY_XML_VALIDATION_DATA *st,
 }
 
 
+bool XMLSchema_schema::enter_attr(MY_XML_VALIDATION_DATA *st,
+                                  const char *attr, size_t len)
+{
+  if (len >= xs_xmlns.length() &&
+      memcmp(attr, xs_xmlns.str(), xs_xmlns.length()) == 0)
+  {
+    /* set namespace for the schema */
+    if (len == xs_xmlns.length())
+    {
+      /* empty namespace name. */
+      m_atr_xmlns.m_ns_name.str= "";
+      m_atr_xmlns.m_ns_name.length= 0;
+    }
+    else if (attr[xs_xmlns.length()] == MY_XPATH_LEX_COLON)
+    {
+      m_atr_xmlns.m_ns_name.str= attr + xs_xmlns.length()+1;
+      m_atr_xmlns.m_ns_name.length= len - (xs_xmlns.length()+1);
+    }
+    else
+      goto run_inherited;
+
+    st->push(&m_atr_xmlns);
+    return MY_XML_OK;
+  }
+run_inherited:
+  return XMLSchema_tag::enter_attr(st, attr, len);
+}
+
+
 XMLSchema_type *XMLSchema_schema::find_simple_type(
                                     const char *name, size_t len) const
 {
@@ -5917,42 +6139,47 @@ XMLSchema_type *XMLSchema_schema::find_complex_type(
 }
 
 
+XMLSchema_type *XMLSchema_schema::find_simple_type_by_name(
+   MY_XML_VALIDATION_DATA *st, const char *name, size_t len) const
+{
+  XMLSchema_type *result= NULL;
+
+  if (st->xs_namespace(&name, &len))
+  {
+    XMLSchema_builtin_type *builtin_type;
+    builtin_type= XMLSchema_builtin_type::get_builtin_type_by_name(
+                    st, name, len);
+
+    if (builtin_type)
+    {
+      result= new(st->mem_root) XMLSchema_simple_builtin_type(builtin_type);
+    }
+
+    if (result || !st->namespace_empty())
+      goto exit;
+  }
+
+  if (xs_anyType.eq(name, len))
+    result= new(st->mem_root) XMLSchema_any_type;
+  else
+  {
+    result= find_simple_type(name, len);
+  }
+
+exit:
+  return result;
+}
+
+
 XMLSchema_type *XMLSchema_schema::find_type_by_name(
    MY_XML_VALIDATION_DATA *st, const char *name, size_t len) const
 {
-  size_t col_pos= 0;
-  XMLSchema_builtin_type *builtin_type;
   XMLSchema_type *result;
 
-  /* TODO check the namespace properly. */
-  while (col_pos < len)
-  {
-    if (name[col_pos++] == MY_XPATH_LEX_COLON)
-    {
-      name+= col_pos;
-      len-= col_pos;
-      break;
-    }
-  }
+  if ((result= find_simple_type_by_name(st, name, len)))
+    return result;
 
-  builtin_type= XMLSchema_builtin_type::get_builtin_type_by_name(
-      st, name, len);
-
-  if (builtin_type)
-  {
-    result= new(st->mem_root) XMLSchema_simple_builtin_type(builtin_type);
-  }
-  else
-  {
-    if (xs_anyType.eq(name, len))
-      result= new(st->mem_root) XMLSchema_any_type;
-    else
-    {
-      result= find_simple_type(name, len);
-      if (!result)
-        result= find_complex_type(name, len);
-    }
-  }
+  result= find_complex_type(name, len);
 
   return result;
 }
@@ -6040,16 +6267,29 @@ static int schema_enter(MY_XML_PARSER *st,const char *attr, size_t len)
 
   if (st->current_node_type == MY_XML_NODE_TAG)
   {
-    size_t col_pos= 0;
-    /* TODO check the namespace properly. */
-    while (col_pos < len)
+    if (data->namespace_not_specified() && !xs_xml.eq(attr, len))
     {
-      if (attr[col_pos++] == MY_XPATH_LEX_COLON)
+      size_t col_pos= 0;
+      data->schema_namespace.str= "";
+      data->schema_namespace.length= 0;
+
+      while (col_pos < len)
       {
-        attr+= col_pos;
-        len-= col_pos;
-        break;
+        if (attr[col_pos++] == MY_XPATH_LEX_COLON)
+        {
+          data->schema_namespace.str= attr;
+          data->schema_namespace.length= col_pos;
+
+          attr+= col_pos;
+          len-= col_pos;
+          break;
+        }
       }
+    }
+    else if (!data->xs_namespace(&attr, &len))
+    {
+      /* all the schema tags must be in same schema namespace. */
+      return MY_XML_ERROR;
     }
 
     if (!data->s_stack)
@@ -6112,7 +6352,10 @@ static int schema_parse(THD *thd, const String *xml,
   my_xml_set_user_data(&p, (void*) user_data);
 
   /* Execute XML parser */
-  if ((rc= my_xml_parse(&p, xml->ptr(), xml->length())) != MY_XML_OK)
+  rc= my_xml_parse(&p, xml->ptr(), xml->length()) != MY_XML_OK;
+  my_xml_parser_free(&p);
+
+  if (rc)
   {
     char buf[128];
     my_snprintf(buf, sizeof(buf)-1,
@@ -6129,6 +6372,27 @@ static int schema_parse(THD *thd, const String *xml,
   {
     my_printf_error(ER_UNKNOWN_ERROR, "Invalid XML Schema.", MYF(0));
     return 1;
+  }
+
+  /* resolve typenames */
+  {
+    List_iterator_fast<XMLSchema_item> li(
+        user_data->schema->m_items_to_resolve);
+    LEX_CSTRING bad_type;
+    XMLSchema_item *i;
+
+    while ((i= li++))
+    {
+      if (i->resolve_type(user_data, &bad_type))
+      {
+        char er_buf[512];
+        my_snprintf(er_buf, sizeof(er_buf),
+                    "Invalid XML schema, type %.*s not defined.",
+                    (int) bad_type.length, bad_type.str);
+        my_printf_error(ER_UNKNOWN_ERROR, er_buf, MYF(0));
+        return 1;
+      }
+    }
   }
 
   return 0;
@@ -6216,6 +6480,7 @@ static int validate_schema(const String *xml,
                            MY_XML_VALIDATION_DATA *user_data)
 {
   MY_XML_PARSER p;
+  int rc;
 
   /* Prepare XML parser */
   my_xml_parser_create(&p);
@@ -6231,7 +6496,10 @@ static int validate_schema(const String *xml,
   user_data->s_stack= &user_data->root;
 
   /* Execute XML parser */
-  return my_xml_parse(&p, xml->ptr(), xml->length()) == MY_XML_OK;
+  rc= my_xml_parse(&p, xml->ptr(), xml->length()) == MY_XML_OK;
+  my_xml_parser_free(&p);
+
+  return rc;
 }
 
 
