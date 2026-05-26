@@ -1,0 +1,45 @@
+--echo #
+--echo # Testing a deeper call stack: f1 , f2 , p2
+--echo # f1() can be an assignment right hand
+--echo # f2() uses f1() but does not have prepared statements itself
+--echo # p1() calls f2() in SELECT list - Not allowed
+--echo # p2() calls f2() in assignment - Allowed
+--echo #
+
+CREATE TABLE t1 (a INT);
+DELIMITER $$;
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+  EXECUTE IMMEDIATE 'INSERT INTO t1 VALUES (10)';
+  RETURN ROW_COUNT();
+END;
+$$
+CREATE FUNCTION f2() RETURNS INT
+BEGIN
+  DECLARE a INT;
+  SET a=f1();
+  RETURN a;
+END;
+$$
+CREATE PROCEDURE p1()
+BEGIN
+  SELECT f2();
+END;
+$$
+CREATE PROCEDURE p2()
+BEGIN
+  DECLARE a INT;
+  SET a=f2();
+  SELECT a;
+  SELECT * FROM t1;
+END;
+$$
+DELIMITER ;$$
+--error ER_STMT_NOT_ALLOWED_IN_SF_OR_TRG
+CALL p1;
+CALL p2;
+DROP PROCEDURE p2;
+DROP PROCEDURE p1;
+DROP FUNCTION f2;
+DROP FUNCTION f1;
+DROP TABLE t1;

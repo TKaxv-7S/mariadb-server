@@ -1,0 +1,46 @@
+#
+# Testing a deeper call stack: f1 , f2 , p2
+# f1() can be an assignment right hand
+# f2() uses f1() but does not have prepared statements itself
+# p1() calls f2() in SELECT list - Not allowed
+# p2() calls f2() in assignment - Allowed
+#
+CREATE TABLE t1 (a INT);
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+EXECUTE IMMEDIATE 'INSERT INTO t1 VALUES (10)';
+RETURN ROW_COUNT();
+END;
+$$
+CREATE FUNCTION f2() RETURNS INT
+BEGIN
+DECLARE a INT;
+SET a=f1();
+RETURN a;
+END;
+$$
+CREATE PROCEDURE p1()
+BEGIN
+SELECT f2();
+END;
+$$
+CREATE PROCEDURE p2()
+BEGIN
+DECLARE a INT;
+SET a=f2();
+SELECT a;
+SELECT * FROM t1;
+END;
+$$
+CALL p1;
+ERROR 0A000: Dynamic SQL is not allowed in stored function or trigger
+CALL p2;
+a
+1
+a
+10
+DROP PROCEDURE p2;
+DROP PROCEDURE p1;
+DROP FUNCTION f2;
+DROP FUNCTION f1;
+DROP TABLE t1;

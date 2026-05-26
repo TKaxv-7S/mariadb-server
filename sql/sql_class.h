@@ -2263,6 +2263,7 @@ public:
 #define SUB_STMT_FUNCTION 2
 #define SUB_STMT_STAT_TABLES 4
 #define SUB_STMT_BEFORE_TRIGGER 8
+#define SUB_STMT_PS_SAFE_CONTEXT 16
 
 class Sub_statement_state
 {

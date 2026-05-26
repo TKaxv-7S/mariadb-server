@@ -1,0 +1,407 @@
+--echo #
+--echo # MDEV-39518 Allow prepared statements in stored functions in assignment right hand
+--echo #
+
+--echo #
+--echo # A function with PREPARE/EXECUTE/DEALLOCATE can be used with restrictions
+--echo # OK when the function is used in an assignment right hand
+--echo #
+
+CREATE TABLE t1 (a INT);
+DELIMITER $$;
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+  PREPARE stmt FROM 'INSERT INTO t1 VALUES (10)';
+  RETURN 0;
+END;
+$$
+DELIMITER ;$$
+--error ER_STMT_NOT_ALLOWED_IN_SF_OR_TRG
+SELECT f1();
+DELIMITER $$;
+CREATE PROCEDURE p1()
+BEGIN
+  DECLARE a INT DEFAULT f1();
+END;
+$$
+DELIMITER ;$$
+CALL p1;
+EXECUTE stmt;
+SELECT * FROM t1;
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+TRUNCATE TABLE t1;
+
+
+DELIMITER $$;
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+  EXECUTE stmt;
+  RETURN 0;
+END;
+$$
+DELIMITER ;$$
+--error ER_STMT_NOT_ALLOWED_IN_SF_OR_TRG
+SELECT f1();
+DELIMITER $$;
+CREATE PROCEDURE p1()
+BEGIN
+  DECLARE a INT DEFAULT f1();
+END;
+$$
+DELIMITER ;$$
+CALL p1;
+SELECT * FROM t1;
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+
+
+DELIMITER $$;
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+  DEALLOCATE PREPARE stmt;
+  RETURN 0;
+END;
+$$
+DELIMITER ;$$
+--error ER_STMT_NOT_ALLOWED_IN_SF_OR_TRG
+SELECT f1();
+DELIMITER $$;
+CREATE PROCEDURE p1()
+BEGIN
+  DECLARE a INT DEFAULT f1();
+END;
+$$
+DELIMITER ;$$
+CALL p1;
+--error ER_UNKNOWN_STMT_HANDLER
+DEALLOCATE PREPARE stmt;
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+
+
+DELIMITER $$;
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+  EXECUTE IMMEDIATE 'INSERT INTO t1 VALUES (10)';
+  RETURN 0;
+END;
+$$
+DELIMITER ;$$
+--error ER_STMT_NOT_ALLOWED_IN_SF_OR_TRG
+SELECT f1();
+DELIMITER $$;
+CREATE PROCEDURE p1()
+BEGIN
+  DECLARE a INT DEFAULT f1();
+END;
+$$
+DELIMITER ;$$
+CALL p1;
+SELECT * FROM t1;
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+DROP TABLE t1;
+
+
+--echo # Testing a deeper call stack: f1 , p1 , p2
+
+CREATE TABLE t1 (a INT);
+DELIMITER $$;
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+  EXECUTE IMMEDIATE 'INSERT INTO t1 VALUES (10)';
+  RETURN ROW_COUNT();
+END;
+$$
+CREATE PROCEDURE p1()
+BEGIN
+  DECLARE a INT;
+  SET a=f1();
+  SELECT * FROM t1;
+END;
+$$
+CREATE PROCEDURE p2()
+BEGIN
+  CALL p1();
+END;
+$$
+DELIMITER ;$$
+CALL p2();
+DROP PROCEDURE p2;
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+DROP TABLE t1;
+
+
+--echo #
+--echo # Testing a deeper call stack: f1 , f2 , p2
+--echo # f1() can be an assignment right hand
+--echo # f2() uses f1() but does not have prepared statements itself
+--echo # p1() calls f2() in SELECT list - Not allowed
+--echo # p2() calls f2() in assignment - Allowed
+--echo #
+
+CREATE TABLE t1 (a INT);
+DELIMITER $$;
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+  EXECUTE IMMEDIATE 'INSERT INTO t1 VALUES (10)';
+  RETURN ROW_COUNT();
+END;
+$$
+CREATE FUNCTION f2() RETURNS INT
+BEGIN
+  DECLARE a INT;
+  SET a=f1();
+  RETURN a;
+END;
+$$
+CREATE PROCEDURE p1()
+BEGIN
+  SELECT f2();
+END;
+$$
+#TODO
+#CREATE PROCEDURE p2()
+#BEGIN
+#  DECLARE a INT;
+#  SET a=f2();
+#  SELECT a;
+#  SELECT * FROM t1;
+#END;
+#$$
+DELIMITER ;$$
+--error ER_STMT_NOT_ALLOWED_IN_SF_OR_TRG
+CALL p1;
+#TODO
+#CALL p2;
+#DROP PROCEDURE p2;
+DROP PROCEDURE p1;
+DROP FUNCTION f2;
+DROP FUNCTION f1;
+DROP TABLE t1;
+
+
+--echo #
+--echo # Prepare a statement outside of the function, open a cursor inside
+--echo #
+
+CREATE TABLE t1 (a INT);
+INSERT INTO t1 VALUES (10);
+PREPARE stmt FROM 'SELECT MAX(a) FROM t1';
+
+DELIMITER $$;
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+  DECLARE c0 SYS_REFCURSOR;
+  DECLARE v0 INT;
+  OPEN c0 FOR PREPARE stmt;
+  FETCH c0 INTO v0;
+  CLOSE c0;
+  RETURN v0;
+END;
+$$
+DELIMITER ;$$
+
+--error ER_STMT_NOT_ALLOWED_IN_SF_OR_TRG
+SELECT f1();
+
+# Assignment works
+DELIMITER $$;
+CREATE PROCEDURE p1()
+BEGIN
+  DECLARE n INT;
+  SET n= f1();
+  SELECT n;
+END;
+$$
+DELIMITER ;$$
+CALL p1;
+DROP PROCEDURE p1;
+
+# DEFULT also works
+DELIMITER $$;
+CREATE PROCEDURE p1()
+BEGIN
+  DECLARE n INT DEFAULT f1();
+  SELECT n;
+END;
+$$
+DELIMITER ;$$
+CALL p1;
+DROP PROCEDURE p1;
+
+DROP FUNCTION f1;
+DEALLOCATE PREPARE stmt;
+DROP TABLE t1;
+
+
+--echo #
+--echo # Prepare a statement inside the function, open a cursor
+--echo #
+
+CREATE TABLE t1 (a INT);
+INSERT INTO t1 VALUES (10);
+
+DELIMITER $$;
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+  DECLARE c0 SYS_REFCURSOR;
+  DECLARE v0 INT;
+  PREPARE stmt FROM 'SELECT MAX(a) FROM t1';
+  OPEN c0 FOR PREPARE stmt;
+  FETCH c0 INTO v0;
+  CLOSE c0;
+  DEALLOCATE PREPARE stmt;
+  RETURN v0;
+END;
+$$
+DELIMITER ;$$
+
+--error ER_STMT_NOT_ALLOWED_IN_SF_OR_TRG
+SELECT f1();
+
+# Assignment works
+DELIMITER $$;
+CREATE PROCEDURE p1()
+BEGIN
+  DECLARE n INT;
+  SET n= f1();
+  SELECT n;
+END;
+$$
+DELIMITER ;$$
+CALL p1;
+DROP PROCEDURE p1;
+
+# DEFULT also works
+DELIMITER $$;
+CREATE PROCEDURE p1()
+BEGIN
+  DECLARE n INT DEFAULT f1();
+  SELECT n;
+END;
+$$
+DELIMITER ;$$
+CALL p1;
+DROP PROCEDURE p1;
+
+DROP FUNCTION f1;
+DROP TABLE t1;
+
+
+--echo #
+--echo # PREPARE/EXECUTE/DEALLOCATE
+--echo # Statements causing implicit or explicit commit are not allowed, e.g:
+--echo # - DDL statements
+--echo # - COMMIT
+--echo # Even in assignment context
+--echo #
+
+DELIMITER $$;
+CREATE FUNCTION f1(query TEXT) RETURNS INT
+BEGIN
+  DECLARE nrows INT;
+  PREPARE stmt FROM query;
+  EXECUTE stmt;
+  SET nrows= ROW_COUNT();
+  DEALLOCATE PREPARE stmt;
+  RETURN nrows;
+END;
+$$
+CREATE PROCEDURE p1(query TEXT)
+BEGIN
+  DECLARE nrows INT;
+  SET nrows= f1(query);
+  SELECT nrows;
+  SELECT * FROM t1;
+END;
+$$
+DELIMITER ;$$
+--error ER_COMMIT_NOT_ALLOWED_IN_SF_OR_TRG
+CALL p1('CREATE TABLE t1 (a INT)');
+CREATE TABLE t1 (a INT);
+--error ER_COMMIT_NOT_ALLOWED_IN_SF_OR_TRG
+CALL p1('ALTER TABLE t1 MODIFY a BIGINT');
+--error ER_COMMIT_NOT_ALLOWED_IN_SF_OR_TRG
+CALL p1('DROP TABLE t1');
+--error ER_COMMIT_NOT_ALLOWED_IN_SF_OR_TRG
+CALL p1('COMMIT');
+DROP TABLE t1;
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+
+
+--echo #
+--echo # Same as above but with EXECUTE IMMEDIATE
+--echo # Statements causing implicit or explicit commit are not allowed, e.g:
+--echo # - DDL statements
+--echo # - COMMIT
+--echo # Even in assignment context
+--echo #
+
+DELIMITER $$;
+CREATE FUNCTION f1(query TEXT) RETURNS INT
+BEGIN
+  DECLARE nrows INT;
+  EXECUTE IMMEDIATE query;
+  SET nrows= ROW_COUNT();
+  RETURN nrows;
+END;
+$$
+CREATE PROCEDURE p1(query TEXT)
+BEGIN
+  DECLARE nrows INT;
+  SET nrows= f1(query);
+  SELECT nrows;
+  SELECT * FROM t1;
+END;
+$$
+DELIMITER ;$$
+--error ER_COMMIT_NOT_ALLOWED_IN_SF_OR_TRG
+CALL p1('CREATE TABLE t1 (a INT)');
+CREATE TABLE t1 (a INT);
+--error ER_COMMIT_NOT_ALLOWED_IN_SF_OR_TRG
+CALL p1('ALTER TABLE t1 MODIFY a BIGINT');
+--error ER_COMMIT_NOT_ALLOWED_IN_SF_OR_TRG
+CALL p1('DROP TABLE t1');
+--error ER_COMMIT_NOT_ALLOWED_IN_SF_OR_TRG
+CALL p1('COMMIT');
+DROP TABLE t1;
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+
+
+--echo #
+--echo # DML statements
+--echo #
+
+CREATE TABLE t1 (a INT);
+
+DELIMITER $$;
+CREATE FUNCTION f1(query TEXT) RETURNS INT
+BEGIN
+  DECLARE nrows INT;
+  PREPARE stmt FROM query;
+  EXECUTE stmt;
+  SET nrows= ROW_COUNT();
+  DEALLOCATE PREPARE stmt;
+  RETURN nrows;
+END;
+$$
+CREATE PROCEDURE p1(query TEXT)
+BEGIN
+  DECLARE nrows INT;
+  SET nrows= f1(query);
+  SELECT nrows;
+  SELECT * FROM t1;
+END;
+$$
+DELIMITER ;$$
+CALL p1('INSERT INTO t1 VALUES (10),(20),(30)');
+CALL p1('UPDATE t1 SET a=a+1');
+CALL p1('DELETE FROM t1 WHERE a>20');
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+DROP TABLE t1;

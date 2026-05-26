@@ -1,0 +1,346 @@
+#
+# MDEV-39518 Allow prepared statements in stored functions in assignment right hand
+#
+#
+# A function with PREPARE/EXECUTE/DEALLOCATE can be used with restrictions
+# OK when the function is used in an assignment right hand
+#
+CREATE TABLE t1 (a INT);
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+PREPARE stmt FROM 'INSERT INTO t1 VALUES (10)';
+RETURN 0;
+END;
+$$
+SELECT f1();
+ERROR 0A000: Dynamic SQL is not allowed in stored function or trigger
+CREATE PROCEDURE p1()
+BEGIN
+DECLARE a INT DEFAULT f1();
+END;
+$$
+CALL p1;
+EXECUTE stmt;
+SELECT * FROM t1;
+a
+10
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+TRUNCATE TABLE t1;
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+EXECUTE stmt;
+RETURN 0;
+END;
+$$
+SELECT f1();
+ERROR 0A000: Dynamic SQL is not allowed in stored function or trigger
+CREATE PROCEDURE p1()
+BEGIN
+DECLARE a INT DEFAULT f1();
+END;
+$$
+CALL p1;
+SELECT * FROM t1;
+a
+10
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+DEALLOCATE PREPARE stmt;
+RETURN 0;
+END;
+$$
+SELECT f1();
+ERROR 0A000: Dynamic SQL is not allowed in stored function or trigger
+CREATE PROCEDURE p1()
+BEGIN
+DECLARE a INT DEFAULT f1();
+END;
+$$
+CALL p1;
+DEALLOCATE PREPARE stmt;
+ERROR HY000: Unknown prepared statement handler (stmt) given to DEALLOCATE PREPARE
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+EXECUTE IMMEDIATE 'INSERT INTO t1 VALUES (10)';
+RETURN 0;
+END;
+$$
+SELECT f1();
+ERROR 0A000: Dynamic SQL is not allowed in stored function or trigger
+CREATE PROCEDURE p1()
+BEGIN
+DECLARE a INT DEFAULT f1();
+END;
+$$
+CALL p1;
+SELECT * FROM t1;
+a
+10
+10
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+DROP TABLE t1;
+# Testing a deeper call stack: f1 , p1 , p2
+CREATE TABLE t1 (a INT);
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+EXECUTE IMMEDIATE 'INSERT INTO t1 VALUES (10)';
+RETURN ROW_COUNT();
+END;
+$$
+CREATE PROCEDURE p1()
+BEGIN
+DECLARE a INT;
+SET a=f1();
+SELECT * FROM t1;
+END;
+$$
+CREATE PROCEDURE p2()
+BEGIN
+CALL p1();
+END;
+$$
+CALL p2();
+a
+10
+DROP PROCEDURE p2;
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+DROP TABLE t1;
+#
+# Testing a deeper call stack: f1 , f2 , p2
+# f1() can be an assignment right hand
+# f2() uses f1() but does not have prepared statements itself
+# p1() calls f2() in SELECT list - Not allowed
+# p2() calls f2() in assignment - Allowed
+#
+CREATE TABLE t1 (a INT);
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+EXECUTE IMMEDIATE 'INSERT INTO t1 VALUES (10)';
+RETURN ROW_COUNT();
+END;
+$$
+CREATE FUNCTION f2() RETURNS INT
+BEGIN
+DECLARE a INT;
+SET a=f1();
+RETURN a;
+END;
+$$
+CREATE PROCEDURE p1()
+BEGIN
+SELECT f2();
+END;
+$$
+CALL p1;
+ERROR 0A000: Dynamic SQL is not allowed in stored function or trigger
+DROP PROCEDURE p1;
+DROP FUNCTION f2;
+DROP FUNCTION f1;
+DROP TABLE t1;
+#
+# Prepare a statement outside of the function, open a cursor inside
+#
+CREATE TABLE t1 (a INT);
+INSERT INTO t1 VALUES (10);
+PREPARE stmt FROM 'SELECT MAX(a) FROM t1';
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+DECLARE c0 SYS_REFCURSOR;
+DECLARE v0 INT;
+OPEN c0 FOR PREPARE stmt;
+FETCH c0 INTO v0;
+CLOSE c0;
+RETURN v0;
+END;
+$$
+SELECT f1();
+ERROR 0A000: Dynamic SQL is not allowed in stored function or trigger
+CREATE PROCEDURE p1()
+BEGIN
+DECLARE n INT;
+SET n= f1();
+SELECT n;
+END;
+$$
+CALL p1;
+n
+10
+DROP PROCEDURE p1;
+CREATE PROCEDURE p1()
+BEGIN
+DECLARE n INT DEFAULT f1();
+SELECT n;
+END;
+$$
+CALL p1;
+n
+10
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+DEALLOCATE PREPARE stmt;
+DROP TABLE t1;
+#
+# Prepare a statement inside the function, open a cursor
+#
+CREATE TABLE t1 (a INT);
+INSERT INTO t1 VALUES (10);
+CREATE FUNCTION f1() RETURNS INT
+BEGIN
+DECLARE c0 SYS_REFCURSOR;
+DECLARE v0 INT;
+PREPARE stmt FROM 'SELECT MAX(a) FROM t1';
+OPEN c0 FOR PREPARE stmt;
+FETCH c0 INTO v0;
+CLOSE c0;
+DEALLOCATE PREPARE stmt;
+RETURN v0;
+END;
+$$
+SELECT f1();
+ERROR 0A000: Dynamic SQL is not allowed in stored function or trigger
+CREATE PROCEDURE p1()
+BEGIN
+DECLARE n INT;
+SET n= f1();
+SELECT n;
+END;
+$$
+CALL p1;
+n
+10
+DROP PROCEDURE p1;
+CREATE PROCEDURE p1()
+BEGIN
+DECLARE n INT DEFAULT f1();
+SELECT n;
+END;
+$$
+CALL p1;
+n
+10
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+DROP TABLE t1;
+#
+# PREPARE/EXECUTE/DEALLOCATE
+# Statements causing implicit or explicit commit are not allowed, e.g:
+# - DDL statements
+# - COMMIT
+# Even in assignment context
+#
+CREATE FUNCTION f1(query TEXT) RETURNS INT
+BEGIN
+DECLARE nrows INT;
+PREPARE stmt FROM query;
+EXECUTE stmt;
+SET nrows= ROW_COUNT();
+DEALLOCATE PREPARE stmt;
+RETURN nrows;
+END;
+$$
+CREATE PROCEDURE p1(query TEXT)
+BEGIN
+DECLARE nrows INT;
+SET nrows= f1(query);
+SELECT nrows;
+SELECT * FROM t1;
+END;
+$$
+CALL p1('CREATE TABLE t1 (a INT)');
+ERROR HY000: Explicit or implicit commit is not allowed in stored function or trigger
+CREATE TABLE t1 (a INT);
+CALL p1('ALTER TABLE t1 MODIFY a BIGINT');
+ERROR HY000: Explicit or implicit commit is not allowed in stored function or trigger
+CALL p1('DROP TABLE t1');
+ERROR HY000: Explicit or implicit commit is not allowed in stored function or trigger
+CALL p1('COMMIT');
+ERROR HY000: Explicit or implicit commit is not allowed in stored function or trigger
+DROP TABLE t1;
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+#
+# Same as above but with EXECUTE IMMEDIATE
+# Statements causing implicit or explicit commit are not allowed, e.g:
+# - DDL statements
+# - COMMIT
+# Even in assignment context
+#
+CREATE FUNCTION f1(query TEXT) RETURNS INT
+BEGIN
+DECLARE nrows INT;
+EXECUTE IMMEDIATE query;
+SET nrows= ROW_COUNT();
+RETURN nrows;
+END;
+$$
+CREATE PROCEDURE p1(query TEXT)
+BEGIN
+DECLARE nrows INT;
+SET nrows= f1(query);
+SELECT nrows;
+SELECT * FROM t1;
+END;
+$$
+CALL p1('CREATE TABLE t1 (a INT)');
+ERROR HY000: Explicit or implicit commit is not allowed in stored function or trigger
+CREATE TABLE t1 (a INT);
+CALL p1('ALTER TABLE t1 MODIFY a BIGINT');
+ERROR HY000: Explicit or implicit commit is not allowed in stored function or trigger
+CALL p1('DROP TABLE t1');
+ERROR HY000: Explicit or implicit commit is not allowed in stored function or trigger
+CALL p1('COMMIT');
+ERROR HY000: Explicit or implicit commit is not allowed in stored function or trigger
+DROP TABLE t1;
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+#
+# DML statements
+#
+CREATE TABLE t1 (a INT);
+CREATE FUNCTION f1(query TEXT) RETURNS INT
+BEGIN
+DECLARE nrows INT;
+PREPARE stmt FROM query;
+EXECUTE stmt;
+SET nrows= ROW_COUNT();
+DEALLOCATE PREPARE stmt;
+RETURN nrows;
+END;
+$$
+CREATE PROCEDURE p1(query TEXT)
+BEGIN
+DECLARE nrows INT;
+SET nrows= f1(query);
+SELECT nrows;
+SELECT * FROM t1;
+END;
+$$
+CALL p1('INSERT INTO t1 VALUES (10),(20),(30)');
+nrows
+3
+a
+10
+20
+30
+CALL p1('UPDATE t1 SET a=a+1');
+nrows
+3
+a
+11
+21
+31
+CALL p1('DELETE FROM t1 WHERE a>20');
+nrows
+2
+a
+11
+DROP PROCEDURE p1;
+DROP FUNCTION f1;
+DROP TABLE t1;
