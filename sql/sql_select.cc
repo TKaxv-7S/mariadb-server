@@ -20463,6 +20463,16 @@ Item_result_field::create_tmp_field_ex_from_handler(
       ((Field_blob*) result)->set_pack_length(blob_handler->length_bytes());
     }
   }
+  else if (table->group_concat &&
+           type_handler->field_type() == MYSQL_TYPE_GEOMETRY)
+    /*
+      Field_geom::store() asserts !table->blob_storage, but GROUP_CONCAT
+      with ORDER BY/DISTINCT sets blob_storage on its temp table.
+      Downgrade to plain Field_blob (same as Field_blob::make_new_field()).
+    */
+    result= type_handler_long_blob.
+      make_and_init_table_field(root, &name, Record_addr(maybe_null()),
+                                *this, table);
   else
     result= type_handler->make_and_init_table_field(root, &name,
                                                     Record_addr(maybe_null()),

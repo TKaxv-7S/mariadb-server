@@ -930,6 +930,8 @@ protected:
     DBUG_ASSERT(fixed());
 
     const Type_handler *h= type_handler()->type_handler_for_tmp_table(this, 0);
+    if (table->group_concat && h->field_type() == MYSQL_TYPE_GEOMETRY)
+      h= &type_handler_long_blob;
     return h->make_and_init_table_field(root, &name,
                                         Record_addr(maybe_null()),
                                         *this, table);
