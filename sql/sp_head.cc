@@ -256,7 +256,7 @@ sp_get_flags_for_command(LEX *lex)
   */
   case SQLCOM_EXECUTE:
   case SQLCOM_EXECUTE_IMMEDIATE:
-    flags= sp_head::MULTI_RESULTS | sp_head::CONTAINS_DYNAMIC_SQL;
+    flags= sp_head::CONTAINS_DYNAMIC_SQL;
     break;
   case SQLCOM_PREPARE:
   case SQLCOM_DEALLOCATE_PREPARE:
@@ -1979,9 +1979,12 @@ sp_head::execute_function(THD *thd, Item **argp, uint argcount,
   /*
     If row-based binlogging, we don't need to binlog the function's call, let
     each substatement be binlogged its way.
+    If we're in a function containing dynamic SQL, do per-statement logging.
   */
   need_binlog_call= mysql_bin_log.is_open() &&
                     (thd->variables.option_bits & OPTION_BIN_LOG) &&
+                    !(thd->variables.option_bits &
+                      OPTION_BIN_LOG_IN_FUNC) &&
                     !thd->is_current_stmt_binlog_format_row();
 
   /*

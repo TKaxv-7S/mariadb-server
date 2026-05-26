@@ -6304,7 +6304,20 @@ void THD::reset_sub_statement_state(Sub_statement_state *backup,
   if ((!lex->requires_prelocking() || is_update_query(lex->sql_command)) &&
       !is_current_stmt_binlog_format_row())
   {
-    variables.option_bits&= ~OPTION_BIN_LOG;
+    if ((lex->contains_dynamic_sql() && (new_state & SUB_STMT_FUNCTION)) ||
+        (variables.option_bits & OPTION_BIN_LOG_IN_FUNC))
+    {
+      /*
+        - The current function contains dynamic SQL, or
+        - The current function is called from another function
+          with dynamic SQL
+        Do not unset the OPTION_BIN_LOG flag - let's do per-statement
+        logging rather than `SELECT f1()` style logging.
+      */
+      variables.option_bits|= OPTION_BIN_LOG_IN_FUNC;
+    }
+    else
+      variables.option_bits&= ~OPTION_BIN_LOG;
   }
 
   if ((backup->option_bits & OPTION_BIN_LOG) &&
