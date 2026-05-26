@@ -1913,7 +1913,13 @@ public:
   }
   bool requires_prelocking()
   {
-    return MY_TEST(query_tables_own_last);
+    /*
+      If "this" corresponds to a stored FUNCTION containing prepared
+      statements, then we cannot do pre-locking. Prelocking must pre-lock
+      everything at once. But we cannot know tables which will appear
+      in prepared statements. So do like a PROCEDURE does: skip pre-locking.
+    */
+    return MY_TEST(query_tables_own_last) && !m_contains_dynamic_sql;
   }
   void mark_as_requiring_prelocking(TABLE_LIST **tables_own_last)
   {
@@ -2468,6 +2474,15 @@ public:
     return date_funcs_used_flag;
   }
 
+  void set_contains_dynamic_sql(bool value)
+  {
+    m_contains_dynamic_sql= value;
+  }
+
+  bool contains_dynamic_sql() const
+  {
+    return m_contains_dynamic_sql;
+  }
 private:
 
   /**
@@ -2514,6 +2529,8 @@ private:
     used in this LEX
   */
   bool date_funcs_used_flag= false;
+
+  bool m_contains_dynamic_sql= false;
 };
 
 

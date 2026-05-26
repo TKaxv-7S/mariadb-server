@@ -3066,8 +3066,20 @@ Item_sp::execute_impl(THD *thd, Item **args, uint arg_count)
     Disable the binlogging if this is not a SELECT statement. If this is a
     SELECT, leave binlogging on, so execute_function() code writes the
     function call into binlog.
+
+    If the stored function is in a safe PS context, such as in the right
+    hand of an assignment:
+      SET spvar= f1();
+    then pass SUB_STMT_PS_SAFE_CONTEXT into reset_sub_statement_state(),
+    to allow execution of prepared statements inside the function.
   */
-  thd->reset_sub_statement_state(&statement_state, SUB_STMT_FUNCTION);
+  Item *item= dynamic_cast<Item*>(this);
+  uint sub_stmt_safe_context= 0;
+  if (thd->in_sub_stmt_is_ok_for_sub_stmt() &&
+      (bool) (item->base_flags & item_base_t::IS_IN_PS_SAFE_CONTEXT))
+    sub_stmt_safe_context= SUB_STMT_PS_SAFE_CONTEXT;
+  thd->reset_sub_statement_state(&statement_state, SUB_STMT_FUNCTION |
+                                                   sub_stmt_safe_context);
 
   /*
      If this function is an aggregate function, we want to initialise the
