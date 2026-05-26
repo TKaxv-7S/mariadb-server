@@ -898,7 +898,7 @@ bool mtr_t::is_named_space(const fil_space_t* space) const
   ut_ad(!m_user_space || m_user_space->id != TRX_SYS_SPACE);
   ut_ad(!m_undo_space || m_undo_space->id != TRX_SYS_SPACE);
 
-  return !space->id || !is_logged() || m_user_space == space ||
+  return !is_logged() || !space->id || m_user_space == space ||
     (log_sys.archive
      ? (m_undo_space == space || srv_startup_is_before_trx_rollback_phase)
      : srv_is_undo_tablespace(space->id));

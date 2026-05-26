@@ -1,5 +1,4 @@
 doublewrite_debug : FIXME
-import_hidden_fts : FIXME
 log_archive_recovery : FIXME
 log_file_size_online : FIXME
 undo_upgrade_debug : FIXME
