@@ -729,11 +729,10 @@ CREATE TABLE t1 (c TIMESTAMP)
 PARTITION BY RANGE COLUMNS(c)
 (PARTITION p0 VALUES LESS THAN ('2000-01-01 00:00:00'),
 PARTITION p1 VALUES LESS THAN (MAXVALUE));
-ERROR HY000: Field 'c' is of a not allowed type for this type of partitioning
+DROP TABLE t1;
 ALTER TABLE t2 PARTITION BY RANGE COLUMNS(c)
 (PARTITION p0 VALUES LESS THAN ('2000-01-01 00:00:00'),
 PARTITION p1 VALUES LESS THAN (MAXVALUE));
-ERROR HY000: Field 'c' is of a not allowed type for this type of partitioning
 DROP TABLE t2;
 # 2. These errors where questionable before the fix:
 # VALUES clause are checked first, clearified the error message.

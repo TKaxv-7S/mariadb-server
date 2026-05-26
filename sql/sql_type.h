@@ -6998,6 +6998,11 @@ public:
   bool Item_func_min_max_get_date(THD *thd, Item_func_min_max*,
                                   MYSQL_TIME *, date_mode_t fuzzydate)
                                   const override;
+  bool partition_field_check(const LEX_CSTRING &, Item *item_expr)
+    const override
+  {
+    return partition_field_check_result_type(item_expr, STRING_RESULT);
+  }
 };
 
 
