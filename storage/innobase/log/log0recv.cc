@@ -1089,7 +1089,7 @@ fil_space_t *recv_sys_t::recover_deferred(const recv_sys_t::map::iterator &p,
                                           buf_block_t *&free_block)
 {
   mysql_mutex_assert_owner(&mutex);
-
+  ut_ad(log_sys.latch_have_wr());
   ut_ad(p->first.space());
 
   recv_spaces_t::iterator it{recv_spaces.find(p->first.space())};
@@ -1134,9 +1134,7 @@ fil_space_t *recv_sys_t::recover_deferred(const recv_sys_t::map::iterator &p,
       mysql_mutex_unlock(&fil_system.mutex);
       if (!space->acquire())
         goto release_and_fail;
-      log_sys.latch.wr_lock();
       fil_names_dirty(space);
-      log_sys.latch.wr_unlock();
       const bool is_compressed= fil_space_t::is_compressed(flags);
 #ifdef _WIN32
       const bool is_sparse= is_compressed;
@@ -4417,7 +4415,11 @@ bool recv_sys_t::apply_batch(uint32_t space_id, fil_space_t *&space,
             return true;
           else
           {
+            if (last_batch)
+              log_sys.latch.wr_lock();
             space= recover_deferred(pages_it, d->second.file_name, free_block);
+            if (last_batch)
+              log_sys.latch.wr_unlock();
             deferred_spaces.defers.erase(d);
             if (!space && !srv_force_recovery)
             {
@@ -5835,6 +5837,8 @@ dberr_t recv_sys_t::find_checkpoint_archived(lsn_t first_lsn, bool silent)
 @retval DB_SUCCESS on success */
 dberr_t recv_recovery_tablespaces_open(ulint *sum_of_new_sizes)
 {
+  ut_ad(log_sys.latch_have_wr());
+
   if (dberr_t err= srv_sys_space.open_or_create(false, false,
                                                 sum_of_new_sizes))
     return err;

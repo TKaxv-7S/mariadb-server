@@ -1249,13 +1249,12 @@ ATTRIBUTE_COLD static dberr_t ibuf_log_rebuild_if_needed()
 
 inline lsn_t log_t::init_lsn() noexcept
 {
-  latch.wr_lock();
+  ut_ad(latch_have_wr());
   ut_ad(!write_lsn_offset);
   write_lsn_offset= 0;
   const lsn_t lsn{base_lsn.load(std::memory_order_relaxed)};
   flushed_to_disk_lsn.store(lsn, std::memory_order_relaxed);
   write_lsn= lsn;
-  latch.wr_unlock();
   return lsn;
 }
 
@@ -1309,6 +1308,7 @@ static dberr_t srv_start_recovery(ulint *sum_of_new_sizes)
   ut_ad(UT_LIST_GET_LEN(buf_pool.LRU) == 0);
   ut_ad(UT_LIST_GET_LEN(buf_pool.unzip_LRU) == 0);
   ut_d(mysql_mutex_unlock(&buf_pool.flush_list_mutex));
+  log_sys.latch.wr_lock();
 
   dberr_t err;
 
@@ -1321,16 +1321,15 @@ static dberr_t srv_start_recovery(ulint *sum_of_new_sizes)
   }
   else
   {
-    log_sys.latch.wr_lock();
     err= recv_sys.find_checkpoint();
     if (err == DB_SUCCESS)
     {
       err= recv_recovery_from_checkpoint_start(sum_of_new_sizes);
       recv_sys.close_files();
     }
-    log_sys.latch.wr_unlock();
   }
 
+  log_sys.latch.wr_unlock();
   bool must_upgrade_ibuf= false;
 
   switch (srv_operation) {
@@ -1502,15 +1501,16 @@ dberr_t srv_start(bool create_new_db)
 		}
 		recv_sys.debug_free();
 
+		log_sys.latch.wr_lock();
 		/* Open or create the data files. */
 		err = srv_sys_space.open_or_create(false, true,
 						   &sum_of_new_sizes);
 		if (err != DB_SUCCESS) {
+			log_sys.latch.wr_unlock();
 			return srv_init_abort(err);
 		}
 
 		lsn_t flushed_lsn = log_sys.init_lsn();
-		log_sys.latch.wr_lock();
 		mysql_mutex_lock(&buf_pool.flush_list_mutex);
 
 		if (log_sys.archive) {
