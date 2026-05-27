@@ -1384,7 +1384,6 @@ void THD::init()
   tx_isolation= (enum_tx_isolation) variables.tx_isolation;
   tx_read_only= variables.tx_read_only;
   update_charset();             // plugin_thd_var() changed character sets
-  reset_binlog_local_stmt_filter();
 
   binlog_state= BINLOG_STATE_NONE;
   sync_binlog_state_with_binlog_open_force();
@@ -2544,13 +2543,12 @@ void THD::cleanup_after_query()
 #endif
   }
   /*
-    Forget the binlog stmt filter for the next query.
+    Forget READONLY for the next query.
     There are some code paths that:
     - do not call THD::decide_logging_format()
     - do call THD::binlog_query(),
     making this reset necessary.
   */
-  reset_binlog_local_stmt_filter();
   binlog_state= binlog_state & ~BINLOG_STATE_READONLY;
   if (first_successful_insert_id_in_cur_stmt > 0)
   {
@@ -7029,7 +7027,6 @@ int THD::decide_logging_format(TABLE_LIST *tables)
         DBUG_RETURN(-1);
       }
     }
-    reset_binlog_local_stmt_filter();
 
     /*
       Compute one bit field with the union of all the engine
@@ -7429,7 +7426,6 @@ int THD::decide_logging_format(TABLE_LIST *tables)
       if ((replicated_tables_count == 0) || ! is_write)
       {
         DBUG_PRINT("info", ("decision: no logging, no replicated table affected"));
-        set_binlog_local_stmt_filter();
         binlog_state|= BINLOG_STATE_READONLY;
       }
       else
@@ -7438,15 +7434,7 @@ int THD::decide_logging_format(TABLE_LIST *tables)
         {
           my_error((error= ER_BINLOG_STMT_MODE_AND_NO_REPL_TABLES), MYF(0));
         }
-        else
-        {
-          clear_binlog_local_stmt_filter();
-        }
       }
-    }
-    else
-    {
-      clear_binlog_local_stmt_filter();
     }
 
     if (unlikely(error))
@@ -8270,15 +8258,6 @@ int THD::binlog_query(THD::enum_binlog_query_type qtype, char const *query_arg,
   DBUG_ASSERT(query_arg);
   DBUG_ASSERT(binlog_state & BINLOG_STATE_ACTIVE_WSREP);
 
-  if (get_binlog_local_stmt_filter() == BINLOG_FILTER_SET)
-  {
-    /*
-      The current statement is to be ignored, and not written to
-      the binlog. Do not call issue_unsafe_warnings().
-    */
-    DBUG_RETURN(-1);
-  }
-
   /* If this is withing a BEGIN ... COMMIT group, don't log it */
   if (variables.option_bits & OPTION_GTID_BEGIN)
   {
@@ -8419,8 +8398,6 @@ bool THD::binlog_current_query_unfiltered()
   if (!mysql_bin_log.is_open())
     return 0;
 
-  reset_binlog_local_stmt_filter();
-  clear_binlog_local_stmt_filter();
   binlog_state= binlog_state & ~BINLOG_STATE_READONLY;
   return binlog_query(THD::STMT_QUERY_TYPE, query(), query_length(),
                       /* is_trans */     FALSE,
