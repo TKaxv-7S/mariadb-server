@@ -2913,18 +2913,26 @@ lock_move_reorganize_page(
     UT_LIST_INIT(old_locks, &lock_t::trx_locks);
 
     const page_id_t id{block->page.id()};
-    const auto id_fold= id.fold();
     {
       TMLockGuard g{lock_sys.rec_hash, id};
       if (!lock_sys_t::get_first(g.cell(), id))
         return;
     }
 
-    /* We will modify arbitrary trx->lock.trx_locks.
-    Do not bother with a memory transaction; we are going
-    to allocate memory and copy a lot of data. */
-    LockMutexGuard g{SRW_LOCK_CALL};
-    hash_cell_t &cell= *lock_sys.rec_hash.cell_get(id_fold);
+    /* All record locks affected by a page reorganize belong to this
+    single page and therefore live in a single lock_sys.rec_hash cell.
+    Holding that cell latch in exclusive mode (via LockGuard) is sufficient
+    to protect the cell's lock chain and the bitmaps of the lock_t objects
+    in it; each lock's owning trx mutex is acquired per-iteration below to
+    protect that trx's trx_locks list and lock_heap during
+    lock_rec_add_to_queue(). The global lock_sys.wr_lock that this site
+    used to take (LockMutexGuard) was over-strong: it blocked every
+    concurrent lock_sys.rd_lock acquirer in lock_rec_lock() and
+    lock_table() server-wide, even though no work here touches any cell
+    other than this one. Do not attempt lock elision; we are going to
+    allocate memory and copy a lot of data. */
+    LockGuard g{lock_sys.rec_hash, id};
+    hash_cell_t &cell= g.cell();
 
     /* Note: Predicate locks for SPATIAL INDEX are not affected by
     page reorganize, because they do not refer to individual record
@@ -2950,6 +2958,14 @@ lock_move_reorganize_page(
       /* Reset bitmap of lock */
       lock_rec_bitmap_reset(lock);
 
+      /* Clear LOCK_WAIT on the original lock. The bit lives in
+      lock->type_mode and is protected by the cell latch, not by
+      trx->mutex: lock_grant() clears it via lock_reset_lock_and_trx_wait()
+      before taking trx->mutex. We only clear the bit and leave
+      trx->lock.wait_lock intact; the copy in old_locks keeps LOCK_WAIT and
+      phase 2 below re-adds the lock with it, so the wait relationship
+      (guarded by lock_sys.wait_mutex) is preserved across the move and
+      neither trx->mutex nor wait_mutex is needed here. */
       if (lock->is_waiting())
       {
         ut_ad(lock->trx->lock.wait_lock == lock);
