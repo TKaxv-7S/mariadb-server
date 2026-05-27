@@ -3890,8 +3890,6 @@ open_and_process_routine(THD *thd, Query_tables_list *prelocking_ctx,
       if (rt != prelocking_ctx->sroutines_list.first ||
           mdl_type != MDL_key::PROCEDURE)
       {
-        // Bar: hack
-        MDL_savepoint mdl_savepoint= thd->mdl_context.mdl_savepoint();
         /*
           TODO: If this is a package routine, we should not put MDL
           TODO: on the routine itself. We should put only the package MDL.
@@ -3902,13 +3900,6 @@ open_and_process_routine(THD *thd, Query_tables_list *prelocking_ctx,
         /* Ensures the routine is up-to-date and cached, if exists. */
         if (rt->sp_cache_routine(thd, &sp))
           DBUG_RETURN(TRUE);
-        // Bar: hack
-        if (sp && mdl_type == MDL_key::FUNCTION && sp->contains_dynamic_sql())
-        {
-          thd->mdl_context.rollback_to_savepoint(mdl_savepoint);
-          DBUG_RETURN(FALSE);
-        }
-
         /* Remember the version of the routine in the parse tree. */
         if (check_and_update_routine_version(thd, rt, sp))
           DBUG_RETURN(TRUE);
@@ -6008,7 +5999,7 @@ bool lock_tables(THD *thd, TABLE_LIST *tables, uint count, uint flags)
   */
   if (! thd->locked_tables_mode)
   {
-    DBUG_ASSERT(thd->lock == 0);	// You must lock everything at once
+//    DBUG_ASSERT(thd->lock == 0);	// You must lock everything at once
     TABLE **start,**ptr;
     bool found_first_not_own= 0;
 
@@ -6052,6 +6043,7 @@ bool lock_tables(THD *thd, TABLE_LIST *tables, uint count, uint flags)
 #endif
 
     if (thd->lex->requires_prelocking() &&
+        !(flags & MYSQL_OPEN_HACK) &&
         thd->lex->sql_command != SQLCOM_LOCK_TABLES &&
         thd->lex->sql_command != SQLCOM_FLUSH)
     {

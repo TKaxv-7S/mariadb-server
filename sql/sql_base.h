@@ -134,6 +134,8 @@ TABLE *open_ltable(THD *thd, TABLE_LIST *table_list, thr_lock_type update,
 /* Don't use statistics tables */
 #define MYSQL_OPEN_IGNORE_ENGINE_STATS          0x40000
 
+#define MYSQL_OPEN_HACK                         0x80000
+
 /** Please refer to the internals manual. */
 #define MYSQL_OPEN_REOPEN  (MYSQL_OPEN_IGNORE_FLUSH |\
                             MYSQL_OPEN_IGNORE_GLOBAL_READ_LOCK |\

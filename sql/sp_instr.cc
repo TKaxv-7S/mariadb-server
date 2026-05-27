@@ -682,6 +682,13 @@ void sp_instr::print_fetch_into(String *str, List<sp_fetch_target> varlist)
 int sp_instr::exec_open_and_lock_tables(THD *thd, TABLE_LIST *tables)
 {
   int result;
+  uint open_flags= 0;
+
+  if (sp_instr_set *set= dynamic_cast<sp_instr_set*>(this))
+  {
+    if (dynamic_cast<Item_func_sp*>(set->m_value))
+      open_flags= MYSQL_OPEN_HACK;
+  }
 
   /*
     Check whenever we have access to tables for this statement
@@ -689,7 +696,7 @@ int sp_instr::exec_open_and_lock_tables(THD *thd, TABLE_LIST *tables)
   */
   if (thd->open_temporary_tables(tables) ||
       check_table_access(thd, SELECT_ACL, tables, false, UINT_MAX, false)
-      || open_and_lock_tables(thd, tables, true, 0))
+      || open_and_lock_tables(thd, tables, true, open_flags))
     result= -1;
   else
     result= 0;

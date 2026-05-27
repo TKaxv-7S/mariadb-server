@@ -730,6 +730,7 @@ protected:
   }
 
   sp_rcontext *get_rcontext(THD *thd) const;
+public:
   Item *m_value;
 
 private:
