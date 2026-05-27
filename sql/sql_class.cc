@@ -1642,6 +1642,20 @@ void THD::change_user(void)
 #endif /* WITH_WSREP */
 }
 
+/*
+  Update binlog_state's BINLOG_STATE_FILTER value based on the thread's current
+  default database. I.e. if the default database is to be filtered by option
+  binlog_do_db/binlog_ignore_db options, then BINLOG_STATE_FILTER is set;
+  otherwise, the option is negated.
+*/
+inline void update_binlog_filter_state(THD *thd)
+{
+  thd->binlog_state= (thd->binlog_ready_precheck() && binlog_filter &&
+                      !binlog_filter->db_ok(thd->db.str))
+                         ? (thd->binlog_state | BINLOG_STATE_FILTER)
+                         : (thd->binlog_state & ~BINLOG_STATE_FILTER);
+}
+
 /**
    Change default database
 
@@ -1683,6 +1697,7 @@ bool THD::set_db(const LEX_CSTRING *new_db)
     my_free((char*) org_db);
   }
   PSI_CALL_set_thread_db(db.str, (int) db.length);
+  update_binlog_filter_state(this);
   return result;
 }
 
@@ -1710,6 +1725,7 @@ void THD::reset_db(const LEX_CSTRING *new_db)
     mysql_mutex_unlock(&LOCK_thd_data);
     PSI_CALL_set_thread_db(db.str, (int) db.length);
   }
+  update_binlog_filter_state(this);
 }
 
 
@@ -6006,11 +6022,7 @@ extern "C" void thd_mark_transaction_to_rollback(MYSQL_THD thd, bool all)
 
 extern "C" bool thd_binlog_filter_ok(const MYSQL_THD thd)
 {
-  /*
-    TODO: Replace by binlog_state & BINLOG_FILTER) when BINLOG_FILTER
-    is set when thd->db.str changes value.
-  */
-  return binlog_filter->db_ok(thd->db.str);
+  return !(thd->binlog_state & BINLOG_STATE_FILTER);
 }
 
 /*
@@ -6934,7 +6946,7 @@ int THD::decide_logging_format(TABLE_LIST *tables)
     Strip the binlogging restrictions from the state that are calculated
     later in this function
   */
-  binlog_state= (binlog_state & ~(BINLOG_STATE_FILTER | BINLOG_STATE_READONLY));
+  binlog_state= (binlog_state & ~BINLOG_STATE_READONLY);
   /* We should have either binlog or wsrep_emulate_binlog active */
   DBUG_ASSERT((binlog_state & BINLOG_STATE_ACTIVE) &&
               binlog_state & (BINLOG_STATE_OPEN | BINLOG_STATE_WSREP));
@@ -7003,9 +7015,6 @@ int THD::decide_logging_format(TABLE_LIST *tables)
     DBUG_ASSERT((binlog_state & (BINLOG_STATE_WSREP | BINLOG_STATE_ACTIVE)) ==
                 (BINLOG_STATE_WSREP | BINLOG_STATE_ACTIVE));
 #endif /* WITH_WSREP */
-
-  if (binlog_format == BINLOG_FORMAT_STMT && !binlog_filter->db_ok(db.str))
-    binlog_state= binlog_state | BINLOG_STATE_FILTER;
 
   if (WSREP_EMULATE_BINLOG_NNULL(this) ||
       (binlog_ready_no_wsrep() && !(binlog_state & BINLOG_STATE_FILTER)))
@@ -7499,7 +7508,7 @@ int THD::decide_logging_format(TABLE_LIST *tables)
                         mysql_bin_log.is_open(),
                         (variables.option_bits & OPTION_BIN_LOG),
                         (uint) binlog_format,
-                        binlog_filter->db_ok(db.str),
+                        binlog_state & BINLOG_STATE_FILTER,
                         binlog_state));
 
     /* TODO: Check if the following is really needed */
