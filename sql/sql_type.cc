@@ -4124,12 +4124,13 @@ Field *Type_handler_varchar::make_schema_field(MEM_ROOT *root, TABLE *table,
 {
   DBUG_ASSERT(def.char_length());
   LEX_CSTRING name= def.name();
-  uint32 octet_length= (uint32) def.char_length() * 3;
+  CHARSET_INFO *cs= def.charset() ? def.charset() : system_charset_info_for_i_s;
+  uint32 octet_length= (uint32) def.char_length() * cs->mbmaxlen;
   if (octet_length > MAX_FIELD_VARCHARLENGTH)
   {
     Field *field= new (root)
       Field_blob(addr.ptr(), addr.null_ptr(), addr.null_bit(), Field::NONE,
-                 &name, table->s, 4, system_charset_info_for_i_s);
+                 &name, table->s, 4, cs);
     if (field)
       field->field_length= octet_length;
     return field;
@@ -4141,7 +4142,7 @@ Field *Type_handler_varchar::make_schema_field(MEM_ROOT *root, TABLE *table,
                       HA_VARCHAR_PACKLENGTH(octet_length),
                       addr.null_ptr(), addr.null_bit(),
                       Field::NONE, &name,
-                      table->s, system_charset_info_for_i_s);
+                      table->s, cs);
   }
 }
 

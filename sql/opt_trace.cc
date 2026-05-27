@@ -74,7 +74,8 @@ namespace Show {
 ST_FIELD_INFO optimizer_trace_info[]=
 {
   Column("QUERY",                             Longtext(65535), NOT_NULL),
-  Column("TRACE",                             Longtext(65535), NOT_NULL),
+  Column("TRACE",
+         Longtext(65535, &my_charset_utf8mb4_general_ci), NOT_NULL),
   Column("MISSING_BYTES_BEYOND_MAX_MEM_SIZE", SLong(20),       NOT_NULL),
   Column("INSUFFICIENT_PRIVILEGES",           STiny(1),        NOT_NULL),
   CEnd()
@@ -796,7 +797,7 @@ int fill_optimizer_trace_info(THD *thd, TABLE_LIST *tables, Item *)
     table->field[0]->store(info.query_ptr, static_cast<uint>(info.query_length),
                            info.query_charset);
     table->field[1]->store(info.trace_ptr, static_cast<uint>(info.trace_length),
-                           system_charset_info);
+                           &my_charset_utf8mb4_bin);
     table->field[2]->store(info.missing_bytes, true);
     table->field[3]->store(info.missing_priv, true);
     //  Store in IS
