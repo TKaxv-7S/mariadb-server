@@ -720,17 +720,20 @@ class Tmp_field_param
   bool m_table_cant_handle_bit_fields;
   bool m_make_copy_field;
   bool m_part_of_unique_key;
+  bool m_group_concat;
 public:
   Tmp_field_param(bool group,
                   bool modify_item,
                   bool table_cant_handle_bit_fields,
                   bool make_copy_field,
-                  bool part_of_unique_key)
+                  bool part_of_unique_key,
+                  bool group_concat)
    :m_group(group),
     m_modify_item(modify_item),
     m_table_cant_handle_bit_fields(table_cant_handle_bit_fields),
     m_make_copy_field(make_copy_field),
-    m_part_of_unique_key(part_of_unique_key)
+    m_part_of_unique_key(part_of_unique_key),
+    m_group_concat(group_concat)
   { }
   bool group() const { return m_group; }
   bool modify_item() const { return m_modify_item; }
@@ -738,6 +741,7 @@ public:
   { return m_table_cant_handle_bit_fields; }
   bool make_copy_field() const { return m_make_copy_field; }
   bool part_of_unique_key() const { return m_part_of_unique_key; }
+  bool group_concat() const { return m_group_concat; }
   void set_modify_item(bool to) { m_modify_item= to; }
 };
 
@@ -929,9 +933,10 @@ protected:
   {
     DBUG_ASSERT(fixed());
 
-    const Type_handler *h= type_handler()->type_handler_for_tmp_table(this, 0);
-    if (table->group_concat && h->field_type() == MYSQL_TYPE_GEOMETRY)
-      h= &type_handler_long_blob;
+    const Tmp_field_param param(false, false, false, false, false,
+                                table->group_concat);
+    const Type_handler *h= type_handler()->type_handler_for_tmp_table(this,
+                                                                      &param);
     return h->make_and_init_table_field(root, &name,
                                         Record_addr(maybe_null()),
                                         *this, table);

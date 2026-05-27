@@ -4752,7 +4752,7 @@ void select_insert::abort_result_set()
 
 Field *Item::create_field_for_create_select(MEM_ROOT *root, TABLE *table)
 {
-  static Tmp_field_param param(false, false, false, false, false);
+  static const Tmp_field_param param(false, false, false, false, false, false);
   Tmp_field_src src;
   return create_tmp_field_ex(root, table, &src, &param);
 }

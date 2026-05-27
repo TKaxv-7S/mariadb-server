@@ -240,6 +240,24 @@ const Type_handler *Type_handler_geometry::type_handler_for_comparison() const
 }
 
 
+const Type_handler*
+Type_handler_geometry::type_handler_for_tmp_table(const Item *,
+                                                  const Tmp_field_param *param)
+                                                                          const
+{
+  if (param && param->group_concat())
+  {
+   /*
+     Field_geom::store() asserts !table->blob_storage, but GROUP_CONCAT
+     with ORDER BY/DISTINCT sets blob_storage on its temp table.
+     Downgrade to plain Field_blob.
+   */
+    return &type_handler_long_blob;
+  }
+  return this;
+}
+
+
 Field *Type_handler_geometry::make_conversion_table_field(MEM_ROOT *root,
                                                           TABLE *table,
                                                           uint metadata,

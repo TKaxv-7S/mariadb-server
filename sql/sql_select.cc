@@ -20465,6 +20465,7 @@ Item_result_field::create_tmp_field_ex_from_handler(
   }
   else if (table->group_concat &&
            type_handler->field_type() == MYSQL_TYPE_GEOMETRY)
+  {
     /*
       Field_geom::store() asserts !table->blob_storage, but GROUP_CONCAT
       with ORDER BY/DISTINCT sets blob_storage on its temp table.
@@ -20473,6 +20474,7 @@ Item_result_field::create_tmp_field_ex_from_handler(
     result= type_handler_long_blob.
       make_and_init_table_field(root, &name, Record_addr(maybe_null()),
                                 *this, table);
+  }
   else
     result= type_handler->make_and_init_table_field(root, &name,
                                                     Record_addr(maybe_null()),
@@ -20562,7 +20564,8 @@ Field *create_tmp_field(TABLE *table, Item *item,
 {
   Tmp_field_src src;
   Tmp_field_param prm(group, modify_item, table_cant_handle_bit_fields,
-                      make_copy_field, part_of_unique_key || group);
+                      make_copy_field, part_of_unique_key || group,
+                      table->group_concat);
   Field *result= item->create_tmp_field_ex(table->in_use->mem_root,
                                            table, &src, &prm);
   if (is_json_type(item) && make_json_valid_expr(table, result))
