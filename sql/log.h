@@ -1408,9 +1408,13 @@ enum enum_binlog_state
     If BINLOG_STATE_BYPASS is set, then there must also be another
     of the following bits set
   */
-  BINLOG_STATE_BYPASS=        (1<<4),
-  // Database filtering used. Note that this does not set the BYPASS bit
-  BINLOG_STATE_FILTER=        (1<<5),
+  BINLOG_STATE_BYPASS=          (1<<4),
+  /*
+    Database filtering is active for the thread's the current database. This is
+    only set when the database changes because the filtering outcome for each
+    statement won't change as long as the database doesn't change.
+  */
+  BINLOG_STATE_FILTER=          (1<<5),
   // set by tmp_disable_binlog(). Previously using OPTION_BIN_TMP_LOG_OFF
   BINLOG_STATE_TMP_DISABLED=  (1<<6),
   // sql_bin_log == 0, set in set_binlog_bit()

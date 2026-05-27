@@ -6020,11 +6020,7 @@ extern "C" int thd_binlog_format(const MYSQL_THD thd)
 
 extern "C" bool thd_binlog_filter_ok(const MYSQL_THD thd)
 {
-  /*
-    TODO: Replace by binlog_state & BINLOG_FILTER) when BINLOG_FILTER
-    is set when thd->db.str changes value.
-  */
-  return binlog_filter->db_ok(thd->db.str);
+  return !(thd->binlog_state & BINLOG_STATE_FILTER);
 }
 
 /*
@@ -6949,7 +6945,7 @@ int THD::decide_logging_format(TABLE_LIST *tables)
     Strip the binlogging restrictions from the state that are calculated
     later in this function
   */
-  binlog_state= (binlog_state & ~(BINLOG_STATE_FILTER | BINLOG_STATE_READONLY));
+  binlog_state= (binlog_state & ~BINLOG_STATE_READONLY);
   /* We should have either binlog or wsrep_emulate_binlog active */
   DBUG_ASSERT((binlog_state & BINLOG_STATE_ACTIVE) &&
               binlog_state & (BINLOG_STATE_OPEN | BINLOG_STATE_WSREP));
@@ -7020,12 +7016,8 @@ int THD::decide_logging_format(TABLE_LIST *tables)
   }
 #endif /* WITH_WSREP */
 
-  /* To speed up things, we only set the first of the 'do not binlog' bits */
-  if (wsrep_binlog_format(variables.binlog_format) == BINLOG_FORMAT_STMT &&
-      !binlog_filter->db_ok(db.str))
-    binlog_state= binlog_state | BINLOG_STATE_FILTER;
-
-  if (binlog_ready_with_wsrep() && !(binlog_state & BINLOG_STATE_FILTER))
+  if (WSREP_EMULATE_BINLOG_NNULL(this) ||
+      (binlog_ready_no_wsrep() && !(binlog_state & BINLOG_STATE_FILTER)))
   {
     if (is_bulk_op())
     {
@@ -7516,7 +7508,7 @@ int THD::decide_logging_format(TABLE_LIST *tables)
                         mysql_bin_log.is_open(),
                         (variables.option_bits & OPTION_BIN_LOG),
                         (uint) binlog_format,
-                        binlog_filter->db_ok(db.str),
+                        binlog_state & BINLOG_STATE_FILTER,
                         binlog_state));
     DBUG_ASSERT(binlog_state != 0);
   }
@@ -7619,7 +7611,9 @@ exit:;
 
 bool THD::binlog_table_should_be_logged(const LEX_CSTRING *db)
 {
-  return (binlog_ready_no_wsrep() && binlog_filter->db_ok(db->str));
+  return binlog_ready_no_wsrep() &&
+         (wsrep_binlog_format(variables.binlog_format) != BINLOG_FORMAT_STMT ||
+          !(binlog_state & BINLOG_STATE_FILTER));
 }
 
 /* Declare in unnamed namespace. */

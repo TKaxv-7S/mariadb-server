@@ -1616,6 +1616,13 @@ static void mysql_change_db_impl(THD *thd,
 
   thd->db_charset= new_db_charset;
   thd->variables.collation_database= new_db_charset;
+
+  /* 4. Update binlog_state. */
+  if (thd->binlog_ready_precheck() && binlog_filter &&
+      !binlog_filter->db_ok(thd->db.str))
+    thd->binlog_state|= BINLOG_STATE_FILTER;
+  else
+    thd->binlog_state= (thd->binlog_state & ~BINLOG_STATE_FILTER);
 }
 
 
