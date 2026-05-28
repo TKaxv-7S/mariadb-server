@@ -3665,6 +3665,20 @@ Field *Type_handler::make_and_init_table_field(MEM_ROOT *root,
 }
 
 
+Field *Type_handler::make_and_init_table_field_ex(MEM_ROOT *root,
+                                               const LEX_CSTRING *name,
+                                               const Record_addr &addr,
+                                               const Type_all_attributes &attr,
+                                               const Tmp_field_param *param,
+                                               TABLE *table) const
+{
+  Field *field= make_table_field_ex(root, name, addr, attr, param, table->s);
+  if (field)
+    field->init(table);
+  return field;
+}
+
+
 Field *Type_handler_int_result::make_table_field(MEM_ROOT *root,
                                            const LEX_CSTRING *name,
                                            const Record_addr &addr,
@@ -4057,6 +4071,33 @@ Field *Type_handler_set::make_table_field(MEM_ROOT *root,
                    Field::NONE, name,
                    get_enum_pack_length(typelib->count), typelib,
                    attr.collation);
+}
+
+
+/***************************************************************************/
+
+
+Field *Type_handler_blob_common::make_table_field_ex(MEM_ROOT *root,
+                                             const LEX_CSTRING *name,
+                                             const Record_addr &addr,
+                                             const Type_all_attributes &attr,
+                                             const Tmp_field_param *param,
+                                             TABLE_SHARE *share) const
+{
+  if (param->part_of_unique_key())
+  {
+    Field *result= type_handler_blob_key.
+                     make_table_field(root, name, addr, attr, share);
+    if (result)
+    {
+      DBUG_ASSERT(dynamic_cast<Field_blob*>(result));
+      /* Fix length of blob to be able to return the original blob type */
+      static_cast<Field_blob*>(result)->set_pack_length(length_bytes());
+    }
+    return result;
+  }
+
+  return make_table_field(root, name, addr, attr, share);
 }
 
 

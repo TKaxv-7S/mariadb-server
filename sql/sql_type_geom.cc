@@ -508,6 +508,27 @@ Field *Type_handler_geometry::make_table_field(MEM_ROOT *root,
 }
 
 
+Field *Type_handler_geometry::make_table_field_ex(MEM_ROOT *root,
+                                             const LEX_CSTRING *name,
+                                             const Record_addr &addr,
+                                             const Type_all_attributes &attr,
+                                             const Tmp_field_param *param,
+                                             TABLE_SHARE *share) const
+{
+  if (param->group_concat())
+  {
+    /*
+      Field_geom::store() asserts !table->blob_storage, but GROUP_CONCAT
+      with ORDER BY/DISTINCT sets blob_storage on its temp table.
+      Downgrade to plain Field_blob.
+    */
+    return type_handler_long_blob.
+             make_table_field(root, name, addr, attr, share);
+  }
+  return make_table_field(root, name, addr, attr, share);
+}
+
+
 bool Type_handler_geometry::
        Item_hybrid_func_fix_attributes(THD *thd,
                                        const LEX_CSTRING &func_name,

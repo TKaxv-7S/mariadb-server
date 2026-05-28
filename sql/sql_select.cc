@@ -20448,37 +20448,11 @@ Item_result_field::create_tmp_field_ex_from_handler(
   DBUG_ASSERT(type() != NULL_ITEM);
   get_tmp_field_src(src, param);
   Field *result;
-  Type_handler_blob_common const *blob_handler;
 
-  if (param->part_of_unique_key() &&
-      (blob_handler=
-       dynamic_cast<const Type_handler_blob_common*>(type_handler)))
-  {
-    result= type_handler_blob_key.
-      make_and_init_table_field(root, &name, Record_addr(maybe_null()),
-                                *this, table);
-    if (result)
-    {
-      /* Fix length of blob to be able to return the original blob type */
-      ((Field_blob*) result)->set_pack_length(blob_handler->length_bytes());
-    }
-  }
-  else if (table->group_concat &&
-           type_handler->field_type() == MYSQL_TYPE_GEOMETRY)
-  {
-    /*
-      Field_geom::store() asserts !table->blob_storage, but GROUP_CONCAT
-      with ORDER BY/DISTINCT sets blob_storage on its temp table.
-      Downgrade to plain Field_blob (same as Field_blob::make_new_field()).
-    */
-    result= type_handler_long_blob.
-      make_and_init_table_field(root, &name, Record_addr(maybe_null()),
-                                *this, table);
-  }
-  else
-    result= type_handler->make_and_init_table_field(root, &name,
-                                                    Record_addr(maybe_null()),
-                                                    *this, table);
+  result= type_handler->make_and_init_table_field_ex(root, &name,
+                                                     Record_addr(maybe_null()),
+                                                     *this, param, table);
+
   if (result && param->modify_item())
     result_field= result;
   return result;

@@ -146,6 +146,13 @@ public:
                           const Type_all_attributes &attr,
                           TABLE_SHARE *share) const override;
 
+  Field *make_table_field_ex(MEM_ROOT *root,
+                             const LEX_CSTRING *name,
+                             const Record_addr &addr,
+                             const Type_all_attributes &attr,
+                             const Tmp_field_param *param,
+                             TABLE_SHARE *share) const override;
+
   Field *make_table_field_from_def(TABLE_SHARE *share,
                                    MEM_ROOT *mem_root,
                                    const LEX_CSTRING *name,

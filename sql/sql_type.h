@@ -4116,11 +4116,26 @@ public:
                                   const Record_addr &addr,
                                   const Type_all_attributes &attr,
                                   TABLE_SHARE *share) const= 0;
+  virtual Field *make_table_field_ex(MEM_ROOT *root,
+                                     const LEX_CSTRING *name,
+                                     const Record_addr &addr,
+                                     const Type_all_attributes &attr,
+                                     const Tmp_field_param *param,
+                                     TABLE_SHARE *share) const
+  {
+    return make_table_field(root, name, addr, attr, share);
+  }
   Field *make_and_init_table_field(MEM_ROOT *root,
                                    const LEX_CSTRING *name,
                                    const Record_addr &addr,
                                    const Type_all_attributes &attr,
                                    TABLE *table) const;
+  Field *make_and_init_table_field_ex(MEM_ROOT *root,
+                                      const LEX_CSTRING *name,
+                                      const Record_addr &addr,
+                                      const Type_all_attributes &attr,
+                                      const Tmp_field_param *param,
+                                      TABLE *table) const;
   virtual Field *make_schema_field(MEM_ROOT *root,
                                    TABLE *table,
                                    const Record_addr &addr,
@@ -7304,6 +7319,12 @@ public:
                                    const Bit_addr &bit,
                                    const Column_definition_attributes *attr,
                                    uint32 flags) const override;
+  Field *make_table_field_ex(MEM_ROOT *root,
+                             const LEX_CSTRING *name,
+                             const Record_addr &addr,
+                             const Type_all_attributes &attr,
+                             const Tmp_field_param *param,
+                             TABLE_SHARE *share) const override;
   const Vers_type_handler *vers() const override;
 };
 
