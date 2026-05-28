@@ -203,8 +203,8 @@ int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
           would overwrite those records, making the pointers dangle.
         */
         for (i= 0; i < share->blob_count; i++)
-          info->pending_blob_chains[i]= (blob_changed[i] && saved_chains[i])
-                                          ? saved_chains[i] : NULL;
+          info->pending_blob_chains[i]= (blob_changed[i] ?
+                                         saved_chains[i] : NULL);
         info->has_pending_blob_free= TRUE;
       }
     }
