@@ -629,7 +629,9 @@ public:
     const Type_handler *
       type_handler_for_create_select(const Item_handled_func *item) const override
     {
-      return return_type_handler(item)->type_handler_for_tmp_table(item, 0);
+      const Tmp_field_param param(false, false, false, false, false, false);
+      return return_type_handler(item)->type_handler_for_tmp_table(item,
+                                                                   &param);
     }
     double val_real(Item_handled_func *item) const override
     {

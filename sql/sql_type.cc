@@ -7588,7 +7588,7 @@ const Type_handler *Type_handler_blob_common::
 type_handler_for_tmp_table(const Item *item, const Tmp_field_param *param)
   const
 {
-  return (param && param->part_of_unique_key() ?
+  return (param->part_of_unique_key() ?
           blob_key_type_handler() :
           blob_type_handler(item, 0));
 }

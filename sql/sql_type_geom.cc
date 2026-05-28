@@ -245,7 +245,7 @@ Type_handler_geometry::type_handler_for_tmp_table(const Item *,
                                                   const Tmp_field_param *param)
                                                                           const
 {
-  if (param && param->group_concat())
+  if (param->group_concat())
   {
    /*
      Field_geom::store() asserts !table->blob_storage, but GROUP_CONCAT
