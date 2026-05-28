@@ -52,7 +52,7 @@
   @param share  Table share
 */
 
-static void hp_shrink_tail(HP_SHARE *share)
+void hp_shrink_tail(HP_SHARE *share)
 {
   HP_BLOCK *block= &share->block;
   uint recbuffer= block->recbuffer;
@@ -916,5 +916,6 @@ void hp_free_blobs(HP_SHARE *share, uchar *pos)
     hp_free_run_chain(share, chain);
   }
 
+  hp_shrink_tail(share);
   DBUG_VOID_RETURN;
 }

@@ -162,6 +162,7 @@ int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
                 hp_free_run_chain(share, chain);
             }
           }
+          hp_shrink_tail(share);
           memcpy(pos, old, (size_t) share->reclength);
           if (had_cont)
           {
@@ -189,6 +190,7 @@ int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
         for (i= 0; i < share->blob_count; i++)
           if (blob_changed[i] && saved_chains[i])
             hp_free_run_chain(share, saved_chains[i]);
+        hp_shrink_tail(share);
       }
       else
       {
