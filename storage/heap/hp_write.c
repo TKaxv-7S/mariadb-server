@@ -41,6 +41,7 @@ int heap_write(HP_INFO *info, const uchar *record)
     DBUG_RETURN(my_errno=EACCES);
   }
 #endif
+  hp_flush_pending_blob_free(info);
   if (!(pos=next_free_record_pos(share)))
     DBUG_RETURN(my_errno);
   share->changed=1;
@@ -73,7 +74,6 @@ int heap_write(HP_INFO *info, const uchar *record)
   }
   else
     pos[share->visible]= 1;                   /* Mark record as not deleted */
-  hp_flush_pending_blob_free(info);
   if (++share->records == share->blength)
     share->blength+= share->blength;
   info->s->key_version++;
