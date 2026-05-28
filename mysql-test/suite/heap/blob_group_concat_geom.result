@@ -35,6 +35,18 @@ ok
 1
 DROP TABLE t;
 #
+# User variable assignment with geometry in GROUP_CONCAT
+# Item_func_set_user_var::create_tmp_field_ex() calls
+# create_tmp_field_ex_from_handler() directly with type_handler(),
+# bypassing type_handler_for_tmp_table().
+#
+CREATE TABLE t (f GEOMETRY);
+INSERT INTO t VALUES (POINT(1,1)), (POINT(2,2));
+SELECT LENGTH(GROUP_CONCAT(@g := f ORDER BY f)) > 0 AS ok FROM t;
+ok
+1
+DROP TABLE t;
+#
 # DEFAULT(geom) with expression default in GROUP_CONCAT
 # Item_default_value::create_tmp_field_ex() has its own blob path
 # via tmp_table_field_from_field_type() that also needs the downgrade.
