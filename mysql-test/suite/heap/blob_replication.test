@@ -65,4 +65,81 @@ SELECT * FROM t2;
 --connection master
 DROP TABLE t2;
 
+--echo #
+--echo # Test 3: MDEV-39782 -- UPDATE on HEAP blob with non-empty data
+--echo #
+--echo # heap_update() was freeing old blob chains immediately via
+--echo # hp_free_run_chain(), but binlog_log_row() reads the before-image
+--echo # after update_row() returns. The zero-copy pointers in the old
+--echo # record dangled into freed HP_BLOCK records, corrupting the
+--echo # binlog event. The slave then failed to find the row.
+--echo #
+
+--connection master
+
+CREATE TABLE t3 (a BLOB) ENGINE=HEAP;
+
+INSERT INTO t3 VALUES (0);
+UPDATE t3 SET a = 1;
+
+INSERT INTO t3 VALUES ('hello world');
+UPDATE t3 SET a = 'goodbye' WHERE a = 'hello world';
+
+INSERT INTO t3 VALUES (REPEAT('x', 1000));
+UPDATE t3 SET a = REPEAT('y', 2000);
+
+--sync_slave_with_master
+
+--echo # Verify slave is consistent
+--sorted_result
+SELECT LENGTH(a), LEFT(a, 20) FROM t3;
+
+--connection master
+--sorted_result
+SELECT LENGTH(a), LEFT(a, 20) FROM t3;
+DROP TABLE t3;
+--sync_slave_with_master
+
+--echo #
+--echo # Test 4: UPDATE with multiple blob columns changing independently
+--echo #
+
+--connection master
+
+CREATE TABLE t4 (a TEXT, b BLOB, c INT) ENGINE=HEAP;
+
+INSERT INTO t4 VALUES ('alpha', 'beta', 1);
+UPDATE t4 SET a = 'gamma';
+UPDATE t4 SET b = 'delta';
+UPDATE t4 SET a = 'epsilon', b = 'zeta', c = 2;
+
+--sync_slave_with_master
+
+--echo # Verify slave is consistent
+SELECT * FROM t4;
+
+--connection master
+DROP TABLE t4;
+--sync_slave_with_master
+
+--echo #
+--echo # Test 5: UPDATE blob to/from NULL
+--echo #
+
+--connection master
+
+CREATE TABLE t5 (a BLOB) ENGINE=HEAP;
+
+INSERT INTO t5 VALUES ('data');
+UPDATE t5 SET a = NULL;
+UPDATE t5 SET a = 'restored';
+
+--sync_slave_with_master
+
+--echo # Verify slave is consistent
+SELECT * FROM t5;
+
+--connection master
+DROP TABLE t5;
+
 --source include/rpl_end.inc

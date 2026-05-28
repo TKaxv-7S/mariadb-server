@@ -184,9 +184,27 @@ int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
       /* Set flags and free old chains for changed blobs */
       pos[share->visible]= has_blob_data ?
         (HP_ROW_ACTIVE | HP_ROW_HAS_CONT) : HP_ROW_ACTIVE;
-      for (i= 0; i < share->blob_count; i++)
-        if (blob_changed[i] && saved_chains[i])
-          hp_free_run_chain(share, saved_chains[i]);
+      if (share->internal)
+      {
+        for (i= 0; i < share->blob_count; i++)
+          if (blob_changed[i] && saved_chains[i])
+            hp_free_run_chain(share, saved_chains[i]);
+      }
+      else
+      {
+        /*
+          Defer blob chain free for user-created tables.
+
+          The handler layer calls binlog_log_row() AFTER update_row()
+          returns, reading old blob data from record[1] via zero-copy
+          pointers into HP_BLOCK chain records.  Freeing chains here
+          would overwrite those records, making the pointers dangle.
+        */
+        for (i= 0; i < share->blob_count; i++)
+          info->pending_blob_chains[i]= (blob_changed[i] && saved_chains[i])
+                                          ? saved_chains[i] : NULL;
+        info->has_pending_blob_free= TRUE;
+      }
     }
     else if (had_cont)
       pos[share->visible]|= HP_ROW_HAS_CONT;
@@ -198,11 +216,12 @@ int heap_update(HP_INFO *info, const uchar *old, const uchar *heap_new)
       doesn't know about yet.  Copy all chain pointers from pos into
       heap_new and call hp_read_blobs() to re-materialize.
 
-      Without this, callers that reuse heap_new after update (e.g., the
-      INTERSECT ALL unfold path in sql_union.cc) would follow dangling
-      pointers into freed HP_BLOCK records.
+      Only do this for internal temporary tables.  For user tables,
+      hp_read_blobs() may realloc blob_buff, invalidating Case C
+      pointers in old (record[1]) that binlog_log_row() still needs.
+      The SQL layer will re-materialize blobs on the next row fetch.
     */
-    if (any_changed || info->has_zerocopy_blobs)
+    if (share->internal && (any_changed || info->has_zerocopy_blobs))
     {
       for (i= 0, desc= share->blob_descs; i < share->blob_count; i++, desc++)
       {
