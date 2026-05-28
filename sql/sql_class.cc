@@ -8402,7 +8402,7 @@ int THD::binlog_query(THD::enum_binlog_query_type qtype, char const *query_arg,
 
 bool THD::binlog_current_query_unfiltered()
 {
-  if (!mysql_bin_log.is_open())
+  if (!binlog_ready_no_wsrep())
     return 0;
 
   binlog_state= binlog_state & ~BINLOG_STATE_READONLY;

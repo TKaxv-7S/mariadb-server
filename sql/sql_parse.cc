@@ -6415,7 +6415,7 @@ check_rename_table(THD *thd, TABLE_LIST *first_table,
 #ifndef DBUG_OFF
 static bool __attribute__ ((noinline)) generate_incident_event(THD *thd)
 {
-  if (mysql_bin_log.is_open())
+  if (thd->binlog_ready_no_wsrep())
   {
 
     Incident incident= INCIDENT_NONE;
@@ -7543,6 +7543,9 @@ void THD::reset_for_next_command(bool do_clear_error)
   m_sp_cache_version= 0;
 
 #if defined(WITH_WSREP) && !defined(DBUG_OFF)
+/*
+  TODO: MDEV-38865
+*/
   if (mysql_bin_log.is_open())
     DBUG_PRINT("info",
                ("is_current_stmt_binlog_format_row(): %d",
