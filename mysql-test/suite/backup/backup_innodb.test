@@ -26,6 +26,7 @@ SET DEBUG_SYNC='now WAIT_FOR start';
 INSERT INTO t(a) SELECT * FROM seq_1_to_30000;
 SET DEBUG_SYNC='now SIGNAL resume';
 --connection backup
+# FIXME: outside PMEM we may get ER_ERROR_ON_RENAME
 --reap
 }
 if (!$have_debug) {
@@ -37,13 +38,16 @@ eval BACKUP SERVER TO '$MYSQLTEST_VARDIR/some_directory';
 --connection default
 ROLLBACK;
 SELECT * FROM t;
+DELETE FROM t;
 
 let $datadir=`SELECT @@datadir`;
---source include/shutdown_mysqld.inc
-#--rmdir $datadir
-#--move_file $MYSQLTEST_VARDIR/some_directory $datadir
---rmdir $MYSQLTEST_VARDIR/some_directory
---source include/start_mysqld.inc
+--let $restart_parameters=--datadir=$MYSQLTEST_VARDIR/some_directory
+--source include/restart_mysqld.inc
 
 SELECT * FROM t;
+--let $restart_parameters=
+--source include/restart_mysqld.inc
+SELECT * FROM t;
 DROP TABLE t;
+
+--rmdir $MYSQLTEST_VARDIR/some_directory
