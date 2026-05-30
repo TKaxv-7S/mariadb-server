@@ -11544,7 +11544,7 @@ SELECT 'a\0' LIMIT 0	{
         "select_id": 1,
         "steps": [
           {
-            "expanded_query": "select 'a\0' AS `a\x00` limit 0"
+            "expanded_query": "select 'a\\0' AS `a\\x00` limit 0"
           }
         ]
       }
