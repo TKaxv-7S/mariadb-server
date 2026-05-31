@@ -38,7 +38,6 @@ int hp_close(register HP_INFO *info)
   info->s->changed=0;
   if (info->open_list.data)
     heap_open_list=list_delete(heap_open_list,&info->open_list);
-  DBUG_ASSERT(!info->has_pending_blob_free || info->s->internal);
   if (!--info->s->open_count && info->s->delete_on_close)
   {
     hp_flush_pending_blob_free(info);
