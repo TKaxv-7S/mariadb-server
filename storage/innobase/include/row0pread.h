@@ -624,7 +624,8 @@ class Parallel_reader::Scan_ctx {
   @return the leaf node page cursor. */
   [[nodiscard]] page_cur_t start_range(page_no_t page_no, mtr_t *mtr,
                                        const dtuple_t *key,
-                                       Savepoints &savepoints) const;
+                                       Savepoints &savepoints,
+                                       dberr_t *err) const;
 
   /** Create and add the range to the scan ranges.
   @param[in,out]  ranges        Ranges to scan.
