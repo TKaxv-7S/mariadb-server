@@ -345,5 +345,6 @@ DROP PROCEDURE IF EXISTS p1;
 DROP PROCEDURE IF EXISTS p2;
 DROP PROCEDURE IF EXISTS p3;
 DROP PROCEDURE IF EXISTS p4;
+drop view if exists v1;
 enable_warnings;
 --source include/rpl_end.inc
