@@ -1,0 +1,30 @@
+--source include/have_binlog_format_row.inc
+--source include/master-slave.inc
+
+
+# MDEV-24646 ASAN heap-use-after-free in Field_blob::pack /
+#   THD::binlog_update_row upon DML on table with virtual column
+
+CREATE OR REPLACE TABLE t (a TEXT, v BLOB AS (a) VIRTUAL)
+  WITH SYSTEM VERSIONING AS SELECT 'foo' AS a;
+
+UPDATE t SET a='bar';
+
+
+# MDEV-39711 UPDATE on System-Versioned Tables uses the after-value in Row-
+#  format Binlog's before-image for non-trivial Text/Blob Virtual Columns
+
+CREATE OR REPLACE TABLE t (a TEXT, v TEXT AS (RIGHT(a, 1)) VIRTUAL)
+  WITH SYSTEM VERSIONING AS SELECT 'before' AS a;
+
+UPDATE t SET a='after';
+
+--sync_slave_with_master
+  SELECT * FROM t;
+--connection master
+
+
+# Cleanup
+DROP TABLE t;
+
+--source include/rpl_end.inc

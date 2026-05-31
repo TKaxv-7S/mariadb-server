@@ -1,0 +1,15 @@
+include/master-slave.inc
+[connection master]
+CREATE OR REPLACE TABLE t (a TEXT, v BLOB AS (a) VIRTUAL)
+WITH SYSTEM VERSIONING AS SELECT 'foo' AS a;
+UPDATE t SET a='bar';
+CREATE OR REPLACE TABLE t (a TEXT, v TEXT AS (RIGHT(a, 1)) VIRTUAL)
+WITH SYSTEM VERSIONING AS SELECT 'before' AS a;
+UPDATE t SET a='after';
+connection slave;
+SELECT * FROM t;
+v	a
+r	after
+connection master;
+DROP TABLE t;
+include/rpl_end.inc
