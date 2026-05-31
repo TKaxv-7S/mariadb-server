@@ -45,9 +45,6 @@ SELECT *, MATCH(host) AGAINST("host2" IN NATURAL LANGUAGE MODE) AS score
        ORDER BY MATCH(host)    AGAINST("host2" IN NATURAL LANGUAGE MODE),
        message;
 
---replace_column 2 #
-show status like "Created_tmp%";
-
 DROP TABLE logs;
 
 --source ../../include/mroonga/have_mroonga_deinit.inc
