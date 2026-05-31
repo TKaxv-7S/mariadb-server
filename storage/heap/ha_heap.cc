@@ -474,6 +474,8 @@ int ha_heap::external_lock(THD *thd, int lock_type)
   if (lock_type == F_UNLCK && file->s->changed && heap_check_heap(file, 0))
     return HA_ERR_CRASHED;
 #endif
+  if (lock_type == F_UNLCK)
+    hp_flush_pending_blob_free(file);
   return 0;					// No external locking
 }
 
