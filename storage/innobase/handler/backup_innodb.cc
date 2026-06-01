@@ -224,7 +224,7 @@ public:
       ctx.last_lsn= log_sys.get_flushed_lsn(std::memory_order_relaxed);
       while (!logs.empty())
       {
-        const lsn_t lsn{logs.back()};
+        lsn_t lsn{logs.back()};
         if (lsn > ctx.last_lsn)
           break;
         if (lsn > ctx.max_first_lsn)
@@ -238,21 +238,33 @@ public:
       }
 
       {
-        lsn_t lsn= log_sys.get_first_lsn();
+        lsn_t lsn{log_sys.get_first_lsn()};
         if (lsn > ctx.max_first_lsn && lsn < ctx.last_lsn)
         {
           const lsn_t end_lsn{lsn + log_sys.capacity()};
           ctx.max_first_lsn= lsn;
           log_sys.latch.wr_unlock();
+          bool live_hardlink;
           if (UNIV_UNLIKELY(ctx.last_lsn > end_lsn))
           {
-            /* Wait for checkpoint_complete(). */
+            live_hardlink= true;
+            fail= link_or_move(lsn, &live_hardlink, ctx, target);
+            if (fail)
+              goto skip_log_dup;
+            /* Wait for checkpoint_complete(). If the previous link_or_move()
+            set live_hardlink, the file will be a read-only clone by now. */
             buf_flush_sync_batch(end_lsn, true);
-            lsn= log_get_lsn();
-            ut_ad(lsn >= end_lsn);
+            ut_ad(logs.size() == 1);
+            ut_ad(logs.back() == lsn);
+            logs.clear();
+            lsn= log_sys.get_first_lsn();
+            ut_ad(lsn == end_lsn);
+            ctx.max_first_lsn= lsn;
+            ctx.last_lsn= log_get_lsn();
+            ut_ad(ctx.last_lsn >= end_lsn);
           }
 
-          bool live_hardlink= false;
+          live_hardlink= false;
           fail= link_or_move(lsn, &live_hardlink, ctx, target);
           log_sys.latch.wr_lock();
           if (fail)
@@ -268,18 +280,11 @@ public:
     ut_ad(!log_sys.resize_in_progress());
     ut_ad(log_sys.archive);
 
-    /* FIXME: If we made a hard link to the last log file,
-    we must retain and restore in fini() a copy of the
-    checkpoint header in the last log file of our backup.
-
-    Otherwise, the server may overwrite the log header when
-    that file is still open for writing. The symptoms are as follows
-    (easy to reproduce by guaranteeing old_size!=0 below
-    (running the server with innodb_log_archiving=OFF):
-
-    [ERROR] InnoDB: Did not find any checkpoint after LSN=12288
-    [Warning] InnoDB: Renaming ib_0000000000003000.log to ib_logfile0
-    */
+    /* Note: If we temporarily made a hard link to the last log file
+    which is writeable by the server, fini() will copy the file.
+    If it is also the first (and only) log file in our backup,
+    write_checkpoint() will write a checkpoint header that identifies
+    the starting point of recovering the backup. */
 
     if (old_size)
     {
@@ -344,21 +349,24 @@ public:
           my_error(ER_ERROR_ON_RENAME, MYF(ME_ERROR_LOG), s, d, errno);
           fail= 1;
         }
-        /* Trim the file to the desired size after copying it. */
-        HANDLE dh= CreateFile(d, GENERIC_READ, FILE_SHARE_READ, nullptr,
-                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (dh == INVALID_HANDLE_VALUE)
-          goto fail;
+        else
+        {
+          /* Trim the file to the desired size after copying it. */
+          HANDLE dh= CreateFile(d, GENERIC_READ, FILE_SHARE_READ, nullptr,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+          if (dh == INVALID_HANDLE_VALUE)
+            goto fail;
 
-        LARGE_INTEGER li;
-        li.QuadPart= size;
-        BOOL ok= SetFilePointerEx(dh, li, nullptr, FILE_BEGIN) &&
-          (ctx.max_first_lsn != ctx.first_lsn ||
-           !write_checkpoint(dh, ctx.checkpoint_end_lsn - ctx.first_lsn +
-                             log_sys.START_OFFSET));
-        CloseHandle(dh);
-        if (!ok)
-          goto fail;
+          LARGE_INTEGER li;
+          li.QuadPart= size;
+          BOOL ok= SetFilePointerEx(dh, li, nullptr, FILE_BEGIN) &&
+            (ctx.max_first_lsn != ctx.first_lsn ||
+             !write_checkpoint(dh, ctx.checkpoint_end_lsn - ctx.first_lsn +
+                               log_sys.START_OFFSET));
+          CloseHandle(dh);
+          if (!ok)
+            goto fail;
+        }
 #else
         ut_ad(target.directory);
         int s= openat(target.fd, "ib_logfile101", O_RDONLY);
@@ -599,7 +607,6 @@ private:
                           IF_WIN(const backup_target&,backup_target) target)
     noexcept
   {
-    ut_ad(!clone || !*clone);
     const std::string p{log_sys.get_archive_path(lsn)};
     const char *const path= p.c_str(), *basename= strrchr(path, '/');
     if (!basename)
@@ -611,7 +618,7 @@ private:
 #ifdef _WIN32
     std::string b{target.path};
     b.push_back('/');
-    b.append(clone ? "ib_logfile101" : basename);
+    b.append((clone && *!clone) ? "ib_logfile101" : basename);
     const char *destname= b.c_str();
 
     unsigned long err;
@@ -652,9 +659,10 @@ private:
     if (move
         ? !renameat(AT_FDCWD, path, target.fd, basename)
         : !linkat(AT_FDCWD, path, target.fd,
-                  clone ? "ib_logfile101" : basename, AT_SYMLINK_FOLLOW))
+                  (clone && !*clone) ? "ib_logfile101" : basename,
+                  AT_SYMLINK_FOLLOW))
     {
-#ifdef __linux__
+# ifdef __linux__
       if (!move || lsn != ctx.first_lsn);
       else if (off_t garbage= (ctx.checkpoint - lsn) & ~4095ULL)
         /* Best effort to punch a hole to free up some garbage in
@@ -668,7 +676,7 @@ private:
           close(dst);
           fchmodat(target.fd, basename, 0444, 0);
         }
-#endif
+# endif
       if (clone)
         *clone= !move;
       return 0;
