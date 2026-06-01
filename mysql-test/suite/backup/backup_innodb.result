@@ -17,8 +17,12 @@ ROLLBACK;
 SELECT * FROM t;
 a	b
 1	
-# restart
+DELETE FROM t;
+# restart: --datadir=MYSQLTEST_VARDIR/some_directory
 SELECT * FROM t;
 a	b
 1	
+# restart
+SELECT * FROM t;
+a	b
 DROP TABLE t;
