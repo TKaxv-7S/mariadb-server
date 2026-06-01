@@ -618,7 +618,7 @@ private:
 #ifdef _WIN32
     std::string b{target.path};
     b.push_back('/');
-    b.append((clone && *!clone) ? "ib_logfile101" : basename);
+    b.append((clone && !*clone) ? "ib_logfile101" : basename);
     const char *destname= b.c_str();
 
     unsigned long err;
