@@ -352,7 +352,8 @@ public:
         else
         {
           /* Trim the file to the desired size after copying it. */
-          HANDLE dh= CreateFile(d, GENERIC_READ, FILE_SHARE_READ, nullptr,
+          HANDLE dh= CreateFile(d, GENERIC_WRITE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
           if (dh == INVALID_HANDLE_VALUE)
             goto fail;
