@@ -600,7 +600,8 @@ next_column:
 	if (!DICT_TF2_FLAG_IS_SET(prebuilt->table, DICT_TF2_FTS_HAS_DOC_ID)) {
 		if (prebuilt->table->fts->cache->first_doc_id
 		    == FTS_NULL_DOC_ID) {
-			fts_get_next_doc_id(prebuilt->table, &doc_id);
+			fts_get_next_doc_id(prebuilt->table, &doc_id,
+					    prebuilt->trx->mysql_thd);
 		}
 		return;
 	}
@@ -608,7 +609,8 @@ next_column:
 	dfield_t*	fts_doc_id = dtuple_get_nth_field(
 		row, prebuilt->table->fts->doc_col);
 
-	if (fts_get_next_doc_id(prebuilt->table, &doc_id) == DB_SUCCESS) {
+	if (fts_get_next_doc_id(prebuilt->table, &doc_id,
+				prebuilt->trx->mysql_thd) == DB_SUCCESS) {
 		ut_a(doc_id != FTS_NULL_DOC_ID);
 		ut_ad(sizeof(doc_id) == fts_doc_id->type.len);
 		dfield_set_data(fts_doc_id, prebuilt->ins_upd_rec_buff
@@ -885,11 +887,11 @@ row_create_prebuilt(
 	}
 
 	prebuilt->pcur = static_cast<btr_pcur_t*>(
-				mem_heap_zalloc(prebuilt->heap,
-					       sizeof(btr_pcur_t)));
+			mem_heap_zalloc(prebuilt->heap,
+					sizeof(btr_pcur_t)));
 	prebuilt->clust_pcur = static_cast<btr_pcur_t*>(
-					mem_heap_zalloc(prebuilt->heap,
-						       sizeof(btr_pcur_t)));
+			mem_heap_zalloc(prebuilt->heap,
+					sizeof(btr_pcur_t)));
 	btr_pcur_reset(prebuilt->pcur);
 	btr_pcur_reset(prebuilt->clust_pcur);
 
@@ -935,8 +937,13 @@ void row_prebuilt_free(row_prebuilt_t *prebuilt)
 	prebuilt->magic_n = ROW_PREBUILT_FREED;
 	prebuilt->magic_n2 = ROW_PREBUILT_FREED;
 
-	btr_pcur_reset(prebuilt->pcur);
-	btr_pcur_reset(prebuilt->clust_pcur);
+	if (prebuilt->pcur) {
+		btr_pcur_reset(prebuilt->pcur);
+	}
+
+	if (prebuilt->clust_pcur) {
+		btr_pcur_reset(prebuilt->clust_pcur);
+	}
 
 	ut_free(prebuilt->mysql_template);
 
@@ -1569,7 +1576,8 @@ void
 init_fts_doc_id_for_ref(
 /*====================*/
 	dict_table_t*	table,		/*!< in: table */
-	ulint*		depth)		/*!< in: recusive call depth */
+	ulint*		depth,		/*!< in: recusive call depth */
+	THD*		thd)		/*!< in: caller's THD */
 {
 	/* Limit on tables involved in cascading delete/update */
 	if (++*depth > FK_MAX_CASCADE_DEL) {
@@ -1583,13 +1591,13 @@ init_fts_doc_id_for_ref(
 
 		if (foreign->foreign_table->space
 		    && foreign->foreign_table->fts) {
-			fts_init_doc_id(foreign->foreign_table);
+			fts_init_doc_id(foreign->foreign_table, thd);
 		}
 
 		if (foreign->foreign_table != table
 		    && !foreign->foreign_table->referenced_set.empty()) {
 			init_fts_doc_id_for_ref(
-				foreign->foreign_table, depth);
+				foreign->foreign_table, depth, thd);
 		}
 	}
 }
@@ -1628,7 +1636,7 @@ row_update_for_mysql(row_prebuilt_t* prebuilt)
 
 	row_mysql_delay_if_needed();
 
-	init_fts_doc_id_for_ref(table, &fk_depth);
+	init_fts_doc_id_for_ref(table, &fk_depth, trx->mysql_thd);
 
 	if (!table->no_rollback()) {
 		trx_start_if_not_started_xa(trx, true);
