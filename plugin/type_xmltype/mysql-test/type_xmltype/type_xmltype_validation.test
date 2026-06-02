@@ -1,6 +1,16 @@
 replace_result InnoDB MyISAM;
 
 set @schema= '<?xml version="1.0"?>
+<xs:something xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="note" type="xs:string"/>
+</xs:something>';
+
+set @xml= '<a> If <b> 123 </b> </a>';
+
+--error ER_UNKNOWN_ERROR
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
 
 <xs:element name="note">
@@ -114,6 +124,24 @@ set @schema= '<?xml version="1.0"?>
       <element name="to" type="string"/>
       <:element name="from" type="string"/>
       <element name="heading" type="string"/>
+      <element name="body" type="wrong-type"/>
+    </sequence>
+  </complexType>
+</element>
+
+</schema>';
+--error ER_UNKNOWN_ERROR
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<schema xmlns="http://www.w3.org/2001/XMLSchema">
+
+<element name="note">
+  <complexType>
+    <sequence>
+      <element name="to" type="string"/>
+      <:element name="from" type="string"/>
+      <element name="heading" type="string"/>
       <element name="body" type="string"/>
     </sequence>
   </complexType>
@@ -121,7 +149,6 @@ set @schema= '<?xml version="1.0"?>
 
 </schema>';
 select XMLISVALID(@xml, @schema);
-
 set @schema= '<?xml version="1.0"?>
 <xs:schema>
 
@@ -231,9 +258,112 @@ set @xml= '<?xml version="1.0" encoding="UTF-8"?>
 
 select XMLISVALID(@xml, @schema);
 
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <!-- Main Element -->
+  <xs:element name="person">
+    <!-- Defines the element as having child items -->
+    <xs:complexType>
+      <!-- Dictates children can appear in any sequence -->
+      <xs:all minOccurs="0">
+        <xs:element name="firstname" type="xs:string" />
+        <xs:element name="lastname" type="xs:string" />
+        <xs:element name="age" type="xs:int" />
+      </xs:all>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>';
+
+set @xml= '<?xml version="1.0" encoding="UTF-8"?>
+<person> </person>';
+
+select XMLISVALID(@xml, @schema);
+
+
+
 --echo
 --echo <choice>
 --echo
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+<!-- Main Element -->
+  <xs:element name="payment">
+    <!-- Defines the element as having child items -->
+    <xs:complexType>
+      <!-- Dictates that only ONE of the following elements can be used -->
+      <xs:choice>
+        <xs:element name="creditcard" type="xs:string" />
+        <xs:element name="paypal" type="xs:string" />
+      </xs:choice>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>';
+
+set @xml= '
+<payment>
+  <creditcard> <wrongTag> </wrongTag> </creditcard>
+</payment>';
+
+select XMLISVALID(@xml, @schema);
+set @xml= '
+<payment>
+  <creditcard>1234-5678-9012-3456</creditcard>
+</payment>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '
+<payment>
+  <paypal>1234-5678-9012-3456</paypal>
+  <creditcard>1234-5678-9012-3456</creditcard>
+</payment>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '
+<payment>
+  <paypal>1234-5678-9012-3456</paypal>
+  <paypal>1234-5678-9012-3456</paypal>
+</payment>';
+
+select XMLISVALID(@xml, @schema);
+set @xml= '
+<payment> </payment>';
+
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+<!-- Main Element -->
+  <xs:element name="payment">
+    <!-- Defines the element as having child items -->
+    <xs:complexType>
+      <!-- Dictates that only ONE of the following elements can be used -->
+      <xs:choice>
+        <xs:element name="creditcard" type="xs:string" minOccurs="0"/>
+        <xs:element name="paypal" type="xs:string" />
+      </xs:choice>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>';
+
+set @xml= '
+<payment>
+  <paypal>1234-5678-9012-3456</paypal>
+</payment>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<payment> </payment>';
+
+select XMLISVALID(@xml, @schema);
 
 set @schema= '<?xml version="1.0"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
@@ -307,6 +437,130 @@ set @xml= '<payment> </payment>';
 
 select XMLISVALID(@xml, @schema);
 
+set @schema= '<?xml version="1.0"?>
+<schema xmlns="http://www.w3.org/2001/XMLSchema">
+
+  <element name="book">
+    <complexType>
+      <choice minOccurs="2" maxOccurs="3">
+        <element name="title" type="string"/>
+        <element name="author" type="string"/>
+        <element name="year" type="integer"/>
+        <element name="price" type="decimal"/>
+      </choice>
+    </complexType>
+  </element>
+
+</schema>';
+
+set @xml= '
+  <book>
+    <title>War and peace. Volume1</title>
+    <year>2002</year>
+  </book>';
+
+select XMLISVALID(@xml, @schema);
+
+--echo
+--echo <sequence>
+--echo
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="ProductData">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="Header" type="xs:string"/>
+        <!-- Inner Sequence 1: Marketing Info -->
+        <xs:sequence>
+          <xs:element name="Description" type="xs:string"/>
+          <xs:element name="Title" type="xs:string"/>
+        </xs:sequence>
+      
+        <!-- Inner Sequence 2: Technical Info -->
+        <xs:sequence>
+          <xs:element name="Description" type="xs:string"/> 
+          <xs:element name="Specs" type="xs:string"/>
+        </xs:sequence>
+      
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>';
+
+set @xml= '
+<ProductData>
+  <Header>Equipment.</Header>
+
+  <Description>High performance laptop.</Description>
+  <Title>Gaming Laptop</Title>
+  
+  <Description>16GB RAM, 1TB SSD</Description>
+  <Specs>Intel i7, RTX 4060</Specs>
+</ProductData>';
+
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="ProductData">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="Header" type="xs:string"/>
+        <!-- Inner Sequence 1: Marketing Info -->
+        <xs:choice>
+          <xs:element name="Description" type="xs:string"/>
+          <xs:element name="Title" type="xs:string"/>
+        </xs:choice>
+      
+        <!-- Inner Sequence 2: Technical Info -->
+        <xs:choice>
+          <xs:element name="Description" type="xs:string"/> 
+          <xs:element name="Specs" type="xs:string"/>
+        </xs:choice>
+      
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>';
+
+set @xml= '
+<ProductData>
+  <Header>Equipment.</Header>
+
+  <Title>Gaming Laptop</Title>
+  <Specs>Intel i7, RTX 4060</Specs>
+</ProductData>';
+
+select XMLISVALID(@xml, @schema);
+
+
+set @xml= '
+<ProductData>
+  <Header>Equipment.</Header>
+
+  <Description>High performance laptop.</Description>
+  <Description>16GB RAM, 1TB SSD</Description>
+</ProductData>';
+
+select XMLISVALID(@xml, @schema);
+
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="ProductData">
+    <xs:complexType>
+      <xs:sequence>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>';
+
+set @xml= '
+<ProductData> </ProductData>';
+
+select XMLISVALID(@xml, @schema);
+
 --echo
 --echo <attribute>
 --echo
@@ -346,6 +600,448 @@ set @xml= '
 
 select XMLISVALID(@xml, @schema);
 
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+<!-- Main Element -->
+  <xs:element name="payment">
+    <!-- Defines the element as having child items -->
+    <xs:complexType>
+      <!-- Dictates that only ONE of the following elements can be used -->
+      <xs:choice>
+        <xs:element name="creditcard" type="xs:string" />
+        <xs:element name="paypal" type="xs:string" />
+      </xs:choice>
+
+      <!-- Optional: Attributes always go last -->
+      <xs:attribute name="shopsID">
+         <xs:simpleType>
+           <xs:list itemType="xs:integer"/>
+         </xs:simpleType>
+      </xs:attribute>
+    </xs:complexType>
+
+  </xs:element>
+</xs:schema>';
+
+set @xml= '
+
+<payment shopsID="10 11 12">
+  <creditcard>1234-5678-9012-3456</creditcard>
+</payment>';
+
+select XMLISVALID(@xml, @schema);
+
+
+--echo
+--echo <anyAttribute>
+--echo
+
+set @schema= ' <?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <xs:element name="person">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="firstname" type="xs:string"/>
+        <xs:element name="lastname" type="xs:string"/>
+      </xs:sequence>
+      <!-- This allows any custom attributes to be attached to the <person> element -->
+      <xs:anyAttribute processContents="skip"/>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema> ';
+
+set @xml= '
+<person eyecolor="blue" status="active" id="9942">
+  <firstname>John</firstname>
+  <lastname>Doe</lastname>
+</person> ';
+
+select XMLISVALID(@xml, @schema);
+
+set @schema= ' <?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <xs:element name="person">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="firstname" type="xs:string"/>
+        <xs:element name="lastname" type="xs:string"/>
+      </xs:sequence>
+      <!-- This allows any custom attributes to be attached to the <person> element -->
+      <xs:anyAttribute processContents="skip"/>
+      <xs:anyAttribute processContents="skip"/>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema> ';
+
+--error ER_WRONG_VALUE
+select XMLISVALID(@xml, @schema);
+
+
+--echo
+--echo <any>
+--echo
+
+set @schema= ' <?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <xs:element name="person">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="firstName" type="xs:string"/>
+        <xs:element name="lastName" type="xs:string"/>
+        <!-- Extensibility point: allows any elements after the last name -->
+        <xs:any namespace="##any" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema> ';
+
+set @xml= '
+<person>
+  <firstName>John</firstName>
+  <lastName>Doe</lastName>
+  <!-- The following elements are allowed by <xs:any> -->
+  <age>30</age>
+  <city>New York</city>
+</person> ';
+
+select XMLISVALID(@xml, @schema);
+
+
+--echo
+--echo <attributeGroup>
+--echo
+
+set @schema= ' <?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+<!-- 1. Define the attribute group -->
+  <xs:attributeGroup name="personIdentDetails">
+    <xs:attribute name="id" type="xs:string" use="required"/>
+    <xs:attribute name="status" type="xs:string" use="optional"/>
+  </xs:attributeGroup>
+
+  <!-- 2. Reuse the group in elements -->
+  <xs:element name="employee">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="name" type="xs:string"/>
+      </xs:sequence>
+      <!-- Reference the group here -->
+      <xs:attributeGroup ref="personIdentDetails"/>
+    </xs:complexType>
+  </xs:element>
+
+  <xs:element name="visitor">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="company" type="xs:string"/>
+      </xs:sequence>
+      <!-- Reference the same group here -->
+      <xs:attributeGroup ref="personIdentDetails"/>
+    </xs:complexType>
+  </xs:element>
+</xs:schema> ';
+
+set @xml= '
+<employee id="EMP1024" status="active">
+    <name>Jane Doe</name>
+</employee>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '
+<visitor id="VIS-9951" status="active">
+    <company>Acme Corporation</company>
+</visitor>';
+
+select XMLISVALID(@xml, @schema);
+
+set @schema= ' <?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+<!-- 1. Define the attribute group -->
+  <xs:attributeGroup name="personIdentDetails">
+    <xs:wrongTag name="id" type="xs:string" use="required"/>
+    <xs:attribute name="status" type="xs:string" use="optional"/>
+  </xs:attributeGroup>
+
+  <!-- 2. Reuse the group in elements -->
+  <xs:element name="employee">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="name" type="xs:string"/>
+      </xs:sequence>
+      <!-- Reference the group here -->
+      <xs:attributeGroup ref="personIdentDetails"/>
+    </xs:complexType>
+  </xs:element>
+
+  <xs:element name="visitor">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="company" type="xs:string"/>
+      </xs:sequence>
+      <!-- Reference the same group here -->
+      <xs:attributeGroup ref="personIdentDetails"/>
+    </xs:complexType>
+  </xs:element>
+</xs:schema> ';
+
+select XMLISVALID(@xml, @schema);
+
+
+set @schema= ' <?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+<!-- 1. Define the attribute group -->
+  <xs:attributeGroup name="personIdentDetails">
+  </xs:attributeGroup>
+
+  <!-- 2. Reuse the group in elements -->
+  <xs:element name="employee">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="name" type="xs:string"/>
+      </xs:sequence>
+      <!-- Reference the group here -->
+      <xs:attributeGroup ref="personIdentDetails"/>
+    </xs:complexType>
+  </xs:element>
+
+  <xs:element name="visitor">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="company" type="xs:string"/>
+      </xs:sequence>
+      <!-- Reference the same group here -->
+      <xs:attributeGroup ref="personIdentDetails"/>
+    </xs:complexType>
+  </xs:element>
+</xs:schema> ';
+
+select XMLISVALID(@xml, @schema);
+
+--echo
+--echo <group>
+--echo
+
+set @schema= ' <?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <!-- 1. DEFINE THE REUSABLE GROUP -->
+  <xs:group name="ContactAndShippingGroup">
+    <xs:sequence>
+      <xs:element name="CustomerName" type="xs:string"/>
+      <xs:element name="Email" type="xs:string"/>
+      <xs:element name="ShippingAddress" type="xs:string"/>
+    </xs:sequence>
+  </xs:group>
+
+  <!-- 2. USE THE GROUP IN A COMPLEX TYPE (Regular Order) -->
+  <xs:complexType name="RegularOrderType">
+    <xs:sequence>
+      <!-- Insert the group here -->
+      <xs:group ref="ContactAndShippingGroup"/>
+      <xs:element name="OrderDate" type="xs:date"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- 3. USE THE GROUP IN ANOTHER COMPLEX TYPE (Express Order) -->
+  <xs:complexType name="ExpressOrderType">
+    <xs:sequence>
+      <!-- Insert the exact same group here -->
+      <xs:group ref="ContactAndShippingGroup"/>
+      <xs:element name="CourierName" type="xs:string"/>
+      <xs:element name="ExpectedDelivery" type="xs:dateTime"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Define the root elements to make the schema valid -->
+  <xs:element name="RegularOrder" type="RegularOrderType"/>
+  <xs:element name="ExpressOrder" type="ExpressOrderType"/>
+
+</xs:schema> ';
+
+set @xml= '
+<RegularOrder>
+  <!-- Group Elements Start -->
+  <CustomerName>Alex Mercer</CustomerName>
+  <Email>alex.m@example.com</Email>
+  <ShippingAddress>
+    <Street>Lont st. 123</Street>
+    <zip>0123456</zip>
+  </ShippingAddress>
+  <!-- Group Elements End -->
+  <OrderDate>2026-06-01</OrderDate>
+</RegularOrder>';
+
+select XMLISVALID(@xml, @schema);
+
+
+--echo
+--echo <anyType>
+--echo
+
+set @schema= ' <?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <xs:element name="RegularOrder" type="xs:anyType"/>
+
+</xs:schema> ';
+
+set @xml= '<RegularOrder> The regular order.  </RegularOrder>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '
+<RegularOrder>
+  <!-- Group Elements Start -->
+  <CustomerName id="10" >Alex Mercer</CustomerName>
+  <Email>alex.m@example.com</Email>
+  <ShippingAddress>123 Maple Street, New York, NY</ShippingAddress>
+  <!-- Group Elements End -->
+  <OrderDate>2026-06-01</OrderDate>
+</RegularOrder>';
+
+select XMLISVALID(@xml, @schema);
+
+
+--echo
+--echo <list>
+--echo
+set @schema= ' <?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+<xs:element name="intvalues" type="valuelist"/>
+
+<xs:simpleType name="valuelist">
+  <xs:list itemType="xs:integer"/>
+</xs:simpleType>
+
+</xs:schema> ';
+
+set @xml= '<intvalues>100 34 56 -23 1567</intvalues>';
+
+select XMLISVALID(@xml, @schema);
+
+
+--echo
+--echo <union>
+--echo
+set @schema= ' <?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+ <!-- Define the union type using built-in types -->
+   <xs:simpleType name="ShirtSizeType">
+      <xs:union memberTypes="xs:integer xs:string"/>
+   </xs:simpleType>
+
+ <!-- Apply it to an element -->
+   <xs:element name="size" type="ShirtSizeType"/>
+
+</xs:schema> ';
+
+set @xml= '<size>95</size>';
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<size>absent</size>';
+
+select XMLISVALID(@xml, @schema);
+
+set @schema= ' <?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+<xs:simpleType name="ExamScoreType">
+  <xs:union>
+    
+    <!-- Member Type 1: Numeric restriction -->
+    <xs:simpleType>
+      <xs:restriction base="xs:integer">
+        <xs:minInclusive value="0"/>
+        <xs:maxInclusive value="100"/>
+      </xs:restriction>
+    </xs:simpleType>
+    
+    <!-- Member Type 2: Text string restriction -->
+    <xs:simpleType>
+      <xs:restriction base="xs:string">
+        <xs:enumeration value="absent"/>
+      </xs:restriction>
+    </xs:simpleType>
+    
+  </xs:union>
+</xs:simpleType>
+
+   <xs:element name="score" type="ExamScoreType"/>
+
+</xs:schema> ';
+
+set @xml= '<score>95</score>';
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<score>absent</score>';
+
+select XMLISVALID(@xml, @schema);
+
+--echo
+--echo <simpleContent>
+--echo
+
+set @schema= '<xs:schema xmlns:xs="http://w3.org">
+  <xs:element name="Price">
+    <xs:complexType>
+      <!-- 1. simpleContent means the element contains plain text data -->
+      <xs:simpleContent>
+        <!-- 2. extension base specifies the text data type (e.g., decimal) -->
+        <xs:extension base="xs:decimal">
+          <!-- 3. Add your attribute here -->
+          <xs:attribute name="currency" type="xs:string" use="required"/>
+        </xs:extension>
+      </xs:simpleContent>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>';
+
+set @xml= '<Price currency="USD">29.99</Price>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<Price curr="USD">29.99</Price>';
+
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<xs:schema xmlns:xs="http://w3.org">
+  <xs:element name="speed">
+    <xs:complexType>
+      <xs:simpleContent>
+        <xs:restriction base="xs:integer">
+          <xs:minInclusive value="0"/>
+          <xs:maxInclusive value="200"/>
+          <xs:attribute name="units" type="xs:string" use="required"/>
+        </xs:restriction>
+      </xs:simpleContent>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>';
+
+set @xml= '<speed units="mph">85</speed>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<speed units="mph">"fast"</speed>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<speed unit="mph">"fast"</speed>';
+
+select XMLISVALID(@xml, @schema);
 
 --echo
 --echo Check basic types.
@@ -376,6 +1072,35 @@ set @schema= '<?xml version="1.0"?>
   </xs:element>
 
 </xs:schema>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<?xml version="1.0"?>
+<order>
+  <id>1001</id>
+  <status wrongAttr="val">In process</status>
+  <amount>100.50</amount>
+</order>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<?xml version="1.0"?>
+<order>
+  <id>1001</id>
+  <status>
+    <wrongTag> In process </wrongTag>
+  </status>
+  <amount>100.50</amount>
+</order>';
+
+select XMLISVALID(@xml, @schema);
+
+set @xml= '<?xml version="1.0"?>
+<order>
+  <id>1001</id>
+  <status>In process</status>
+  <amount>XXX.50</amount>
+</order>';
 
 select XMLISVALID(@xml, @schema);
 
@@ -415,6 +1140,34 @@ set @schema= '<?xml version="1.0"?>
 
 </xs:schema>';
 
+select XMLISVALID(@xml, @schema);
+
+set @schema= '<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <!-- Book type definition -->
+  <xs:complexType name="BookType">
+    <xs:sequence>
+      <xs:element name="title" type="xs:string"/>
+      <xs:element name="author" type="xs:string"/>
+      <xs:element name="year" type="xs:integer"/>
+      <xs:element name="price" type="xs:decimal"/>
+    </xs:sequence>
+    <xs:attribute name="id" type="xs:string" use="required"/>
+  </xs:complexType>
+
+  <!-- Library element -->
+  <xs:element name="library">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="book" type="BookType" maxOccurs="wrong value"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>';
+
+--error ER_WRONG_VALUE
 select XMLISVALID(@xml, @schema);
 
 set @schema= '<?xml version="1.0"?>
@@ -482,6 +1235,15 @@ set @schema= '<?xml version="1.0"?>
   </xs:element>
 
 </xs:schema>';
+
+set @xml= '<?xml version="1.0"?>
+<order>
+  <id>1001</id>
+  <date>2026-XX-10</date>
+  <datetime>2026-04-10T11:31:00Z</datetime>
+</order>';
+
+select XMLISVALID(@xml, @schema);
 
 set @xml= '<?xml version="1.0"?>
 <order>
@@ -749,6 +1511,46 @@ set @xml= '<?xml version="1.0"?>
 </employee>';
 
 select XMLISVALID(@xml, @xs);
+
+select XMLISVALID(@xml, @schema);
+set @schema= '<?xml version="1.0"?>
+<xs:schema>
+
+<xs:element name="note">
+  <xs:complexType>
+    <xs:sequence>
+      <xs:element name="t1" type="xs:boolean"/>
+      <xs:element name="t2" type="xs:long"/>
+      <xs:element name="t3" type="xs:short"/>
+      <xs:element name="t4" type="xs:byte"/>
+      <xs:element name="t5" type="xs:nonNegativeInteger"/>
+      <xs:element name="t6" type="xs:positiveInteger"/>
+      <xs:element name="t7" type="xs:unsignedLong"/>
+      <xs:element name="t8" type="xs:double"/>
+      <xs:element name="t9" type="xs:float"/>
+      <xs:element name="t10" type="xs:anySimpleType"/>
+    </xs:sequence>
+  </xs:complexType>
+</xs:element>
+
+</xs:schema>';
+
+set @xml= '<?xml version="1.0"?>
+<note>
+  <t1>true</t1>
+  <t2>100</t2>
+  <t3>100</t3>
+  <t4>100</t4>
+  <t5>100</t5>
+  <t6>100</t6>
+  <t7>100</t7>
+  <t8>100e3</t8>
+  <t9>100e4</t9>
+  <t10>JOHN</t10>
+</note>';
+
+select XMLISVALID(@xml, @schema);
+
 
 --echo # End of 11.8 tests
 
