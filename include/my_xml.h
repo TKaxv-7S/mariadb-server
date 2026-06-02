@@ -39,6 +39,7 @@ extern "C" {
   \r, \n, \t characters.
 */
 #define MY_XML_FLAG_SKIP_TEXT_NORMALIZATION 2
+#define MY_XML_FLAG_ASSERT_WELL_FORMED 4
 
 enum my_xml_node_type
 {
