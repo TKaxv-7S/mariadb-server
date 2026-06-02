@@ -327,7 +327,7 @@ public:
       const backup_context &ctx{trx->lock.backup};
       if (ctx.max_first_lsn)
       {
-        const lsn_t size=
+        const uint64_t size=
           std::max<lsn_t>(log_sys.FILE_SIZE_MIN, log_sys.START_OFFSET +
                           (((ctx.last_lsn - ctx.max_first_lsn) + 4095) &
                            ~4095ULL));
@@ -338,37 +338,53 @@ public:
         std::string dst{src};
         src.append("ib_logfile101");
         log_sys.append_archive_name(dst, ctx.max_first_lsn);
-        const char *s= src.c_str(), *d= dst.c_str();
-        if (!CopyFileEx(s, d, nullptr, nullptr, nullptr,
-                        COPY_FILE_NO_BUFFERING) ||
-            !SetFileAttributes(s, FILE_ATTRIBUTE_NORMAL) ||
-            !DeleteFile(s))
+        const char *s_= src.c_str(), *d_= dst.c_str();
+        HANDLE s, d;
+        for (;;)
+        {
+          s= CreateFile(s_, GENERIC_READ,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        my_win_file_secattr(), OPEN_EXISTING,
+                        FILE_ATTRIBUTE_NORMAL, nullptr);
+          if (s != INVALID_HANDLE_VALUE)
+            break;
+          switch (GetLastError()) {
+          case ERROR_SHARING_VIOLATION:
+          case ERROR_LOCK_VIOLATION:
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            continue;
+          }
+          my_error(ER_FILE_NOT_FOUND, MYF(ME_ERROR_LOG), s_, errno);
+          fail= 1;
+          goto done;
+        }
+        d= CreateFile(d_, GENERIC_WRITE, 0, my_win_file_secattr(),
+                      CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (d == INVALID_HANDLE_VALUE)
         {
         fail:
-          my_osmaperr(GetLastError());
-          my_error(ER_ERROR_ON_RENAME, MYF(ME_ERROR_LOG), s, d, errno);
           fail= 1;
+          my_osmaperr(GetLastError());
+          my_error(ER_ERROR_ON_RENAME, MYF(ME_ERROR_LOG), s_, d_, errno);
+          CloseHandle(s);
         }
         else
         {
-          /* Trim the file to the desired size after copying it. */
-          HANDLE dh= CreateFile(d, GENERIC_WRITE,
-                                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-          if (dh == INVALID_HANDLE_VALUE)
+          fail= copy_file(s, d, log_sys.START_OFFSET, size) ||
+            (ctx.max_first_lsn == ctx.first_lsn &&
+             write_checkpoint(d, ctx.checkpoint_end_lsn - ctx.first_lsn +
+                              log_sys.START_OFFSET));
+          if (!CloseHandle(d) || fail)
             goto fail;
 
-          LARGE_INTEGER li;
-          li.QuadPart= size;
-          BOOL ok= SetFilePointerEx(dh, li, nullptr, FILE_BEGIN);
-          if (ok && os_file_set_sparse_win32(dh))
-            std::ignore= os_file_punch_hole(dh, 0, log_sys.START_OFFSET);
-          if (ok && ctx.max_first_lsn == ctx.first_lsn)
-            ok= !write_checkpoint(dh, ctx.checkpoint_end_lsn - ctx.first_lsn +
-                                  log_sys.START_OFFSET);
-          CloseHandle(dh);
-          if (!ok)
-            goto fail;
+          CloseHandle(s);
+
+          if (!DeleteFile(s_))
+          {
+            my_osmaperr(GetLastError());
+            my_error(ER_CANT_DELETE_FILE, MYF(ME_ERROR_LOG), s_, errno);
+            fail= 1;
+          }
         }
 #else
         ut_ad(target.directory);
@@ -410,8 +426,8 @@ public:
           }
           std::ignore= close(s);
         }
-      done:;
 #endif
+      done:
         /* TODO: punch hole to the start of the first log file
         if we had old_size!=0 */
         sql_print_information("innodb_log_recovery_start=" LSN_PF
@@ -467,6 +483,7 @@ private:
       path.push_back('/');
       backup_start(node->space);
       path.append(node->name);
+      /* FIXME: copy page ranges with copy_file() like everywhere else */
       bool ok= CopyFileEx(node->name, path.c_str(), nullptr, nullptr, nullptr,
                           COPY_FILE_NO_BUFFERING);
       backup_stop(node->space);
@@ -576,7 +593,6 @@ private:
     return 0;
   }
 
-#ifndef _WIN32
   /** Copy a log file.
   @param src    source file
   @param dst    target file
@@ -586,7 +602,8 @@ private:
   @param c      offset of the FILE_CHECKPOINT mini-transaction
   @return error code
   @retval 0 on success */
-  static int copy_log_file_part(int src, int dst, off_t start, off_t size,
+  static int copy_log_file_part(IF_WIN(HANDLE,int) src, IF_WIN(HANDLE,int) dst,
+                                uint64_t start, uint64_t size,
                                 const backup_context &ctx, uint64_t c)
     noexcept
   {
@@ -594,7 +611,6 @@ private:
       return err;
     return write_checkpoint(dst, c);
   }
-#endif
 
   /** Hard-link (copy) or rename (move) an archive log file.
   @param lsn       The first LSN in the file
@@ -667,9 +683,47 @@ private:
       b.append(basename);
       destname= b.c_str();
 
-      if (!CopyFileEx(path, destname, nullptr, nullptr, nullptr,
-                      COPY_FILE_NO_BUFFERING))
-        goto fail;
+      if (lsn >= ctx.checkpoint)
+      {
+        if (!CopyFileEx(path, destname, nullptr, nullptr, nullptr,
+                        COPY_FILE_NO_BUFFERING))
+          goto fail;
+      }
+      else
+      {
+        HANDLE s, d;
+        for (;;)
+        {
+          s= CreateFile(path, GENERIC_READ,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        my_win_file_secattr(), OPEN_EXISTING,
+                        FILE_ATTRIBUTE_NORMAL, nullptr);
+          if (s != INVALID_HANDLE_VALUE)
+            break;
+          switch (GetLastError()) {
+          case ERROR_SHARING_VIOLATION:
+          case ERROR_LOCK_VIOLATION:
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            continue;
+          }
+          goto fail;
+        }
+        d= CreateFile(destname, GENERIC_WRITE, 0, my_win_file_secattr(),
+                      CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (d == INVALID_HANDLE_VALUE)
+        {
+          CloseHandle(s);
+          goto fail;
+        }
+
+        int err= copy_log_file_part(s, d, log_sys.START_OFFSET +
+                                    (((ctx.checkpoint - lsn) + 4095) & ~4095ULL),
+                                    ctx.first_size, ctx,
+                                    ctx.checkpoint_end_lsn - lsn +
+                                    log_sys.START_OFFSET);
+        if (err | !(CloseHandle(s) & CloseHandle(d)))
+          goto fail;
+      }
     }
     else if (clone)
       *clone= true;
@@ -730,7 +784,7 @@ private:
                              ctx.checkpoint_end_lsn - lsn +
                              log_sys.START_OFFSET);
 
-      if ((close(dst) | close(src)) || err)
+      if (err | close(dst) | close(src))
         goto fail;
     }
 #endif

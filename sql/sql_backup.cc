@@ -20,8 +20,12 @@
 #include "sql_backup.h"
 #include "sql_backup_interface.h"
 #include "sql_parse.h"
+#include "aligned.h"
+#ifdef _WIN32
+# include "tpool.h"
+#endif
 
-#ifndef _WIN32
+#if defined __linux__ || defined __FreeBSD__
 using copying_step= ssize_t(int,int,size_t,off_t*);
 template<copying_step step>
 static ssize_t copy(int in_fd, int out_fd, off_t offset, off_t end) noexcept
@@ -38,24 +42,25 @@ static ssize_t copy(int in_fd, int out_fd, off_t offset, off_t end) noexcept
       return -1;
   }
 }
-# if defined __linux__ || defined __FreeBSD__
+
 /* Copy between files in a single (type of) file system */
 static inline ssize_t
 copy_step(int in_fd, int out_fd, size_t count, off_t *offset) noexcept
 {
   return copy_file_range(in_fd, offset, out_fd, offset, count, 0);
 }
-#  define cfr(src,dst,start,end) copy<copy_step>(src, dst, start, end)
-# endif
-# ifdef __linux__
-#  include <sys/sendfile.h>
+# define cfr(src,dst,start,end) copy<copy_step>(src, dst, start, end)
+#endif
+#ifdef __linux__
+# include <sys/sendfile.h>
 /* Copy a file to a stream or to a regular file. */
 static inline ssize_t
 send_step(int in_fd, int out_fd, size_t count, off_t *offset) noexcept
 {
   return sendfile(out_fd, in_fd, offset, count);
 }
-# else
+#else
+# ifndef _WIN32
 #  include "aligned.h"
 #  include <sys/mman.h>
 /** Copy a file using a memory mapping.
@@ -66,22 +71,21 @@ send_step(int in_fd, int out_fd, size_t count, off_t *offset) noexcept
 @return error code
 @retval 0  on success
 @retval 1  if a memory mapping failed */
-static ssize_t mmap_copy(int in_fd, int out_fd, off_t o, off_t end)
+static ssize_t mmap_copy(int in_fd, int out_fd, uint64_t o, uint64_t end)
 {
-  assert(end >= o);
 #if SIZEOF_SIZE_T < 8
   if (end != ssize_t(end))
     return 1;
 #endif
   const size_t count= size_t(end - o);
-  void *p= mmap(nullptr, count, PROT_READ, MAP_SHARED, in_fd, o);
+  void *p= mmap(nullptr, count, PROT_READ, MAP_SHARED, in_fd, off_t(o));
   if (p == MAP_FAILED)
     return 1;
   ssize_t ret;
   size_t c{count};
-  for (const char *b= static_cast<const char*>(p);; b+= ret, o+= ret)
+  for (const char *b= static_cast<const char*>(p);; b+= ret, o+= uint64_t(ret))
   {
-    ret= pwrite(out_fd, b, std::min(c, size_t(INT_MAX >> 20 << 20)), o);
+    ret= pwrite(out_fd, b, std::min(c, size_t(INT_MAX >> 20 << 20)), off_t(o));
     if (ret < 0)
       break;
     c-= ret;
@@ -99,6 +103,7 @@ static ssize_t mmap_copy(int in_fd, int out_fd, off_t o, off_t end)
   munmap(p, c);
   return ret;
 }
+# endif
 
 /** Copy a file using positioned reads and writes.
 @param in_fd   source file
@@ -108,23 +113,27 @@ static ssize_t mmap_copy(int in_fd, int out_fd, off_t o, off_t end)
 @return error code
 @retval 0  on success
 @retval 1  if a memory mapping failed */
-static ssize_t pread_pwrite(int in_fd, int out_fd, off_t o, off_t end)
+static ssize_t pread_pwrite(IF_WIN(HANDLE,int) in_fd, IF_WIN(HANDLE,int) out_fd,
+                            uint64_t o, uint64_t end)
   noexcept
 {
-  assert(end >= o);
+#ifdef _WIN32
+  using tpool::pread;
+  using tpool::pwrite;
+#endif
   constexpr size_t READ_WRITE_SIZE= 65536;
   char *b= static_cast<char*>(aligned_malloc(READ_WRITE_SIZE, 4096));
   if (!b)
     return -1;
   ssize_t ret;
-  for (off_t count{end - o};; o+= ret)
+  for (uint64_t count{end - o};; o+= ret)
   {
-    ret= pread(in_fd, b, ssize_t(std::min(count, off_t{READ_WRITE_SIZE})), o);
+    ret= pread(in_fd, b, ssize_t(std::min(count, READ_WRITE_SIZE)), o);
     if (ret > 0)
       ret= pwrite(out_fd, b, ret, o);
     if (ret < 0)
       break;
-    count-= ret;
+    count-= uint64_t(ret);
     if (!count)
     {
       ret= 0;
@@ -139,10 +148,12 @@ static ssize_t pread_pwrite(int in_fd, int out_fd, off_t o, off_t end)
   aligned_free(b);
   return ret;
 }
-# endif
+#endif
 
 #ifdef __APPLE__
 /* The inline copy_entire_file() invokes fcopyfile() */
+#elif defined _WIN32
+/* CopyFileEx() should be used */
 #else
 /** Copy a file (whole content).
 @param src  source file descriptor
@@ -155,36 +166,38 @@ extern "C" int copy_entire_file(int src, int dst)
 }
 #endif
 
-/** Copy a file.
+/** Copy a portion of a file.
 @param src   source file descriptor
 @param dst   target to append src to
 @param start first offset to copy
 @param end   last offset to copy (exclusive)
 @return error code (negative)
 @retval 0   on success */
-extern "C" int copy_file(int src, int dst, off_t start, off_t end)
+extern "C" int copy_file(IF_WIN(HANDLE,int) src, IF_WIN(HANDLE,int) dst,
+                         uint64_t start, uint64_t end)
 {
   assert(end >= start);
   ssize_t ret;
 # ifdef cfr
-  if (!(ret= cfr(src, dst, start, end)))
+  if (!(ret= cfr(src, dst, off_t(start), off_t(end))))
     return int(ret);
 #  ifdef __linux__
   if (errno == EOPNOTSUPP || errno == EXDEV)
 #  endif
 # endif
 # ifdef __linux__ // starting with Linux 2.6.33, we can rely on sendfile(2)
-    ret= (start != 0 && start != lseek(dst, start, SEEK_SET))
+    ret= (start != 0 && off_t(start) != lseek(dst, start, SEEK_SET))
       ? -1
-      : copy<send_step>(src, dst, start, end);
+      : copy<send_step>(src, dst, off_t(start), off_t(end));
 # else
+#  ifndef _WIN32
   if ((ret= mmap_copy(src, dst, start, end)) == 1)
+#  endif
     ret= pread_pwrite(src, dst, start, end);
 # endif
   assert(ret <= 0);
   return int(ret);
 }
-#endif
 
 static my_bool backup_start(THD *thd, plugin_ref plugin, void *dst) noexcept
 {

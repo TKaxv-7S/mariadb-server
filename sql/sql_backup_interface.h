@@ -14,14 +14,13 @@
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA */
 
 #ifdef _WIN32
-/* You have to use CopyFileEx() and friends manually */
-#else
-# if defined __APPLE__
+/* Use CopyFileEx() to copy entire files */
+#elif defined __APPLE__
 /* You should invoke fclonefileat(2) manually before attempting
 copy_entire_file() or copy_file() */
-#  include <sys/attr.h>
-#  include <sys/clonefile.h>
-#  include <copyfile.h>
+# include <sys/attr.h>
+# include <sys/clonefile.h>
+# include <copyfile.h>
 /** Copy an entire file.
 @param src  source file descriptor
 @param dst  target to append src to
@@ -31,27 +30,27 @@ inline int copy_entire_file(int src, int dst)
 {
   return fcopyfile(src, dst, NULL, COPYFILE_ALL | COPYFILE_CLONE);
 }
-# else
-#  ifdef __cplusplus
+#else
+# ifdef __cplusplus
 extern "C"
-#  endif
+# endif
 /** Copy an entire file.
 @param src  source file descriptor
 @param dst  target to append src to
 @return error code (negative)
 @retval 0   on success */
 int copy_entire_file(int src, int dst);
-# endif
+#endif
 
-# ifdef __cplusplus
+#ifdef __cplusplus
 extern "C"
-# endif
-/** Copy a file.
+#endif
+/** Copy a portion of a file.
 @param src   source file descriptor
 @param dst   target to append src to
 @param start first offset to copy
 @param end   last offset to copy (exclusive)
 @return error code (negative)
 @retval 0   on success */
-int copy_file(int src, int dst, off_t start, off_t end);
-#endif
+int copy_file(IF_WIN(HANDLE,int) src, IF_WIN(HANDLE,int) dst,
+              uint64_t start, uint64_t end);
