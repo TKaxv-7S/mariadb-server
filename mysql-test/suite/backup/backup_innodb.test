@@ -7,8 +7,13 @@ ENGINE=INNODB;
 BEGIN;
 INSERT INTO t SET a=1;
 
-evalp BACKUP SERVER TO '$MYSQLTEST_VARDIR/some_directory';
---rmdir $MYSQLTEST_VARDIR/some_directory
+# In case this test is being run with --repeat
+# clean up after a previous iteration of the test.
+--error 0,1
+--rmdir $MYSQLTEST_VARDIR/backup_innodb_$MTR_COMBINATION_ARCHIVED
+
+evalp BACKUP SERVER TO '$MYSQLTEST_VARDIR/backup_innodb_$MTR_COMBINATION_ARCHIVED';
+--rmdir $MYSQLTEST_VARDIR/backup_innodb_$MTR_COMBINATION_ARCHIVED
 ROLLBACK;
 # BACKUP SERVER will implicitly commit the current transaction
 SELECT * FROM t;
@@ -20,7 +25,8 @@ DELETE FROM t;
 if ($have_debug) {
 SET DEBUG_SYNC='innodb_backup_start SIGNAL start WAIT_FOR resume';
 --replace_result $MYSQLTEST_VARDIR MYSQLTEST_VARDIR
-send_eval BACKUP SERVER TO '$MYSQLTEST_VARDIR/some_directory';
+--replace_regex /backup_innodb_\d*/backup_innodb_/
+send_eval BACKUP SERVER TO '$MYSQLTEST_VARDIR/backup_innodb_$MTR_COMBINATION_ARCHIVED';
 --connection default
 SET DEBUG_SYNC='now WAIT_FOR start';
 INSERT INTO t(a) SELECT * FROM seq_1_to_30000;
@@ -30,8 +36,8 @@ SET DEBUG_SYNC='now SIGNAL resume';
 --reap
 }
 if (!$have_debug) {
---replace_result $MYSQLTEST_VARDIR MYSQLTEST_VARDIR
-eval BACKUP SERVER TO '$MYSQLTEST_VARDIR/some_directory';
+--replace_result $MYSQLTEST_VARDIR MYSQLTEST_VARDIR $MTR_COMBINATION_ARCHIVED ARCHIVED
+eval BACKUP SERVER TO '$MYSQLTEST_VARDIR/backup_innodb_$MTR_COMBINATION_ARCHIVED';
 }
 
 --disconnect backup
@@ -41,7 +47,8 @@ SELECT * FROM t;
 DELETE FROM t;
 
 let $datadir=`SELECT @@datadir`;
---let $restart_parameters=--datadir=$MYSQLTEST_VARDIR/some_directory
+--let $restart_noprint=1
+--let $restart_parameters=--datadir=$MYSQLTEST_VARDIR/backup_innodb_$MTR_COMBINATION_ARCHIVED
 --source include/restart_mysqld.inc
 
 SELECT * FROM t;
@@ -50,4 +57,5 @@ SELECT * FROM t;
 SELECT * FROM t;
 DROP TABLE t;
 
---rmdir $MYSQLTEST_VARDIR/some_directory
+# We will intentionally not remove the backup directory, so that it
+# may be preserved for analysis in case the test case fails.
