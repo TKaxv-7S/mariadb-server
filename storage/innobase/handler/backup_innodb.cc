@@ -360,10 +360,12 @@ public:
 
           LARGE_INTEGER li;
           li.QuadPart= size;
-          BOOL ok= SetFilePointerEx(dh, li, nullptr, FILE_BEGIN) &&
-            (ctx.max_first_lsn != ctx.first_lsn ||
-             !write_checkpoint(dh, ctx.checkpoint_end_lsn - ctx.first_lsn +
-                               log_sys.START_OFFSET));
+          BOOL ok= SetFilePointerEx(dh, li, nullptr, FILE_BEGIN);
+          if (ok && os_file_set_sparse_win32(dh))
+            std::ignore= os_file_punch_hole(dh, 0, log_sys.START_OFFSET);
+          if (ok && ctx.max_first_lsn == ctx.first_lsn)
+            ok= !write_checkpoint(dh, ctx.checkpoint_end_lsn - ctx.first_lsn +
+                                  log_sys.START_OFFSET);
           CloseHandle(dh);
           if (!ok)
             goto fail;
@@ -634,10 +636,24 @@ private:
         my_error(ER_ERROR_ON_RENAME, MYF(ME_ERROR_LOG), path, basename, errno);
         return -1;
       }
-# if 0
+
       if (lsn < ctx.checkpoint)
-        /* FIXME: punch hole */;
-# endif
+      {
+        HANDLE dh= CreateFile(destname, GENERIC_WRITE,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (dh == INVALID_HANDLE_VALUE)
+          goto fail;
+        if (os_file_set_sparse_win32(dh))
+          std::ignore=
+            os_file_punch_hole(dh, 0, log_sys.START_OFFSET +
+                               (((ctx.checkpoint - lsn) + 4095) & ~4095ULL));
+        int fail= write_checkpoint(dh, ctx.checkpoint_end_lsn - lsn +
+                                   log_sys.START_OFFSET);
+        CloseHandle(dh);
+        if (fail)
+          goto fail;
+      }
     }
     else if (!CreateHardLink(destname, path, nullptr))
     {
