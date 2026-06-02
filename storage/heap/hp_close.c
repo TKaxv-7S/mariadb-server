@@ -45,6 +45,7 @@ int hp_close(register HP_INFO *info)
   }
   my_free(info->pending_blob_chains);
   my_free(info->blob_buff);
+  my_free(info->key_blob_buff);
   my_free(info);
   DBUG_RETURN(error);
 }

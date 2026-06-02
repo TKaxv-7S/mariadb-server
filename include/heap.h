@@ -169,6 +169,7 @@ typedef struct st_heap_share
   LIST open_list;
   my_bool delete_on_close;
   my_bool internal;                     /* Internal temporary table */
+  my_bool write_can_replace;            /* Set by HA_EXTRA_WRITE_CAN_REPLACE */
 } HP_SHARE;
 
 struct st_hp_hash_info;
@@ -188,6 +189,7 @@ typedef struct st_heap_info
   uchar *lastkey;			/* Last used key with rkey */
   uchar *recbuf;                         /* Record buffer for rb-tree keys */
   uchar *blob_buff;                      /* Reassembly buffer for blob reads */
+  uchar *key_blob_buff;                  /* Separate buffer for key comparison */
   uchar **pending_blob_chains;  /* Chain pointers saved by deferred delete */
   TREE_ELEMENT *parents[MAX_TREE_HEIGHT+1];
   TREE_ELEMENT **last_pos;
@@ -195,6 +197,7 @@ typedef struct st_heap_info
   uint file_version;                    /* Version at scan */
   uint lastkey_len;
   uint32 blob_buff_len;        /* Current allocated size of blob_buff */
+  uint32 key_blob_buff_len;    /* Current allocated size of key_blob_buff */
   my_bool implicit_emptied;
   my_bool has_zerocopy_blobs;  /* Last hp_read_blobs produced zero-copy ptrs */
   my_bool has_pending_blob_free; /* pending_blob_chains awaits freeing */

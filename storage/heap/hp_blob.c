@@ -742,6 +742,7 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
   uint visible= share->visible;
   uint recbuffer= share->block.recbuffer;
   uint32 total_copy_size= 0;
+  my_bool force_copy= share->write_can_replace;
   uchar *buff_ptr;
   DBUG_ENTER("hp_read_blobs");
 
@@ -753,9 +754,10 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
   desc_end= share->blob_descs + share->blob_count;
 
   /*
-    Pass 1: sum data_len for blobs that need reassembly (not zero-copy).
-    Cases A and B (HP_ROW_CONT_ZEROCOPY set, or single-record run) use
-    zero-copy pointers into HP_BLOCK, no blob_buff needed.
+    Pass 1: sum data_len for blobs that need copying into blob_buff.
+    Cases A and B normally use zero-copy pointers into HP_BLOCK.
+    When write_can_replace is set (REPLACE statement), all blobs are
+    copied to avoid dangling pointers after the deferred chain free.
   */
   for (desc= share->blob_descs; desc < desc_end; desc++)
   {
@@ -768,8 +770,7 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
 
     memcpy(&chain, record + desc->offset + desc->packlength, sizeof(chain));
 
-    /* Case A and Case B are zero-copy - need no reassembly buffer space */
-    if (!hp_is_multi_run(chain, visible))
+    if (!force_copy && !hp_is_multi_run(chain, visible))
     {
       info->has_zerocopy_blobs= TRUE;
       continue;
@@ -777,7 +778,7 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
     total_copy_size+= data_len;
   }
 
-  /* Grow reassembly buffer for Case C blobs */
+  /* Grow reassembly buffer */
   if (total_copy_size > 0)
   {
     if (total_copy_size > info->blob_buff_len)
@@ -808,18 +809,29 @@ int hp_read_blobs(HP_INFO *info, uchar *record, const uchar *pos)
 
     if (hp_is_single_rec(chain, visible))
     {
-      /* Case A: single-record single-run, no header - zero-copy */
-      const uchar *blob_data= chain;
-      memcpy(record + desc->offset + desc->packlength, &blob_data,
-             sizeof(blob_data));
+      /* Case A: data at offset 0 -- record already has the right pointer */
+      if (!force_copy)
+        continue;
+      memcpy(buff_ptr, chain, data_len);
+      memcpy(record + desc->offset + desc->packlength, &buff_ptr,
+             sizeof(buff_ptr));
+      buff_ptr+= data_len;
       continue;
     }
     if (hp_is_zerocopy(chain, visible))
     {
-      /* Case B: data in rec 1..N-1, contiguous - zero-copy */
-      const uchar *blob_data= chain + recbuffer;
-      memcpy(record + desc->offset + desc->packlength, &blob_data,
-             sizeof(blob_data));
+      /* Case B: data in rec 1..N-1, contiguous -- adjust pointer past header */
+      if (!force_copy)
+      {
+        const uchar *blob_data= chain + recbuffer;
+        memcpy(record + desc->offset + desc->packlength, &blob_data,
+               sizeof(blob_data));
+        continue;
+      }
+      memcpy(buff_ptr, chain + recbuffer, data_len);
+      memcpy(record + desc->offset + desc->packlength, &buff_ptr,
+             sizeof(buff_ptr));
+      buff_ptr+= data_len;
       continue;
     }
     {
@@ -869,21 +881,26 @@ const uchar *hp_materialize_one_blob(HP_INFO *info,
   if (hp_is_zerocopy(chain, visible))
     return chain + recbuffer;             /* Case B: data in rec 1..N-1 */
 
-  /* Case C: multiple runs, reassemble into blob_buff */
-  if (data_len > info->blob_buff_len)
+  /*
+    Case C: multiple runs, reassemble into key_blob_buff.
+    Uses a separate buffer from blob_buff to avoid overwriting
+    blob data that hp_read_blobs() placed there and that record
+    pointers still reference.
+  */
+  if (data_len > info->key_blob_buff_len)
   {
     uchar *new_buff= (uchar*) my_realloc(hp_key_memory_HP_BLOB,
-                                          info->blob_buff,
+                                          info->key_blob_buff,
                                           data_len,
                                           MYF(MY_ALLOW_ZERO_PTR));
     if (!new_buff)
       return NULL;
-    info->blob_buff= new_buff;
-    info->blob_buff_len= data_len;
+    info->key_blob_buff= new_buff;
+    info->key_blob_buff_len= data_len;
   }
 
-  hp_reassemble_chain(chain, data_len, info->blob_buff, visible, recbuffer);
-  return info->blob_buff;
+  hp_reassemble_chain(chain, data_len, info->key_blob_buff, visible, recbuffer);
+  return info->key_blob_buff;
 }
 
 

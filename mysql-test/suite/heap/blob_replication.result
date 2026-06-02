@@ -101,4 +101,55 @@ a
 restored
 connection master;
 DROP TABLE t5;
+#
+# Test 6: REPLACE with blob -- self-referencing and cross-table
+#
+# REPLACE deletes the conflicting row (deferred blob free) then
+# inserts the new row.  The insert must materialize the blob data
+# before flushing the deferred free, and the materialized buffer
+# must stay valid for binlog_log_row() after heap_write() returns.
+#
+connection master;
+CREATE TABLE t6 (
+pk INT PRIMARY KEY,
+b TEXT,
+c VARCHAR(8),
+UNIQUE(c)
+) ENGINE=HEAP;
+INSERT INTO t6 VALUES (1, REPEAT('x', 561), 'foo');
+REPLACE INTO t6 SELECT * FROM t6;
+connection slave;
+# Verify slave has correct blob data after self-REPLACE
+SELECT pk, LENGTH(b), b = REPEAT('x', 561) AS blob_ok, c FROM t6;
+pk	LENGTH(b)	blob_ok	c
+1	561	1	foo
+connection master;
+SELECT pk, LENGTH(b), b = REPEAT('x', 561) AS blob_ok, c FROM t6;
+pk	LENGTH(b)	blob_ok	c
+1	561	1	foo
+# REPLACE with new value via VALUES
+REPLACE INTO t6 VALUES (1, REPEAT('y', 800), 'foo');
+connection slave;
+SELECT pk, LENGTH(b), b = REPEAT('y', 800) AS blob_ok, c FROM t6;
+pk	LENGTH(b)	blob_ok	c
+1	800	1	foo
+connection master;
+# REPLACE with multiple blob columns
+CREATE TABLE t7 (
+pk INT PRIMARY KEY,
+b1 TEXT,
+b2 MEDIUMTEXT,
+c VARCHAR(8),
+UNIQUE(c)
+) ENGINE=HEAP;
+INSERT INTO t7 VALUES (1, REPEAT('a', 400), REPEAT('b', 800), 'bar');
+REPLACE INTO t7 SELECT * FROM t7;
+connection slave;
+SELECT pk, LENGTH(b1), b1 = REPEAT('a', 400) AS b1_ok,
+LENGTH(b2), b2 = REPEAT('b', 800) AS b2_ok, c FROM t7;
+pk	LENGTH(b1)	b1_ok	LENGTH(b2)	b2_ok	c
+1	400	1	800	1	bar
+connection master;
+DROP TABLE t6, t7;
+connection slave;
 include/rpl_end.inc

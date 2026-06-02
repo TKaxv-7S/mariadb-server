@@ -142,4 +142,60 @@ SELECT * FROM t5;
 --connection master
 DROP TABLE t5;
 
+--echo #
+--echo # Test 6: REPLACE with blob -- self-referencing and cross-table
+--echo #
+--echo # REPLACE deletes the conflicting row (deferred blob free) then
+--echo # inserts the new row.  The insert must materialize the blob data
+--echo # before flushing the deferred free, and the materialized buffer
+--echo # must stay valid for binlog_log_row() after heap_write() returns.
+--echo #
+
+--connection master
+
+CREATE TABLE t6 (
+  pk INT PRIMARY KEY,
+  b TEXT,
+  c VARCHAR(8),
+  UNIQUE(c)
+) ENGINE=HEAP;
+
+INSERT INTO t6 VALUES (1, REPEAT('x', 561), 'foo');
+REPLACE INTO t6 SELECT * FROM t6;
+
+--sync_slave_with_master
+--echo # Verify slave has correct blob data after self-REPLACE
+SELECT pk, LENGTH(b), b = REPEAT('x', 561) AS blob_ok, c FROM t6;
+
+--connection master
+SELECT pk, LENGTH(b), b = REPEAT('x', 561) AS blob_ok, c FROM t6;
+
+--echo # REPLACE with new value via VALUES
+REPLACE INTO t6 VALUES (1, REPEAT('y', 800), 'foo');
+
+--sync_slave_with_master
+SELECT pk, LENGTH(b), b = REPEAT('y', 800) AS blob_ok, c FROM t6;
+
+--connection master
+
+--echo # REPLACE with multiple blob columns
+CREATE TABLE t7 (
+  pk INT PRIMARY KEY,
+  b1 TEXT,
+  b2 MEDIUMTEXT,
+  c VARCHAR(8),
+  UNIQUE(c)
+) ENGINE=HEAP;
+
+INSERT INTO t7 VALUES (1, REPEAT('a', 400), REPEAT('b', 800), 'bar');
+REPLACE INTO t7 SELECT * FROM t7;
+
+--sync_slave_with_master
+SELECT pk, LENGTH(b1), b1 = REPEAT('a', 400) AS b1_ok,
+       LENGTH(b2), b2 = REPEAT('b', 800) AS b2_ok, c FROM t7;
+
+--connection master
+DROP TABLE t6, t7;
+--sync_slave_with_master
+
 --source include/rpl_end.inc
