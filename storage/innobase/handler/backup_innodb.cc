@@ -639,6 +639,8 @@ private:
 
       if (lsn < ctx.checkpoint)
       {
+        if (!SetFileAttributes(destname, FILE_ATTRIBUTE_NORMAL))
+          goto fail;
         HANDLE dh= CreateFile(destname, GENERIC_WRITE,
                               FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -647,7 +649,7 @@ private:
         if (os_file_set_sparse_win32(dh))
           std::ignore=
             os_file_punch_hole(dh, 0, log_sys.START_OFFSET +
-                               (((ctx.checkpoint - lsn) + 4095) & ~4095ULL));
+                               ((ctx.checkpoint - lsn) & ~4095ULL));
         int fail= write_checkpoint(dh, ctx.checkpoint_end_lsn - lsn +
                                    log_sys.START_OFFSET);
         CloseHandle(dh);
