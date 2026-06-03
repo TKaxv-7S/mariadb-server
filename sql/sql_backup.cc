@@ -22,7 +22,6 @@
 #include "sql_parse.h"
 #ifdef _WIN32
 # include "aligned.h"
-# include "tpool.h"
 #endif
 
 #if defined __linux__ || defined __FreeBSD__
@@ -113,7 +112,8 @@ static ssize_t mmap_copy(int in_fd, int out_fd, uint64_t o, uint64_t end)
 @return error code
 @retval 0  on success
 @retval 1  if a memory mapping failed */
-static ssize_t pread_pwrite(IF_WIN(HANDLE,int) in_fd, IF_WIN(HANDLE,int) out_fd,
+static ssize_t pread_pwrite(IF_WIN(const native_file_handle&,int) in_fd,
+                            IF_WIN(const native_file_handle&,int) out_fd,
                             uint64_t o, uint64_t end)
   noexcept
 {
@@ -174,7 +174,8 @@ extern "C" int copy_entire_file(int src, int dst)
 @param end   last offset to copy (exclusive)
 @return error code (negative)
 @retval 0   on success */
-extern "C" int copy_file(IF_WIN(HANDLE,int) src, IF_WIN(HANDLE,int) dst,
+extern "C" int copy_file(IF_WIN(const native_file_handle&,int) src,
+                         IF_WIN(const native_file_handle&,int) dst,
                          uint64_t start, uint64_t end)
 {
   assert(end >= start);
