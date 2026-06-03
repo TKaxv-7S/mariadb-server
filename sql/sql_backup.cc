@@ -22,6 +22,7 @@
 #include "sql_parse.h"
 #ifdef _WIN32
 # include "aligned.h"
+# include "tpool.h"
 #endif
 
 #if defined __linux__ || defined __FreeBSD__

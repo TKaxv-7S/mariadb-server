@@ -15,7 +15,7 @@
 
 #ifdef _WIN32
 /* Use CopyFileEx() to copy entire files */
-# include "tpool.h"
+struct native_file_handle;
 #elif defined __APPLE__
 /* You should invoke fclonefileat(2) manually before attempting
 copy_entire_file() or copy_file() */
