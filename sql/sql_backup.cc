@@ -20,8 +20,8 @@
 #include "sql_backup.h"
 #include "sql_backup_interface.h"
 #include "sql_parse.h"
-#include "aligned.h"
 #ifdef _WIN32
+# include "aligned.h"
 # include "tpool.h"
 #endif
 
@@ -128,7 +128,8 @@ static ssize_t pread_pwrite(IF_WIN(HANDLE,int) in_fd, IF_WIN(HANDLE,int) out_fd,
   ssize_t ret;
   for (uint64_t count{end - o};; o+= ret)
   {
-    ret= pread(in_fd, b, ssize_t(std::min(count, READ_WRITE_SIZE)), o);
+    ret= pread(in_fd, b,
+               ssize_t(std::min<uint64_t>(count, READ_WRITE_SIZE)), o);
     if (ret > 0)
       ret= pwrite(out_fd, b, ret, o);
     if (ret < 0)
