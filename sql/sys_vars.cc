@@ -4140,6 +4140,7 @@ static const char *old_mode_names[]=
   "OLD_FLUSH_STATUS",                   // 8: deprecated since 11.5
   "SESSION_USER_IS_USER",               // 9: deprecated since 11.7
   "2_DIGIT_YEAR",                       // 10: deprecated since 13.0
+  "FULLTEXT_USING_ENGINE",              // 11: on by default
   0
 };
 
