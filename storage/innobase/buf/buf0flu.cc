@@ -1398,7 +1398,9 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
       flush:
         if (UNIV_UNLIKELY(to_withdraw != 0))
           to_withdraw= buf_flush_LRU_to_withdraw(to_withdraw, *bpage);
-        if (bpage->id().page_no() < backup_page_end)
+        const uint32_t page{bpage->id().page_no()};
+        if (page < backup_page_end &&
+            page >= backup_page_end - space->BACKUP_BATCH_SIZE)
           bpage->lock.u_unlock(true);
         else if (bpage->flush(space))
         {
@@ -1565,7 +1567,9 @@ static ulint buf_do_flush_list_batch(ulint max_n, lsn_t lsn) noexcept
               space->is_rotational())
             count+= buf_flush_try_neighbors(space, page_id, bpage,
                                             neighbors == 1, count, max_n);
-          else if (bpage->id().page_no() < backup_page_end)
+          else if (page_id.page_no() < backup_page_end &&
+                   page_id.page_no() >=
+                   backup_page_end - space->BACKUP_BATCH_SIZE)
           {
             bpage->lock.u_unlock(true);
             continue;
@@ -1724,17 +1728,23 @@ bool buf_flush_list_space(fil_space_t *space, ulint *n_flushed) noexcept
         }
 
         mysql_mutex_unlock(&buf_pool.flush_list_mutex);
+        uint32_t page, backup_page_end;
 
-        if (UNIV_UNLIKELY(space->writing_start()) &&
-            bpage->id().page_no() < space->backup_page_end())
+        if (UNIV_UNLIKELY(space->writing_start()))
         {
-          bpage->lock.u_unlock(true);
-          space->writing_stop();
-        skip:
-          mysql_mutex_lock(&buf_pool.mutex);
-          mysql_mutex_lock(&buf_pool.flush_list_mutex);
-          may_have_skipped= true;
-          goto done;
+          page= bpage->id().page_no();
+          backup_page_end= space->backup_page_end();
+          if (page < backup_page_end &&
+              page >= backup_page_end - space->BACKUP_BATCH_SIZE)
+          {
+            bpage->lock.u_unlock(true);
+            space->writing_stop();
+          skip:
+            mysql_mutex_lock(&buf_pool.mutex);
+            mysql_mutex_lock(&buf_pool.flush_list_mutex);
+            may_have_skipped= true;
+            goto done;
+          }
         }
 
         const bool written{bpage->flush(space)};

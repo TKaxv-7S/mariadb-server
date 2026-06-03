@@ -1088,6 +1088,9 @@ public:
   uint32_t backup_page_end() const noexcept
   { return backup_end.load(std::memory_order_relaxed); }
 
+  /** The size of a backup copy_file() batch in pages */
+  static constexpr uint32_t BACKUP_BATCH_SIZE{64};
+
   /** Update the data structures on write completion */
   void complete_write() noexcept;
 

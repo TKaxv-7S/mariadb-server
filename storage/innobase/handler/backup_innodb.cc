@@ -179,9 +179,10 @@ public:
     else if (fil_space_t *space= fil_space_t::get(id))
     {
       int res= -1;
+      uint32_t start{0};
       for (fil_node_t *node= UT_LIST_GET_FIRST(space->chain); node;
-           node= UT_LIST_GET_NEXT(chain, node))
-        if ((res= backup(node)))
+           start+= node->size, node= UT_LIST_GET_NEXT(chain, node))
+        if ((res= backup(node, start)))
           break;
       space->release();
       if (res)
@@ -452,10 +453,11 @@ public:
   }
 
 private:
-  /** Safely start backing up a tablespace file */
-  static void backup_start(fil_space_t *space) noexcept
+  /** Safely start backing up a tablespace file
+  @param end  last page to copy */
+  static void backup_start(fil_space_t *space, uint32_t end) noexcept
   {
-    if (space->backup_start(space->size))
+    if (space->backup_start(end))
       os_aio_wait_until_no_pending_writes(false);
   }
   /* Stop backing up a tablespace */
@@ -473,8 +475,9 @@ private:
   /**
      Back up a persistent InnoDB data file.
      @param node  InnoDB data file
+     @param start first page number
   */
-  int backup(fil_node_t *node) noexcept
+  int backup(fil_node_t *node, uint32_t start) noexcept
   {
     for (bool tried_mkdir{false};;)
     {
@@ -546,11 +549,20 @@ private:
         goto fail;
       }
 #endif
-      /* TODO: page range locking; avoid copying freed page ranges */
-      backup_start(node->space);
-      int err= copy_file(node->handle, f, 0,
-                         off_t{node->size} * node->space->physical_size());
-      backup_stop(node->space);
+      int err{0};
+      for (const uint32_t file_size{node->size},
+             page_size{node->space->physical_size()};;)
+      {
+        const uint32_t end{start + fil_space_t::BACKUP_BATCH_SIZE};
+        backup_start(node->space, end);
+        /* TODO: avoid copying freed page ranges */
+        err= copy_file(node->handle, f, start, std::min(end, file_size) *
+                       uint64_t{page_size});
+        backup_stop(node->space);
+        if (err || (start= end) >= file_size)
+          break;
+      }
+
       if (IF_WIN(!CloseHandle(f), close(f)) || err)
         goto fail;
       break;
