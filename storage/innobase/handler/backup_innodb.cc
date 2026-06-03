@@ -510,7 +510,9 @@ private:
       int f;
       ut_ad(target.directory);
 # ifdef __APPLE__
-      backup_start(node->space);
+      backup_start(node->space,
+                   (node->space->size + fil_space_t::BACKUP_BATCH_SIZE - 1) &
+                   ~fil_space_t::BACKUP_BATCH_SIZE);
       f= fclonefileat(node->handle, target.fd, node->name, 0);
       backup_stop(node->space);
       if (!f)
