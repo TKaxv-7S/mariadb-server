@@ -481,13 +481,11 @@ private:
 #ifdef _WIN32
       std::string path{target.path};
       path.push_back('/');
-      backup_start(node->space);
       path.append(node->name);
-      /* FIXME: copy page ranges with copy_file() like everywhere else */
-      bool ok= CopyFileEx(node->name, path.c_str(), nullptr, nullptr, nullptr,
-                          COPY_FILE_NO_BUFFERING);
-      backup_stop(node->space);
-      if (!ok)
+      HANDLE f= CreateFile(path.c_str(), GENERIC_WRITE, 0,
+                           my_win_file_secattr(), CREATE_NEW,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+      if (f == INVALID_HANDLE_VALUE)
       {
         unsigned long err= GetLastError();
         if (err == ERROR_PATH_NOT_FOUND && !tried_mkdir &&
@@ -505,7 +503,6 @@ private:
         my_osmaperr(err);
         goto fail;
       }
-      break;
 #else
       int f;
       ut_ad(target.directory);
@@ -548,16 +545,15 @@ private:
         }
         goto fail;
       }
-
+#endif
       /* TODO: page range locking; avoid copying freed page ranges */
       backup_start(node->space);
       int err= copy_file(node->handle, f, 0,
                          off_t{node->size} * node->space->physical_size());
       backup_stop(node->space);
-      if (close(f) || err)
+      if (IF_WIN(!CloseHandle(f), close(f)) || err)
         goto fail;
       break;
-#endif
     }
     return 0;
   fail:
@@ -685,6 +681,7 @@ private:
 
       if (lsn >= ctx.checkpoint)
       {
+        sql_print_information("CopyFileEx %s, %s", path, destname);
         if (!CopyFileEx(path, destname, nullptr, nullptr, nullptr,
                         COPY_FILE_NO_BUFFERING))
           goto fail;
