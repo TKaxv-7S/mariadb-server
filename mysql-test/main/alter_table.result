@@ -326,42 +326,42 @@ t1	MyISAM	10	Fixed	1	37	X	X	X	X	X	X	X	X	latin1_swedish_ci	NULL			X	N
 drop table t1;
 set names koi8r;
 create table t1 (a char(10) character set koi8r);
-insert into t1 values ('тест');
+insert into t1 values ('О©╫О©╫О©╫О©╫');
 select a,hex(a) from t1;
 a	hex(a)
-тест	D4C5D3D4
+О©╫О©╫О©╫О©╫	D4C5D3D4
 alter table t1 change a a char(10) character set cp1251;
 select a,hex(a) from t1;
 a	hex(a)
-тест	F2E5F1F2
+О©╫О©╫О©╫О©╫	F2E5F1F2
 alter table t1 change a a binary(4);
 select a,hex(a) from t1;
 a	hex(a)
-РЕЯР	F2E5F1F2
+О©╫О©╫О©╫О©╫	F2E5F1F2
 alter table t1 change a a char(10) character set cp1251;
 select a,hex(a) from t1;
 a	hex(a)
-тест	F2E5F1F2
+О©╫О©╫О©╫О©╫	F2E5F1F2
 alter table t1 change a a char(10) character set koi8r;
 select a,hex(a) from t1;
 a	hex(a)
-тест	D4C5D3D4
+О©╫О©╫О©╫О©╫	D4C5D3D4
 alter table t1 change a a varchar(10) character set cp1251;
 select a,hex(a) from t1;
 a	hex(a)
-тест	F2E5F1F2
+О©╫О©╫О©╫О©╫	F2E5F1F2
 alter table t1 change a a char(10) character set koi8r;
 select a,hex(a) from t1;
 a	hex(a)
-тест	D4C5D3D4
+О©╫О©╫О©╫О©╫	D4C5D3D4
 alter table t1 change a a text character set cp1251;
 select a,hex(a) from t1;
 a	hex(a)
-тест	F2E5F1F2
+О©╫О©╫О©╫О©╫	F2E5F1F2
 alter table t1 change a a char(10) character set koi8r;
 select a,hex(a) from t1;
 a	hex(a)
-тест	D4C5D3D4
+О©╫О©╫О©╫О©╫	D4C5D3D4
 delete from t1;
 show create table t1;
 Table	Create Table
@@ -413,12 +413,12 @@ t1	CREATE TABLE `t1` (
   UNIQUE KEY `b` (`b`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
 ALTER TABLE t1 DROP PRIMARY KEY;
-ERROR 42000: Can't DROP INDEX `PRIMARY`; check that it exists and does not participate in an index
+ERROR 42000: Can't DROP INDEX `PRIMARY`; check that it exists
 DROP TABLE t1;
 create table t1 (a int, b int, key(a));
 insert into t1 values (1,1), (2,2);
 alter table t1 drop key no_such_key;
-ERROR 42000: Can't DROP INDEX `no_such_key`; check that it exists and does not participate in an index
+ERROR 42000: Can't DROP INDEX `no_such_key`; check that it exists
 alter table t1 drop key a;
 drop table t1;
 CREATE TABLE T12207(a int) ENGINE=MYISAM;
@@ -426,7 +426,7 @@ ALTER TABLE T12207 DISCARD TABLESPACE;
 ERROR HY000: Storage engine MyISAM of the table `test`.`T12207` doesn't have this option
 DROP TABLE T12207;
 create table t1 (a text) character set koi8r;
-insert into t1 values (_koi8r'тест');
+insert into t1 values (_koi8r'О©╫О©╫О©╫О©╫');
 select hex(a) from t1;
 hex(a)
 D4C5D3D4
@@ -1478,7 +1478,7 @@ Note	1060	Duplicate column name 'lol'
 ALTER TABLE t1 DROP COLUMN IF EXISTS lol;
 ALTER TABLE t1 DROP COLUMN IF EXISTS lol;
 Warnings:
-Note	1091	Can't DROP COLUMN `lol`; check that it exists and does not participate in an index
+Note	1091	Can't DROP COLUMN `lol`; check that it exists
 ALTER TABLE t1 ADD KEY IF NOT EXISTS x_param(x_param);
 ALTER TABLE t1 ADD KEY IF NOT EXISTS x_param(x_param);
 Warnings:
@@ -1489,7 +1489,7 @@ Note	1054	Unknown column 'lol' in 't1'
 DROP INDEX IF EXISTS x_param ON t1;
 DROP INDEX IF EXISTS x_param ON t1;
 Warnings:
-Note	1091	Can't DROP INDEX `x_param`; check that it exists and does not participate in an index
+Note	1091	Can't DROP INDEX `x_param`; check that it exists
 CREATE INDEX IF NOT EXISTS x_param1 ON t1(x_param);
 CREATE INDEX IF NOT EXISTS x_param1 ON t1(x_param);
 Warnings:
@@ -1520,7 +1520,7 @@ Note	1060	Duplicate column name 'lol'
 ALTER TABLE t1 DROP COLUMN IF EXISTS lol;
 ALTER TABLE t1 DROP COLUMN IF EXISTS lol;
 Warnings:
-Note	1091	Can't DROP COLUMN `lol`; check that it exists and does not participate in an index
+Note	1091	Can't DROP COLUMN `lol`; check that it exists
 ALTER TABLE t1 ADD KEY IF NOT EXISTS x_param(x_param);
 ALTER TABLE t1 ADD KEY IF NOT EXISTS x_param(x_param);
 Warnings:
@@ -1531,7 +1531,7 @@ Note	1054	Unknown column 'lol' in 't1'
 DROP INDEX IF EXISTS x_param ON t1;
 DROP INDEX IF EXISTS x_param ON t1;
 Warnings:
-Note	1091	Can't DROP INDEX `x_param`; check that it exists and does not participate in an index
+Note	1091	Can't DROP INDEX `x_param`; check that it exists
 CREATE INDEX IF NOT EXISTS x_param1 ON t1(x_param);
 CREATE INDEX IF NOT EXISTS x_param1 ON t1(x_param);
 Warnings:
@@ -1551,7 +1551,7 @@ Note	1061	Duplicate key name 'fk'
 ALTER TABLE t2 DROP FOREIGN KEY IF EXISTS fk;
 ALTER TABLE t2 DROP FOREIGN KEY IF EXISTS fk;
 Warnings:
-Note	1091	Can't DROP FOREIGN KEY `fk`; check that it exists and does not participate in an index
+Note	1091	Can't DROP FOREIGN KEY `fk`; check that it exists
 SHOW CREATE TABLE t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
@@ -1565,7 +1565,7 @@ Note	1061	Duplicate key name 't2_ibfk_1'
 ALTER TABLE t2 DROP FOREIGN KEY IF EXISTS t2_ibfk_1;
 ALTER TABLE t2 DROP FOREIGN KEY IF EXISTS t2_ibfk_1;
 Warnings:
-Note	1091	Can't DROP FOREIGN KEY `t2_ibfk_1`; check that it exists and does not participate in an index
+Note	1091	Can't DROP FOREIGN KEY `t2_ibfk_1`; check that it exists
 SHOW CREATE TABLE t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
@@ -1590,10 +1590,10 @@ t2	CREATE TABLE `t2` (
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
 ALTER TABLE t2 DROP KEY k_id, DROP KEY IF EXISTS k_id;
 Warnings:
-Note	1091	Can't DROP INDEX `k_id`; check that it exists and does not participate in an index
+Note	1091	Can't DROP INDEX `k_id`; check that it exists
 ALTER TABLE t2 DROP COLUMN a, DROP COLUMN IF EXISTS a;
 Warnings:
-Note	1091	Can't DROP COLUMN `a`; check that it exists and does not participate in an index
+Note	1091	Can't DROP COLUMN `a`; check that it exists
 SHOW CREATE TABLE t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
@@ -1999,7 +1999,7 @@ ALTER TABLE ti1 DROP FOREIGN KEY fi1;
 affected rows: 0
 info: Records: 0  Duplicates: 0  Warnings: 0
 ALTER TABLE tm1 DROP FOREIGN KEY fm1;
-ERROR 42000: Can't DROP FOREIGN KEY `fm1`; check that it exists and does not participate in an index
+ERROR 42000: Can't DROP FOREIGN KEY `fm1`; check that it exists
 ALTER TABLE ti1 RENAME TO ti3;
 affected rows: 0
 ALTER TABLE tm1 RENAME TO tm3;
@@ -2237,7 +2237,7 @@ DROP TABLE t1;
 CREATE TABLE t1 (a INT, b INT) ENGINE=InnoDB;
 ALTER TABLE t1 DROP FOREIGN KEY IF EXISTS fk, DROP COLUMN b;
 Warnings:
-Note	1091	Can't DROP FOREIGN KEY `fk`; check that it exists and does not participate in an index
+Note	1091	Can't DROP FOREIGN KEY `fk`; check that it exists
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
@@ -2247,7 +2247,7 @@ DROP TABLE t1;
 CREATE TABLE t1 (a INT, b INT) ENGINE=InnoDB;
 ALTER TABLE t1 DROP INDEX IF EXISTS fk, DROP COLUMN b;
 Warnings:
-Note	1091	Can't DROP INDEX `fk`; check that it exists and does not participate in an index
+Note	1091	Can't DROP INDEX `fk`; check that it exists
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
@@ -2257,7 +2257,7 @@ DROP TABLE t1;
 CREATE TABLE t1 (a INT, b INT, c INT, KEY(c)) ENGINE=InnoDB;
 ALTER TABLE t1 DROP FOREIGN KEY IF EXISTS fk, DROP COLUMN c;
 Warnings:
-Note	1091	Can't DROP FOREIGN KEY `fk`; check that it exists and does not participate in an index
+Note	1091	Can't DROP FOREIGN KEY `fk`; check that it exists
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
@@ -2268,7 +2268,7 @@ DROP TABLE t1;
 CREATE TABLE t1 (a INT, b INT, c INT, KEY c1(c)) ENGINE=InnoDB;
 ALTER TABLE t1 DROP FOREIGN KEY IF EXISTS fk, DROP INDEX c1;
 Warnings:
-Note	1091	Can't DROP FOREIGN KEY `fk`; check that it exists and does not participate in an index
+Note	1091	Can't DROP FOREIGN KEY `fk`; check that it exists
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
@@ -2280,8 +2280,8 @@ DROP TABLE t1;
 CREATE TABLE t1 (a INT, b INT) ENGINE=InnoDB;
 ALTER TABLE t1 DROP INDEX IF EXISTS fk, DROP COLUMN IF EXISTS c;
 Warnings:
-Note	1091	Can't DROP INDEX `fk`; check that it exists and does not participate in an index
-Note	1091	Can't DROP COLUMN `c`; check that it exists and does not participate in an index
+Note	1091	Can't DROP INDEX `fk`; check that it exists
+Note	1091	Can't DROP COLUMN `c`; check that it exists
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
@@ -2402,7 +2402,7 @@ t1	CREATE TABLE `t1` (
 drop table t1;
 create table t1 (a int, b int, c int, unique(a,b));
 alter table t1 drop column a;
-ERROR 42000: Key column 'a' doesn't exist in table
+ERROR 42000: Can't DROP a `it is part of index`; check that it exists
 alter table t1 drop column a, drop index a;
 show create table t1;
 Table	Create Table
@@ -3128,7 +3128,7 @@ DROP TABLE t1;
 create table t2(id int primary key) engine=innodb;
 create table t1(id int primary key, t2_id int, constraint t1_fk_t2_id foreign key(t2_id) references t2(id)) engine=innodb;
 alter table t1 drop constraint t1_fk_t2_id, drop t2_id, drop t2_id;
-ERROR 42000: Can't DROP COLUMN `t2_id`; check that it exists and does not participate in an index
+ERROR 42000: Can't DROP COLUMN `t2_id`; check that it exists
 drop table t1, t2;
 #
 # MDEV-34951: InnoDB index corruption when renaming key name with same letter to upper case.
