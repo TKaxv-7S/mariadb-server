@@ -904,11 +904,7 @@ bool vers_create_partitions(THD *thd, TABLE_LIST* tl, uint num_parts)
   Table_specification_st create_info;
   Alter_info alter_info;
   partition_info *save_part_info= thd->work_part_info;
-  Query_tables_list save_query_tables;
-  Reprepare_observer *save_reprepare_observer= thd->m_reprepare_observer;
   bool save_no_write_to_binlog= thd->lex->no_write_to_binlog;
-  thd->m_reprepare_observer= NULL;
-  thd->lex->reset_n_backup_query_tables_list(&save_query_tables);
   thd->lex->no_write_to_binlog= true;
   TABLE *table= tl->table;
 
@@ -1008,8 +1004,6 @@ bool vers_create_partitions(THD *thd, TABLE_LIST* tl, uint num_parts)
 
 exit:
   thd->work_part_info= save_part_info;
-  thd->m_reprepare_observer= save_reprepare_observer;
-  thd->lex->restore_backup_query_tables_list(&save_query_tables);
   thd->lex->no_write_to_binlog= save_no_write_to_binlog;
   return result;
 }
