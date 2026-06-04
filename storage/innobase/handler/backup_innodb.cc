@@ -558,8 +558,8 @@ private:
         const uint32_t end{start + fil_space_t::BACKUP_BATCH_SIZE};
         backup_start(node->space, end);
         /* TODO: avoid copying freed page ranges */
-        err= copy_file(node->handle, f, start, std::min(end, file_size) *
-                       uint64_t{page_size});
+        err= copy_file(node->handle, f, start * uint64_t{page_size},
+                       std::min(end, file_size) * uint64_t{page_size});
         backup_stop(node->space);
         if (err || (start= end) >= file_size)
           break;
