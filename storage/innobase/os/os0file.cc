@@ -49,7 +49,6 @@ Created 10/21/1995 Heikki Tuuri
 #include "fil0fil.h"
 #include "fsp0fsp.h"
 #include "buf0dblwr.h"
-#include "log0recv.h"
 
 #include <tpool_structs.h>
 
@@ -1826,7 +1825,6 @@ ulint os_file_get_last_error(bool report_all_errors, bool on_error_silent)
 				" the directory. It may also be"
 				" you have created a subdirectory"
 				" of the same name as a data file.";
-			ut_a(!recv_recovery_is_on());
 			break;
 		case ERROR_SHARING_VIOLATION:
 		case ERROR_LOCK_VIOLATION:
