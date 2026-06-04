@@ -5,10 +5,6 @@
 let collation=utf8mb3_unicode_ci;
 --source include/have_collation.inc
 
---disable_warnings
-drop table if exists t1,t2,t3;
---enable_warnings
-
 CREATE TABLE t1 (a VARCHAR(200), b TEXT, FULLTEXT (a,b));
 INSERT INTO t1 VALUES('MySQL has now support', 'for full-text search'),
           ('Full-text indexes', 'are historically called collections'),
