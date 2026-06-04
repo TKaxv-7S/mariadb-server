@@ -62,7 +62,7 @@ public:
      @return error code
      @retval 0 on success
   */
-  int init(THD *thd, backup_target target) noexcept
+  int init(THD *thd, const backup_target &target) noexcept
   {
     trx_t *trx= check_trx_exists(thd);
     if (trx->id || trx->state != TRX_STATE_NOT_STARTED)
@@ -271,7 +271,12 @@ public:
           if (fail)
             goto skip_log_dup;
           if (!live_hardlink)
+          {
+            fail= write_config(target, ctx);
+            if (fail)
+              goto skip_log_dup;
             ctx.max_first_lsn= 0;
+          }
         }
         else
           goto skip_log_dup;
@@ -306,7 +311,7 @@ public:
      @return error code
      @retval 0 on success
   */
-  int fini(THD *thd, backup_target target) noexcept
+  int fini(THD *thd, const backup_target &target) noexcept
   {
     int fail= 0;
     log_sys.latch.wr_lock();
@@ -328,10 +333,6 @@ public:
       const backup_context &ctx{trx->lock.backup};
       if (ctx.max_first_lsn)
       {
-        const uint64_t size=
-          std::max<lsn_t>(log_sys.FILE_SIZE_MIN, log_sys.START_OFFSET +
-                          (((ctx.last_lsn - ctx.max_first_lsn) + 4095) &
-                           ~4095ULL));
         /* Copy our clone of the last log until the final LSN */
 #ifdef _WIN32
         std::string src{target.path};
@@ -366,15 +367,27 @@ public:
         fail:
           fail= 1;
           my_osmaperr(GetLastError());
-          my_error(ER_ERROR_ON_RENAME, MYF(ME_ERROR_LOG), s_, d_, errno);
           CloseHandle(s);
+          my_error(ER_ERROR_ON_RENAME, MYF(ME_ERROR_LOG), s_, d_, errno);
         }
         else
         {
-          fail= copy_file(s, d, log_sys.START_OFFSET, size) ||
-            (ctx.max_first_lsn == ctx.first_lsn &&
-             write_checkpoint(d, ctx.checkpoint_end_lsn - ctx.first_lsn +
-                              log_sys.START_OFFSET));
+          const uint64_t payload_end= log_sys.START_OFFSET +
+            ctx.last_lsn - ctx.max_first_lsn;
+          /* First, extend the file to a valid size. */
+          {
+            LARGE_INTEGER li;
+            li.QuadPart=
+              std::max<uint64_t>(log_sys.FILE_SIZE_MIN,
+                                 (payload_end + 4095) & ~4095ULL);
+            fail= !SetFilePointerEx(d, li, nullptr, FILE_BEGIN) ||
+              !SetEndOfFile(d);
+          }
+          if (!fail)
+            fail= copy_file(s, d, log_sys.START_OFFSET, payload_end) ||
+              (ctx.max_first_lsn == ctx.first_lsn &&
+               write_checkpoint(d, ctx.checkpoint_end_lsn - ctx.first_lsn +
+                                log_sys.START_OFFSET));
           if (!CloseHandle(d) || fail)
             goto fail;
 
@@ -413,10 +426,16 @@ public:
         }
         else
         {
-          fail= copy_file(s, d, log_sys.START_OFFSET, size) ||
-            (ctx.max_first_lsn == ctx.first_lsn &&
-             write_checkpoint(d, ctx.checkpoint_end_lsn - ctx.first_lsn +
-                              log_sys.START_OFFSET));
+          const uint64_t payload_end= log_sys.START_OFFSET +
+            ctx.last_lsn - ctx.max_first_lsn;
+          /* First, extend the file to a valid size. */
+          fail= ftruncate(d, std::max<off_t>(log_sys.FILE_SIZE_MIN,
+                                             (payload_end + 4095) & ~4095LL));
+          if (!fail)
+            fail= copy_file(s, d, log_sys.START_OFFSET, payload_end) ||
+              (ctx.max_first_lsn == ctx.first_lsn &&
+               write_checkpoint(d, ctx.checkpoint_end_lsn - ctx.first_lsn +
+                                log_sys.START_OFFSET));
           if (close(d) || fail)
             goto fail;
           if (unlinkat(target.fd, "ib_logfile101", 0))
@@ -429,12 +448,7 @@ public:
         }
 #endif
       done:
-        /* TODO: punch hole to the start of the first log file
-        if we had old_size!=0 */
-        sql_print_information("innodb_log_recovery_start=" LSN_PF
-                              " (checkpoint " LSN_PF ")",
-                              trx->lock.backup.checkpoint_end_lsn,
-                              trx->lock.backup.checkpoint);
+        fail= write_config(target, ctx);
       }
       trx->lock.backup= {};
       trx->state= TRX_STATE_NOT_STARTED;
@@ -603,23 +617,24 @@ private:
     return 0;
   }
 
-  /** Copy a log file.
-  @param src    source file
-  @param dst    target file
-  @param start  start offset of record payload in the log
-  @param size   end offset of the log
-  @param ctx    backup context
-  @param c      offset of the FILE_CHECKPOINT mini-transaction
-  @return error code
-  @retval 0 on success */
-  static int copy_log_file_part(IF_WIN(HANDLE,int) src, IF_WIN(HANDLE,int) dst,
-                                uint64_t start, uint64_t size,
-                                const backup_context &ctx, uint64_t c)
-    noexcept
+  /** Write the configuration parameters for restoring the backup
+  @param target  backup target
+  @param ctx     backup context
+  @return error code (non-positive)
+  @retval 0   on success */
+  static int write_config(const backup_target &target,
+                          const backup_context &ctx) noexcept
   {
-    if (int err= copy_file(src, dst, start, size))
-      return err;
-    return write_checkpoint(dst, c);
+    char config[sizeof "[server]\n# checkpoint=" +
+                sizeof "innodb_log_recovery_start=" +
+                sizeof "innodb_log_recovery_target=\n" + 45 * 3];
+    const int size=
+      snprintf(config, sizeof config,
+               "[server]\n# checkpoint=" LSN_PF "\n"
+               "innodb_log_recovery_start=" LSN_PF "\n"
+               "innodb_log_recovery_target=" LSN_PF "\n",
+               ctx.checkpoint, ctx.checkpoint_end_lsn, ctx.last_lsn);
+    return backup_config_append(target, config, size_t(size));
   }
 
   /** Hard-link (copy) or rename (move) an archive log file.
@@ -633,8 +648,7 @@ private:
   @retval 0 on success */
   static int link_or_move(lsn_t lsn, bool *clone,
                           const backup_context &ctx,
-                          IF_WIN(const backup_target&,backup_target) target)
-    noexcept
+                          const backup_target &target) noexcept
   {
     const std::string p{log_sys.get_archive_path(lsn)};
     const char *const path= p.c_str(), *basename= strrchr(path, '/');
@@ -693,8 +707,9 @@ private:
       b.append(basename);
       destname= b.c_str();
 
-      if (lsn >= ctx.checkpoint)
+      if (lsn >= ctx.checkpoint && (lsn < ctx.max_first_lsn || !ctx.last_lsn))
       {
+        /* Copy a middle log file entirely. */
         sql_print_information("CopyFileEx %s, %s", path, destname);
         if (!CopyFileEx(path, destname, nullptr, nullptr, nullptr,
                         COPY_FILE_NO_BUFFERING))
@@ -723,15 +738,41 @@ private:
                       CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (d == INVALID_HANDLE_VALUE)
         {
+        fail_and_close_s:
           CloseHandle(s);
           goto fail;
         }
 
-        int err= copy_log_file_part(s, d, log_sys.START_OFFSET +
-                                    (((ctx.checkpoint - lsn) + 4095) & ~4095ULL),
-                                    ctx.first_size, ctx,
-                                    ctx.checkpoint_end_lsn - lsn +
-                                    log_sys.START_OFFSET);
+        uint64_t payload_start{log_sys.START_OFFSET};
+        uint64_t payload_end{payload_start + ctx.last_lsn - lsn};
+
+        if (lsn < ctx.checkpoint)
+        {
+          /* Copy the necessary part of the first log file. */
+          ut_ad(lsn == ctx.first_lsn);
+          payload_start= ((ctx.checkpoint - lsn) + 4095) & ~4095ULL;
+          if (!ctx.last_lsn || ctx.last_lsn >= ctx.first_lsn + ctx.first_size)
+            payload_end= ctx.first_size;
+        }
+
+        /* First, extend the file to a valid size. */
+        {
+          LARGE_INTEGER li;
+          li.QuadPart=
+            std::max<uint64_t>(log_sys.FILE_SIZE_MIN,
+                               (payload_end + 4095) & ~4095ULL);
+          err= !SetFilePointerEx(d, li, nullptr, FILE_BEGIN) ||
+            !SetEndOfFile(d);
+        }
+
+        if (!err)
+        {
+          err= copy_file(s, d, payload_start, payload_end);
+          if (!err && lsn < ctx.checkpoint)
+            err= write_checkpoint(d, ctx.checkpoint_end_lsn - lsn +
+                                  log_sys.START_OFFSET);
+        }
+
         if (err | !(CloseHandle(s) & CloseHandle(d)))
           goto fail;
       }
@@ -758,7 +799,7 @@ private:
             fallocate(dst, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
                       log_sys.START_OFFSET, garbage);
           close(dst);
-          fchmodat(target.fd, basename, 0444, 0);
+          std::ignore= fchmodat(target.fd, basename, 0444, 0);
         }
 # endif
       if (clone)
@@ -786,14 +827,35 @@ private:
                       O_CREAT | O_EXCL | O_TRUNC | O_WRONLY, 0666);
       if (dst < 0)
         goto close_and_fail;
-      int err= lsn >= ctx.checkpoint
-        ? copy_entire_file(src, dst)
-        : copy_log_file_part(src, dst,
-                             log_sys.START_OFFSET +
-                             (((ctx.checkpoint - lsn) + 4095) & ~4095ULL),
-                             ctx.first_size, ctx,
-                             ctx.checkpoint_end_lsn - lsn +
-                             log_sys.START_OFFSET);
+      int err;
+      if (lsn >= ctx.checkpoint && (lsn < ctx.max_first_lsn || !ctx.last_lsn))
+        /* Copy a middle log file entirely. */
+        err= copy_entire_file(src, dst);
+      else
+      {
+        uint64_t payload_start{log_sys.START_OFFSET};
+        uint64_t payload_end{payload_start + ctx.last_lsn - lsn};
+
+        if (lsn < ctx.checkpoint)
+        {
+          /* Copy the necessary part of the first log file. */
+          ut_ad(lsn == ctx.first_lsn);
+          payload_start= ((ctx.checkpoint - lsn) + 4095) & ~4095ULL;
+          if (!ctx.last_lsn || ctx.last_lsn >= ctx.first_lsn + ctx.first_size)
+            payload_end= ctx.first_size;
+        }
+
+        /* First, extend the file to a valid size. */
+        err= ftruncate(dst, std::max<off_t>(log_sys.FILE_SIZE_MIN,
+                                            (payload_end + 4095) & ~4095LL));
+        if (!err)
+        {
+          err= copy_file(src, dst, payload_start, payload_end);
+          if (!err && lsn < ctx.checkpoint)
+            err= write_checkpoint(dst, ctx.checkpoint_end_lsn - lsn +
+                                  log_sys.START_OFFSET);
+        }
+      }
 
       if (err | close(dst) | close(src))
         goto fail;

@@ -160,7 +160,7 @@ static ssize_t pread_pwrite(IF_WIN(const native_file_handle&,int) in_fd,
 /** Copy a file (whole content).
 @param src  source file descriptor
 @param dst  target to append src to
-@return error code (negative)
+@return error code (non-positive)
 @retval 0   on success */
 extern "C" int copy_entire_file(int src, int dst)
 {
@@ -173,7 +173,7 @@ extern "C" int copy_entire_file(int src, int dst)
 @param dst   target to append src to
 @param start first offset to copy
 @param end   last offset to copy (exclusive)
-@return error code (negative)
+@return error code (non-positive)
 @retval 0   on success */
 extern "C" int copy_file(IF_WIN(const native_file_handle&,int) src,
                          IF_WIN(const native_file_handle&,int) dst,
@@ -200,6 +200,64 @@ extern "C" int copy_file(IF_WIN(const native_file_handle&,int) src,
 # endif
   assert(ret <= 0);
   return int(ret);
+}
+
+/** Append to the configuration file.
+@param target   backup target
+@param config   the configuration file snippet to append
+@param size     length of the snippet
+@return error code (non-positive)
+@retval 0   on success */
+extern "C" int backup_config_append(const backup_target &target,
+                                    const char *config, size_t size)
+{
+  /* FIXME: append to a pre-created configuration file */
+#ifdef _WIN32
+  HANDLE dst;
+  {
+    std::string path{target.path};
+    path.append("/backup.cnf");
+    dst= CreateFile(path.c_str(), GENERIC_WRITE, 0,
+                    my_win_file_secattr(), CREATE_NEW,
+                    FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (dst != INVALID_HANDLE_VALUE)
+    {
+      BOOL ok;
+      for (;;)
+      {
+        DWORD written;
+        ok= WriteFile(dst, config, DWORD(size), &written, nullptr);
+        if (ok || !written || GetLastError() != ERROR_IO_PENDING)
+          break;
+        assert(written < DWORD(size));
+        config+= written;
+        size-= size_t(written);
+      }
+      if (CloseHandle(dst) & ok)
+        return 0;
+    }
+  }
+#else
+  assert(target.directory);
+  int dst= openat(target.fd, "backup.cnf",
+                  O_CREAT | O_EXCL | O_TRUNC | O_WRONLY, 0666);
+  if (dst < 0)
+    return dst;
+  ssize_t ret;
+  for (; (ret= write(dst, config, size)) >= 0; config+= ret, size -= ret)
+  {
+    assert(size_t(ret) <= size);
+    if (!(size-= size_t(ret)))
+    {
+      ret= 0;
+      break;
+    }
+  }
+  if (!(close(dst) | ret))
+    return 0;
+#endif
+  my_error(ER_CANT_CREATE_FILE, MYF(0), "backup.cnf", errno);
+  return -1;
 }
 
 static my_bool backup_start(THD *thd, plugin_ref plugin, void *dst) noexcept

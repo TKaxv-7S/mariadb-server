@@ -13,6 +13,7 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA */
 
+struct backup_target;
 #ifdef _WIN32
 /* Use CopyFileEx() to copy entire files */
 struct native_file_handle;
@@ -38,7 +39,7 @@ extern "C"
 /** Copy an entire file.
 @param src  source file descriptor
 @param dst  target to append src to
-@return error code (negative)
+@return error code (non-positive)
 @retval 0   on success */
 int copy_entire_file(int src, int dst);
 #endif
@@ -51,8 +52,20 @@ extern "C"
 @param dst   target to append src to
 @param start first offset to copy
 @param end   last offset to copy (exclusive)
-@return error code (negative)
+@return error code (non-positive)
 @retval 0   on success */
 int copy_file(IF_WIN(const native_file_handle&,int) src,
               IF_WIN(const native_file_handle&,int) dst,
               uint64_t start, uint64_t end);
+
+#ifdef __cplusplus
+extern "C"
+#endif
+/** Append to the configuration file.
+@param target   backup target
+@param config   the configuration file snippet to append
+@param size     length of the snippet
+@return error code (non-positive)
+@retval 0   on success */
+int backup_config_append(const backup_target &target,
+                         const char *config, size_t size);
