@@ -58,6 +58,7 @@
 #include "sql_table.h"                          // build_table_filename
 #include "datadict.h"                           // dd_frm_is_view()
 #include "rpl_rli.h"                            // rpl_group_info
+#include "index/hlindex.h"
 #include "index/vector_mhnsw.h"
 #ifdef  _WIN32
 #include <io.h>
@@ -10017,7 +10018,7 @@ int TABLE::hlindex_open(uint nr)
                            path, false);
       share->db_plugin= s->db_plugin;
 
-      LEX_CSTRING sql= mhnsw_hlindex_table_def(in_use, file->ref_length);
+      LEX_CSTRING sql= s->key_info[nr].hliton->table_def(in_use, file->ref_length);
       if (share->init_from_sql_statement_string(in_use, false,
                         sql.str, sql.length))
       {
