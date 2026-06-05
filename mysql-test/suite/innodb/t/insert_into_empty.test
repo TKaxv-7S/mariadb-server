@@ -181,6 +181,8 @@ if ($MTR_COMBINATION_ROW_LOCK) {
   INSERT INTO t1 VALUES (2);
 }
 if ($MTR_COMBINATION_TABLE_LOCK) {
+# SELECT..LOCK IN SHARE MODE takes a table lock and no record locks,
+# so the empty table bulk insert stays enabled
   INSERT INTO t1 VALUES (2);
 }
 COMMIT;

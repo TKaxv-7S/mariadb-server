@@ -865,7 +865,9 @@ static MYSQL_THDVAR_BOOL(ft_enable_stopword, PLUGIN_VAR_OPCMDARG,
   /* default */ TRUE);
 
 static MYSQL_THDVAR_BOOL(table_lock_on_full_scan, PLUGIN_VAR_OPCMDARG,
-  "Whether to acquire table lock when SQL layer advises full scan",
+  "When the SQL layer advises a full scan, acquire a single table lock "
+  "instead of locking each scanned row individually. This is faster, at the "
+  "cost of less granular (table-level instead of record-level) locking.",
   NULL, NULL, FALSE);
 
 static MYSQL_THDVAR_UINT(lock_wait_timeout, PLUGIN_VAR_RQCMDARG,
@@ -15944,29 +15946,31 @@ ha_innobase::extra(
 	return(0);
 }
 
-int
-ha_innobase::extra_opt(
-/*===============*/
-	enum ha_extra_function operation,
-			   /*!< in: HA_EXTRA_FLUSH or some other flag */
-	ulong arg)
+/** SQL layer calls this function (via init_table_full_scan_if_needed())
+with HA_EXTRA_FULL_SCAN when a statement reads a whole table or
+index with no WHERE condition. When innodb_table_lock_on_full_scan
+is enabled, flag the scan as covering the entire table.
+row_search_mvcc() takes a single table-level lock (LOCK_S/LOCK_X)
+instead of locking each scanned row individually. A bounded
+scan (arg < ULONG_MAX) keeps per-row locking, since it may stop early.
+Every other operation is forwarded unchanged to extra().
+@param  operation  hint to act on
+@param  arg        operation argument; for HA_EXTRA_FULL_SCAN the row
+                   limit, or ULONG_MAX when the scan is unbounded
+@return 0 on success, otherwise the error code returned by extra() */
+int ha_innobase::extra_opt(enum ha_extra_function operation, ulong arg)
 {
-	bool handled = false;
-	switch (operation) {
-	case HA_EXTRA_FULL_SCAN:
-		handled = true;
-		if (THDVAR(ha_thd(), table_lock_on_full_scan) &&
-				!m_prebuilt->skip_locked && arg == ULONG_MAX)
-			m_prebuilt->full_table_scan = true;
-		break;
-	default:/* Do nothing */
-		;
-	}
-
-	if (!handled)
-		return extra(operation);
-
-	return(0);
+  switch (operation)
+  {
+    case HA_EXTRA_FULL_SCAN:
+      if (THDVAR(ha_thd(), table_lock_on_full_scan) &&
+          !m_prebuilt->skip_locked && arg == ULONG_MAX)
+        m_prebuilt->full_table_scan = true;
+      return 0;
+    default:/* Do nothing */
+      ;
+  }
+  return extra(operation);
 }
 
 /**
