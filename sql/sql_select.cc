@@ -2826,14 +2826,6 @@ int JOIN::optimize_stage2()
   if (get_best_combination())
     DBUG_RETURN(1);
 
-  /*
-    The access methods are now fixed and use_parallel_scan has been set on the
-    eligible full-scan tables: prune it to the single table we will actually
-    scan in parallel.
-  */
-  if (thd->variables.parallel_worker_threads)
-    choose_parallel_scan();
-
   if (make_range_rowid_filters())
     DBUG_RETURN(1);
 
@@ -13641,29 +13633,41 @@ bool JOIN::get_best_combination()
       {
         j->type= JT_ALL;
         /*
-          Parallel workers ship each scanned row to the manager by value
-          through a per-worker batch table. BLOB/TEXT columns (and the other
-          blob-backed types -- GEOMETRY, JSON) keep their payload in memory off
-          the record buffer, so they are not safely reproduced on the manager
-          side. Exclude any table that has such a column, alongside internal/
-          temporary tables, from parallel scan. (s->blob_fields counts every
-          blob-backed column.)
+          Only the first non-const table (tablenr == const_tables), when read by
+          a full table scan, is considered for parallel scan: it is the driving
+          table of the nested-loop join and is therefore scanned exactly once,
+          which is what the worker streaming model reproduces. Tables deeper in
+          the join order are re-scanned once per outer row and are never
+          parallelised.
 
-          Also exclude the MERGE engine (ha_myisammrg): a worker opens its own
-          handler straight from the TABLE_SHARE, which does not attach the
-          MERGE children, so ha_myisammrg::rnd_init() asserts.
-
-          Also exclude fulltext-searched tables: a MATCH ... AGAINST relevance
-          is not a stored column but is derived from the handler's fulltext
-          state for the current row, which the injected row images do not carry,
-          so the relevance would be computed incorrectly.
+          Even the first table is excluded when its rows cannot be shipped to
+          the manager by value through a per-worker batch table:
+          - BLOB/TEXT and other blob-backed columns (GEOMETRY, JSON) keep
+            their payload off the record buffer (s->blob_fields > 0), so they
+            are not reproduced on the manager side;
+          - internal/temporary tables (tmp_table != NO_TMP_TABLE);
+          - the MERGE engine (ha_myisammrg): a worker opens its own handler
+            straight from the TABLE_SHARE, which does not attach the MERGE
+            children, so ha_myisammrg::rnd_init() asserts;
+          - fulltext-searched tables: a MATCH ... AGAINST relevance is derived
+            from the handler's fulltext state for the current row, not a
+            stored column, so the injected row images would compute it wrongly.
         */
-        if (thd->variables.parallel_worker_threads &&
+        if (tablenr == const_tables &&
+            thd->variables.parallel_worker_threads &&
             j->table->s->tmp_table == NO_TMP_TABLE &&
             j->table->s->blob_fields == 0 &&
             j->table->file->ht->db_type != DB_TYPE_MRG_MYISAM &&
             !j->table->fulltext_searched)
+        {
           j->use_parallel_scan= true;
+          if (unlikely(thd->trace_started()))
+          {
+            Json_writer_object trace_pscan(thd);
+            trace_pscan.add("chosen_for_parallel_scan",
+                            j->table->alias.c_ptr());
+          }
+        }
       }
       if (cur_pos->use_join_buffer &&
           tablenr != const_tables)

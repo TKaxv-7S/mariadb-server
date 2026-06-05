@@ -20,7 +20,6 @@ extern void thd_detach_thd(void *save);
 class pwt_error_message
 {
 public:
-  uint worker_errno;
   uint code;
   Sql_condition::enum_warning_level level;
   char *message;
@@ -66,8 +65,11 @@ public:
   THD             *thd;
   pwt_management  *manager;
   pthread_t       pthread;
+  /*
+    Guards worker->thd while the worker nulls it on exit, so abort_worker()
+    sees either a live THD to awake() or nullptr. See parallel_worker_thread_func.
+  */
   mysql_mutex_t   LOCK_worker;
-  mysql_cond_t    COND_worker;
   char            conn_name[MAX_THREAD_NAME+1];
   /*
     This is displayed in information_schema.processlist.info
@@ -77,27 +79,24 @@ public:
                        1+WORKER_ID_LENGTH+1+
                        CONNECTION_NAME_THREAD_LENGTH+
                        1+THREAD_ID_LENGTH+1];
-  bool            joined;
-  bool            finished;
-  killed_state    killed;
   /*
-    Per-worker copy of the manager's first non-const source table, opened
-    from the same TABLE_SHARE with in_use == this worker's thd. Gives the
-    worker a private handler so it can scan concurrently with the other
-    workers and the manager. Engines like InnoDB cache the THD pointer
-    (m_user_thd) at open time, so a shared handler with a swapped in_use is
-    not enough; each worker needs its own. Opened in init_parallel_workers,
-    closed in the worker thread before its THD is destroyed.
+    Per-worker copy of the our scan table, opened from the same TABLE_SHARE
+    with in_use == this worker's thd. Gives the worker a private handler so
+    it can scan concurrently with the other workers and the manager.
+    Engines like InnoDB cache the THD pointer (m_user_thd) at open time,
+    so a shared handler with a swapped in_use is not enough; each worker needs
+    its own. Opened in init_parallel_workers, closed in the worker thread
+    before its THD is destroyed.
   */
   TABLE           *our_scan_table;
   /*
-    This worker's single batch temporary table, built in the first non-const
-    source table's column format and created up front by
-    JOIN::create_parallel_workers_tmp_tables (one per worker, stored in
-    JOIN_TAB::parallel_tmp_tables). The worker reuses it for every chunk: fill
-    it with up to PWT_CHUNK_ROWS rows, hand it to the manager, block until the
-    manager has drained it, then truncate and refill. The worker and the
-    manager never touch it at the same time, so it needs no per-row locking.
+    This worker's single batch temporary table, built in our_scan_table column
+    format and created up front by JOIN::create_parallel_workers_tmp_tables
+    (one per worker, stored in JOIN_TAB::parallel_tmp_tables).
+    The worker reuses it for every chunk: fill it with up to PWT_CHUNK_ROWS
+    rows, hand it to the manager, block until the manager has drained it,
+    then truncate and refill. The worker and the manager never touch it at
+    the same time, so it needs no per-row locking.
   */
   TABLE           *batch_table;
   /*
@@ -121,7 +120,6 @@ public:
   I_List<pwt_queued_event> parallel_messages;
   mysql_mutex_t     LOCK_pwt_thread;
   THD               *thd;
-  JOIN              *join;
   /*
     Set under LOCK_pwt_thread when a worker fails to allocate a queued event.
     The manager surfaces a single ER_OUTOFMEMORY warning so the user sees
@@ -151,14 +149,6 @@ public:
   pwt_worker        *cur_worker;      // worker whose table the consumer drains
   uint              active_workers;   // producers still running
   bool              fatal_error;      // a producer hit a real engine error
-  bool              stop;             // consumer wants producers to stop
-  /*
-    Set once the workers have been stopped and pthread_join'd (quiesce_workers).
-    Workers read this join's source and batch tables, so they must be reaped
-    before JOIN::join_free()->cleanup() frees those tables; quiesce_workers is
-    therefore called from join_free, and again (idempotently) from finalize.
-  */
-  bool              reaped;
   /*
     Set (under LOCK_data) to a worker's killed_state when that worker exits
     because it was killed -- e.g. a user KILL [QUERY] aimed at a parallel
@@ -175,9 +165,9 @@ public:
     cur_worker(nullptr),
     active_workers(0),
     fatal_error(false),
+    kill_signal(NOT_KILLED),
     stop(false),
-    reaped(false),
-    kill_signal(NOT_KILLED)
+    reaped(false)
     {}
   ~pwt_management()
   {
@@ -188,6 +178,17 @@ public:
   void finalize_parallel_workers(THD *thd, JOIN *join);
   bool handoff_batch(pwt_worker *worker);
   void free_queue();
+
+private:
+  JOIN              *join;            // the join these workers serve
+  bool              stop;             // consumer wants producers to stop
+  /*
+    Set once the workers have been stopped and pthread_join'd (quiesce_workers).
+    Workers read this join's source and batch tables, so they must be reaped
+    before JOIN::join_free()->cleanup() frees those tables; quiesce_workers is
+    therefore called from join_free, and again (idempotently) from finalize.
+  */
+  bool              reaped;
 };
 
 #endif
