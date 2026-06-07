@@ -19,6 +19,11 @@
 
 #ifndef _heap_h
 #define _heap_h
+
+#if !defined(DBUG_OFF) || defined(EXTRA_DEBUG)
+#define EXTRA_HEAP_DEBUG
+#endif
+
 #ifdef	__cplusplus
 extern "C" {
 #endif

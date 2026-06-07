@@ -8495,17 +8495,11 @@ Field *Field_blob_compressed::make_new_field(MEM_ROOT *root, TABLE *new_table,
   {
     /*
       Compressed field cannot be part of a key. For optimizer temporary
-      table we create uncompressed substitute.
-      Compressed fields can also not be part of GROUP_CONCAT().
+      table we create uncompressed Field_blob_key substitute.
     */
-    if (param && param->part_of_unique_key())
-      res= new (root) Field_blob_key(ptr, null_ptr, null_bit, Field::NONE,
-                                     &field_name,
-                                     new_table->s, packlength, charset());
-    else
-      res= new (root) Field_blob(ptr, null_ptr, null_bit, Field::NONE,
-                                 &field_name,
-                                 new_table->s, packlength, charset());
+    res= new (root) Field_blob_key(ptr, null_ptr, null_bit, Field::NONE,
+                                   &field_name,
+                                   new_table->s, packlength, charset());
     if (res)
     {
       res->init_for_make_new_field(new_table, orig_table);
