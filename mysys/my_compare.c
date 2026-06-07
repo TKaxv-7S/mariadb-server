@@ -268,6 +268,7 @@ int ha_key_cmp(HA_KEYSEG *keyseg, const uchar *a,
       break;
     case HA_KEYTYPE_VARTEXT4:
     {
+#ifdef NOT_YET_USED
       /* Only used for internal temporary tables */
       int a_length,b_length;
       uchar *a_key, *b_key;
@@ -285,9 +286,13 @@ int ha_key_cmp(HA_KEYSEG *keyseg, const uchar *a,
       a+= 4 + portable_sizeof_char_ptr;
       b+= 4 + portable_sizeof_char_ptr;
       break;
+#else
+      abort();
+#endif /* NOT_YET_USED */
     }
     case HA_KEYTYPE_VARBINARY4:
     {
+#ifdef NOT_YET_USED
       /* Only used for internal temporary tables */
       int a_length,b_length;
       uchar *a_key, *b_key;
@@ -303,6 +308,9 @@ int ha_key_cmp(HA_KEYSEG *keyseg, const uchar *a,
       a+= 4 + portable_sizeof_char_ptr;
       b+= 4 + portable_sizeof_char_ptr;
       break;
+#else
+      abort();
+#endif /* NOT_YET_USED */
     }
     case HA_KEYTYPE_INT8:
     {
@@ -658,11 +666,11 @@ HA_KEYSEG *ha_find_null(HA_KEYSEG *keyseg, const uchar *a)
 #endif
     case HA_KEYTYPE_FLOAT:
     case HA_KEYTYPE_DOUBLE:
-    case HA_KEYTYPE_VARTEXT4:
-    case HA_KEYTYPE_VARBINARY4:
       a= end;
       break;
     case HA_KEYTYPE_END:                        /* purecov: inspected */
+    case HA_KEYTYPE_VARTEXT4:                   /* Not used yet */
+    case HA_KEYTYPE_VARBINARY4:                 /* Not used yet */
       /* keep compiler happy */
       DBUG_ASSERT(0);
       break;
