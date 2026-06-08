@@ -12414,3 +12414,7 @@ ER_PARTITION_INTERVAL_MAXVALUE
         eng "MAXVALUE is not allowed in range partitioning with interval"
 ER_RANGE_INTERVAL_PART_FAILED
         eng "Range partition table %`s.%`s: adding INTERVAL partition(s) failed"
+ER_SYS_TRG_SEMANTIC_ERROR
+        eng "Incorrect definition of the trigger %s.%s: action '%s' is not compatible with event '%s'"
+ER_TRG_EVENT_CONFLICTS_NAME
+        eng "%s with the same name '%s' already exists"

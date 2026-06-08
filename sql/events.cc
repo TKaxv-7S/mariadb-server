@@ -1218,6 +1218,14 @@ Events::load_events_from_db(THD *thd)
       goto end;
     }
 
+    if (et->trigger_event)
+    {
+      /*
+        Skip records of the table mysql.event for entries representing triggers
+      */
+      delete et;
+      continue;
+    }
 #ifdef WITH_WSREP
     /**
       If SST is done from a galera node that is also acting as MASTER
