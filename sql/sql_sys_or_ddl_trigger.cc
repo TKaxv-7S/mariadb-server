@@ -6,10 +6,11 @@
 
 #include "table.h"
 
-#include "events.h"
+#include "event_common.h"         // Event_creation_ctx
 #include "event_data_objects.h"   // load_creating_context_for_sys_trg
 #include "event_db_repository.h"  // enum_events_table_field
 #include "event_parse_data.h"     // Event_parse_data
+#include "events.h"
 
 #include "key.h"                  // key_copy
 #include "lex_string.h"
@@ -818,9 +819,12 @@ static LEX_CSTRING events_to_string(const LEX_CSTRING base_event_names[],
       offset+= sprintf(set_of_events + offset, "%s,",
                        base_event_names[idx].str);
   }
-  set_of_events[offset - 1]= 0;
-
-  return LEX_CSTRING{set_of_events, offset - 1};
+  if (offset)
+  {
+    set_of_events[offset - 1]= 0;
+    offset= offset - 1;
+  }
+  return LEX_CSTRING{set_of_events, offset};
 }
 
 
@@ -1139,12 +1143,12 @@ static bool load_system_triggers(THD *thd)
   {
     /*
       In case events scheduler is enabled (in that case
-      Events::startup_state == Events::EVENTS_ON) warning about
+      Events_common::startup_state == Events::EVENTS_ON) warning about
       incorrect layout of the table mysql.event has been already reported
       on loading events (@see Events::init), so don't print the error
       message.
     */
-    if (Events::startup_state != Events::EVENTS_ON)
+    if (Events_common::startup_state != Events_common::EVENTS_ON)
       my_message(ER_STARTUP,
                  "An error occurred when loading data from "
                  "the table mysql.event. System triggers not loaded",
