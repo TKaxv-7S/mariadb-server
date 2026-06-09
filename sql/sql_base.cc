@@ -59,7 +59,6 @@
 #include "datadict.h"                           // dd_frm_is_view()
 #include "rpl_rli.h"                            // rpl_group_info
 #include "index/hlindex.h"
-#include "index/vector_mhnsw.h"
 #ifdef  _WIN32
 #include <io.h>
 #endif
@@ -10109,7 +10108,7 @@ int TABLE::hlindexes_on_insert()
 {
   DBUG_ASSERT(s->hlindexes() == (hli != NULL));
   if (hli && hli->table->in_use)
-    if (int err= mhnsw_insert(this, key_info + s->keys))
+    if (int err= hli->insert_row(this, key_info + s->keys))
       return err;
   return 0;
 }
@@ -10121,8 +10120,8 @@ int TABLE::hlindexes_on_update()
   {
     int err;
     // mark deleted node invalid and insert node for new row
-    if ((err= mhnsw_invalidate(this, record[1], key_info + s->keys)) ||
-        (err= mhnsw_insert(this, key_info + s->keys)))
+    if ((err= hli->delete_row(this, record[1], key_info + s->keys)) ||
+        (err= hli->insert_row(this, key_info + s->keys)))
       return err;
   }
 
@@ -10134,7 +10133,7 @@ int TABLE::hlindexes_on_delete(const uchar *buf)
   DBUG_ASSERT(s->hlindexes() == (hli != NULL));
   DBUG_ASSERT(buf == record[0] || buf == record[1]); // note: REPLACE
   if (hli && hli->table->in_use)
-    if (int err= mhnsw_invalidate(this, buf, key_info + s->keys))
+    if (int err= hli->delete_row(this, buf, key_info + s->keys))
       return err;
   return 0;
 }
@@ -10143,7 +10142,7 @@ int TABLE::hlindexes_on_delete_all(bool truncate)
 {
   DBUG_ASSERT(s->hlindexes() == (hli != NULL));
   if (hli && hli->table->in_use)
-    if (int err= mhnsw_delete_all(this, key_info + s->keys, truncate))
+    if (int err= hli->delete_all(this, key_info + s->keys, truncate))
       return err;
   return 0;
 }
@@ -10158,15 +10157,15 @@ int TABLE::hlindex_init(uint nr, Item *item, ulonglong limit)
 
   DBUG_ASSERT(hli->table->in_use == in_use);
 
-  return mhnsw_init(this, key_info + s->keys, item, limit);
+  return hli->read_init(this, key_info + s->keys, item, limit);
 }
 
 int TABLE::hlindex_read_next()
 {
-  return mhnsw_read_next(this);
+  return hli->read_next(this);
 }
 
 int TABLE::hlindex_read_end()
 {
-  return mhnsw_read_end(this);
+  return hli->read_end(this);
 }
