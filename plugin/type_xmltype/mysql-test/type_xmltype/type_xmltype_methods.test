@@ -1,0 +1,15 @@
+replace_result InnoDB MyISAM;
+
+set sql_mode=oracle;
+
+--delimiter $$
+DECLARE
+  x XMLTYPE;
+BEGIN
+  x:= '<a aa1="aa1" aa2="aa2">a1<b ba1="ba1">b1<c>c1</c>b2</b>a2</a>';
+  SELECT x.getRootNode();
+END;
+$$
+
+--delimiter ;
+
