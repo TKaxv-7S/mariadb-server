@@ -22,6 +22,12 @@
   logic.
 
   Contains
+        table_can_be_parallel_scanned
+                table-level eligibility for a parallel worker scan, shared by
+                the cost hook and the runtime gate
+        scale_cost_for_parallel_scan
+                optimizer hook: discount a full-table-scan cost for a table
+                that is eligible for parallel worker scan
         error_to_queue
                 push an error message onto our queue to send to the manager
         PWT_error_handler
@@ -88,6 +94,80 @@ static PSI_memory_info all_pwt_memory[]=
   { &key_memory_pwt_batch_rows,    "pwt_worker::batch_rows",    0},
 };
 #endif /* HAVE_PSI_INTERFACE */
+
+
+/**
+  @brief
+    Whether a table's format and engine permit a parallel worker scan.
+
+  @description
+    Table-level eligibility shared by the optimizer cost hook
+    (scale_cost_for_parallel_scan) and the runtime gate (make_join_readinfo):
+
+      - a real base table (not an internal/temporary table);
+      - no blob-backed columns (BLOB/TEXT/GEOMETRY/JSON) -- their payload lives
+        off the record buffer and is not reproduced by the by-value row
+        transport;
+      - not fulltext-searched -- a MATCH ... AGAINST relevance is derived from
+        handler state, not a stored column;
+      - not partitioned;
+      - the engine advertises HA_CAN_PARALLEL_SCAN.
+
+    Caller-specific conditions (parallel_worker_threads, the access method being
+    a full scan, the join position) are checked by each caller, not here.
+*/
+
+bool table_can_be_parallel_scanned(TABLE *table)
+{
+  return table->s->tmp_table == NO_TMP_TABLE &&
+         table->s->blob_fields == 0 &&
+         !table->fulltext_searched &&
+         !table->part_info &&
+         (table->file->ha_table_flags() & HA_CAN_PARALLEL_SCAN);
+}
+
+
+/**
+  @brief
+    Discount a full-table-scan cost when the table is eligible to be scanned by
+    parallel workers.
+
+  @description
+    When parallel query is enabled the first non-const table can be scanned by
+    N worker threads, each reading a disjoint partition concurrently while the
+    manager runs the rest of the join. The wall-clock cost of reading and
+    copying the rows is therefore roughly 1/N of a serial scan, so the row
+    (full-scan) components of 'cost' -- I/O, CPU and row-copy -- are scaled by
+    1/N. The index components are left untouched: this only ever discounts a
+    full table scan.
+
+    Eligibility mirrors the runtime gate in make_join_readinfo() exactly
+    (engine support, no blob-backed columns, not fulltext-searched, a real base
+    table, not partitioned), so the optimizer never discounts a scan that will
+    not actually run in parallel. The caller is responsible for invoking this
+    only for the driving table (idx == const_tables), the single position a
+    parallel scan applies to, and 'cost' must be the caller's local copy, not
+    the cached per-table estimate.
+
+  @return
+    true   the cost was scaled (table is parallel-scan eligible)
+    false  no change (parallel scan disabled or table not eligible)
+*/
+
+bool scale_cost_for_parallel_scan(THD *thd, TABLE *table, ALL_READ_COST *cost)
+{
+  const uint n= thd->variables.parallel_worker_threads;
+  if (n < 2 ||                                   // disabled, or no speed-up
+      !table_can_be_parallel_scanned(table))
+    return false;
+
+  const double factor= 1.0 / (double) n;
+  cost->row_cost.io  *= factor;
+  cost->row_cost.cpu *= factor;
+  cost->copy_cost    *= factor;
+  return true;
+}
+
 
 /**
   @brief

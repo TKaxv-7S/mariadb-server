@@ -8763,6 +8763,12 @@ struct best_plan
 };
 
 
+/* Defined in sql_parallel_workers.cc */
+extern bool table_can_be_parallel_scanned(TABLE *table);
+extern bool scale_cost_for_parallel_scan(THD *thd, TABLE *table,
+                                         ALL_READ_COST *cost);
+
+
 void
 best_access_path(JOIN      *join,
                  JOIN_TAB  *s,
@@ -9942,6 +9948,17 @@ best_access_path(JOIN      *join,
         s->cached_forced_index= forced_index;
       }
     }
+
+    /*
+      A full table scan of the driving table can be shared across
+      parallel_worker_threads workers (see make_join_readinfo). Discount its
+      row-read/copy cost accordingly so the optimizer accounts for the
+      parallelism. Only the driving table (idx == const_tables) is ever
+      parallel-scanned, and 'cost' is a local copy, so the cached per-table
+      estimate is untouched.
+    */
+    if (type == JT_ALL && idx == join->const_tables)
+      scale_cost_for_parallel_scan(thd, table, &cost);
 
      /*
        Note: the condition checked here is very out of date and incorrect.
@@ -16734,11 +16751,7 @@ make_join_readinfo(JOIN *join, ulonglong options, uint no_jbuf_after)
     first && first->type == JT_ALL &&
     first->read_first_record == join_init_read_record &&
     !(first->select && first->select->quick) && // no range quick select
-    first->table->s->blob_fields == 0 &&
-    !first->table->fulltext_searched &&
-    first->table->s->tmp_table == NO_TMP_TABLE &&
-    (first->table->file->ha_table_flags() & HA_CAN_PARALLEL_SCAN) &&
-    !first->table->part_info)
+    table_can_be_parallel_scanned(first->table))
   {
     first->use_parallel_scan= true;
     first->read_first_record       = parallel_init_read_record;
