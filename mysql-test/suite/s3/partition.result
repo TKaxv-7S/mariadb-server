@@ -160,3 +160,5 @@ count(*)
 5
 DROP TABLE t1;
 DROP TABLE t_part;
+
+I need to make a s3 test fail.
