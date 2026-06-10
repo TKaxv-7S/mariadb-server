@@ -151,9 +151,15 @@ Wsrep_high_priority_service::Wsrep_high_priority_service(THD* thd)
   /*
     Enable binlogging regardless of log_slave_updates setting
     this is for ensuring that both local and applier transaction go through
-    same commit ordering algorithm in group commit control
+    same commit ordering algorithm in group commit control.
+
+    The precondition (wsrep_emulate_bin_log || mysql_bin_log.is_open())
+    is checked at the apply boundary (start_transaction / apply_toi),
+    not here: early appliers spawned by wsrep_init_startup() when
+    wsrep_before_SE() is true are constructed before mysql_bin_log.open()
+    runs, but they sit idle until the provider reaches SYNCED, by which
+    time the binlog is open and the invariant holds.
    */
-  DBUG_ASSERT(wsrep_emulate_bin_log || mysql_bin_log.is_open());
   thd->variables.option_bits|= OPTION_BIN_LOG;
   if (wsrep_emulate_bin_log)
     thd->binlog_state|= BINLOG_STATE_WSREP | BINLOG_STATE_ACTIVE;
@@ -209,6 +215,11 @@ int Wsrep_high_priority_service::start_transaction(
   const wsrep::ws_handle& ws_handle, const wsrep::ws_meta& ws_meta)
 {
   DBUG_ENTER(" Wsrep_high_priority_service::start_transaction");
+  /* THD may have been constructed before mysql_bin_log.open() — see
+     the ctor comment. Re-sync per-THD binlog_state and verify the
+     global invariant before we start applying anything. */
+  m_thd->sync_binlog_state_with_binlog_open();
+  DBUG_ASSERT(wsrep_emulate_bin_log || mysql_bin_log.is_open());
   DBUG_RETURN(m_thd->wsrep_cs().start_transaction(ws_handle, ws_meta) ||
               trans_begin(m_thd));
 }
@@ -410,6 +421,9 @@ int Wsrep_high_priority_service::apply_toi(const wsrep::ws_meta& ws_meta,
 {
   DBUG_ENTER("Wsrep_high_priority_service::apply_toi");
   THD* thd= m_thd;
+  /* See start_transaction(). */
+  thd->sync_binlog_state_with_binlog_open();
+  DBUG_ASSERT(wsrep_emulate_bin_log || mysql_bin_log.is_open());
   Wsrep_non_trans_mode non_trans_mode(thd, ws_meta);
 
   wsrep::client_state& client_state(thd->wsrep_cs());

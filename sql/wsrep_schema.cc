@@ -721,11 +721,14 @@ static void wsrep_init_thd_variables(THD *thd)
 {
   /* No Galera replication */
   thd->disable_wsrep();
-  /* No binlogging */
+  /* No binlogging.
+     set_binlog_bit() (with sql_log_bin=0 and wsrep disabled above)
+     clears OPTION_BIN_LOG and sets BINLOG_STATE_BYPASS |
+     BINLOG_STATE_USER_DISABLED — the invariants checked in
+     decide_logging_format() require those flags to track each other,
+     so we must not blast binlog_state back to NONE afterwards. */
   thd->variables.sql_log_bin= 0;
   thd->set_binlog_bit();
-  thd->variables.option_bits&= ~OPTION_BIN_LOG;
-  thd->binlog_state= BINLOG_STATE_NONE;
   /* No safe updates */
   thd->variables.option_bits&= ~OPTION_SAFE_UPDATES;
   /* No general log */

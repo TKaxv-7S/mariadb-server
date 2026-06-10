@@ -145,10 +145,24 @@ bool wsrep_on_update (sys_var *self, THD* thd, enum_var_type var_type)
     }
 
     global_system_variables.wsrep_on= saved_wsrep_on;
+    /* Refresh WSREP_ON_/WSREP_PROVIDER_EXISTS_ *before* set_wsrep() so
+       that enable_wsrep()'s DBUG_ASSERT(WSREP_PROVIDER_EXISTS_ &&
+       WSREP_ON_) sees the post-update globals. */
+    wsrep_set_wsrep_on(thd);
     thd->set_wsrep(saved_wsrep_on);
   }
-
-  wsrep_set_wsrep_on(thd);
+  else
+  {
+    /* For SET SESSION wsrep_on=..., the sysvar framework has already
+       written thd->variables.wsrep_on. We still need to resync the
+       binlog_state bits — the Galera carve-out in set_binlog_bit()
+       suppresses USER_DISABLED/BYPASS while WSREP(this) is true, so
+       toggling wsrep_on changes which branch applies. Without this,
+       a "SET sql_log_bin=0; SET wsrep_on=0;" sequence leaves the THD
+       inconsistent and trips the invariants in decide_logging_format. */
+    wsrep_set_wsrep_on(thd);
+    thd->set_binlog_bit();
+  }
 
   if (var_type == OPT_GLOBAL)
   {

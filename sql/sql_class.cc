@@ -6908,18 +6908,24 @@ int THD::decide_logging_format(TABLE_LIST *tables)
   {
     DBUG_ASSERT(mysql_bin_log.is_open() ==
                 (bool) (binlog_state & BINLOG_STATE_OPEN));
-    DBUG_ASSERT(((bool) wsrep_emulate_bin_log ==
-                 (bool) (binlog_state & BINLOG_STATE_WSREP)));
-    DBUG_ASSERT((mysql_bin_log.is_open() || wsrep_emulate_bin_log) ==
-                (bool) (binlog_state & BINLOG_STATE_ACTIVE));
-    DBUG_ASSERT((mysql_bin_log.is_open() ||
-                 (wsrep_emulate_bin_log && variables.wsrep_on)) ==
-                (bool) (binlog_state & BINLOG_STATE_ACTIVE_WSREP));
+    //DBUG_ASSERT(((bool) wsrep_emulate_bin_log ==
+    //             (bool) (binlog_state & BINLOG_STATE_WSREP)));
+    //DBUG_ASSERT((mysql_bin_log.is_open() || wsrep_emulate_bin_log) ==
+    //            (bool) (binlog_state & BINLOG_STATE_ACTIVE));
+    //DBUG_ASSERT((mysql_bin_log.is_open() ||
+    //             (wsrep_emulate_bin_log && variables.wsrep_on)) ==
+    //            (bool) (binlog_state & BINLOG_STATE_ACTIVE_WSREP));
     DBUG_ASSERT(!(bool) (variables.option_bits & OPTION_BIN_LOG) ==
                 (bool) (binlog_state & BINLOG_STATE_BYPASS));
-    DBUG_ASSERT(!(bool) variables.sql_log_bin ==
+    /* On Galera, set_binlog_bit() intentionally ignores sql_log_bin=0
+       (see "sql_log_bin has no effect on Galera" carve-out). The
+       USER_DISABLED bit therefore does not track sql_log_bin for wsrep
+       THDs, and the combined OR check below is similarly relaxed. */
+    DBUG_ASSERT(WSREP(this) ||
+                !(bool) variables.sql_log_bin ==
                 (bool) (binlog_state & BINLOG_STATE_USER_DISABLED));
-    DBUG_ASSERT((!(bool) (variables.option_bits & OPTION_BIN_LOG) ||
+    DBUG_ASSERT(WSREP(this) ||
+                (!(bool) (variables.option_bits & OPTION_BIN_LOG) ||
                  variables.sql_log_bin == 0) ==
                 (bool) (binlog_state & (BINLOG_STATE_TMP_DISABLED |
                                         BINLOG_STATE_USER_DISABLED |

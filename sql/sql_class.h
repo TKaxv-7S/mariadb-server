@@ -3975,7 +3975,17 @@ public:
   {
     if (variables.sql_log_bin)
     {
-      variables.option_bits|= OPTION_BIN_LOG;
+      /* Only flip OPTION_BIN_LOG back on outside scope-level disables
+         (tmp_disable_binlog / sub-statement / slave / wsrep-disable).
+         Those scopes own OPTION_BIN_LOG and restore it via
+         reenable_binlog() on exit; if we re-enable it here we leave
+         OPTION_BIN_LOG and BYPASS disagreeing — see the assert at
+         decide_logging_format(). */
+      if (!(binlog_state & (BINLOG_STATE_TMP_DISABLED |
+                            BINLOG_STATE_SUBSTMT_DISABLED |
+                            BINLOG_STATE_SLAVE_DISABLED |
+                            BINLOG_STATE_WSREP_DISABLED)))
+        variables.option_bits|= OPTION_BIN_LOG;
       binlog_state= binlog_state & ~BINLOG_STATE_USER_DISABLED;
       if ((binlog_state & BINLOG_STATE_DISABLED) == BINLOG_STATE_BYPASS)
         binlog_state= binlog_state & ~BINLOG_STATE_BYPASS;
@@ -4075,6 +4085,11 @@ public:
     variables.wsrep_on= 1;
     if (binlog_state & BINLOG_STATE_WSREP)
       binlog_state|= BINLOG_STATE_ACTIVE_WSREP;
+    /* Re-evaluate set_binlog_bit(): the Galera carve-out in
+       set_binlog_bit() suppresses USER_DISABLED/BYPASS bits when
+       WSREP(this) is true, so toggling wsrep_on flips which branch
+       applies and binlog_state must be resynced to match. */
+    set_binlog_bit();
 #endif
   }
 
@@ -4084,6 +4099,8 @@ public:
     variables.wsrep_on= 0;
     if (!(binlog_state & BINLOG_STATE_OPEN))
       binlog_state= binlog_state & ~BINLOG_STATE_ACTIVE_WSREP;
+    /* See enable_wsrep(). */
+    set_binlog_bit();
 #endif
   }
 
