@@ -1916,14 +1916,20 @@ int ha_commit_trans(THD *thd, bool all)
       }
       DBUG_ASSERT(trx_start_id);
 #ifdef WITH_WSREP
-      bool saved_wsrep_on= thd->variables.wsrep_on;
-      thd->variables.wsrep_on= false;
+      /* mysql.transaction_registry is internal metadata; updates to it
+         must not be replicated cluster-wide. Use the per-table ignore
+         flag rather than toggling thd->variables.wsrep_on, which would
+         create an inconsistency between THD-level and trx-level wsrep
+         state (trx->is_wsrep() is a snapshot taken at trx start).
+         Same idiom is used in rpl_gtid.cc for mysql.gtid_slave_pos. */
+      bool saved_wsrep_ignore_table= thd->wsrep_ignore_table;
+      thd->wsrep_ignore_table= true;
 #endif
       TR_table trt(thd, true);
       if (trt.update(trx_start_id, trx_end_id))
       {
 #ifdef WITH_WSREP
-        thd->variables.wsrep_on= saved_wsrep_on;
+        thd->wsrep_ignore_table= saved_wsrep_ignore_table;
 #endif
         (void) trans_rollback_stmt(thd);
         goto err;
@@ -1934,7 +1940,7 @@ int ha_commit_trans(THD *thd, bool all)
       if (all)
         commit_one_phase_2(thd, false, &thd->transaction->stmt, false);
 #ifdef WITH_WSREP
-      thd->variables.wsrep_on= saved_wsrep_on;
+      thd->wsrep_ignore_table= saved_wsrep_ignore_table;
 #endif
     }
   }

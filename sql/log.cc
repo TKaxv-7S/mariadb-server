@@ -6848,9 +6848,8 @@ bool THD::binlog_write_table_maps()
       if (table->file->row_logging)
       {
         DBUG_ASSERT(!table->s->global_tmp_table());
-        if (mysql_bin_log.write_table_map(this, table, with_annotate))
+        if (mysql_bin_log.write_table_map(this, table))
           DBUG_RETURN(1);
-        with_annotate= 0;
       }
       if (restore)
       {
