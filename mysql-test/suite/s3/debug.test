@@ -1,6 +1,6 @@
 --source include/have_s3.inc
 --source include/have_sequence.inc
-
+--disable_ps_protocol
 #
 # Create unique database for running the tests
 #
@@ -32,3 +32,4 @@ drop table t1;
 --source include/search_pattern_in_file.inc
 
 --source drop_database.inc
+--enable_ps_protocol
