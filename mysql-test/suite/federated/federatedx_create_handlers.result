@@ -5,6 +5,7 @@ CREATE DATABASE federated;
 connection slave;
 CREATE DATABASE federated;
 connection default;
+install soname 'ha_federatedx';
 set global federated_pushdown=1;
 connection slave;
 DROP TABLE IF EXISTS federated.t1;
@@ -1575,6 +1576,9 @@ connection slave;
 drop table federated.t1, federated.t2;
 connection default;
 set global federated_pushdown=0;
+uninstall soname 'ha_federatedx';
+Warnings:
+Warning	1620	Plugin is busy and will be uninstalled on shutdown
 connection master;
 DROP TABLE IF EXISTS federated.t1;
 DROP DATABASE IF EXISTS federated;

@@ -1,9 +1,11 @@
---source have_federatedx.inc
+# --source have_federatedx.inc
 --source include/federated.inc
 --source include/no_valgrind_without_big.inc
 --source include/have_partition.inc
 
 connection default;
+
+install soname 'ha_federatedx';
 
 set global federated_pushdown=1;
 
@@ -1022,6 +1024,7 @@ drop table federated.t1, federated.t2;
 # cleanup
 connection default;
 set global federated_pushdown=0;
+uninstall soname 'ha_federatedx';
 source include/federated_cleanup.inc;
 
 --echo # End of 11.4 tests
