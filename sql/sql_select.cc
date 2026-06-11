@@ -16357,49 +16357,6 @@ void JOIN_TAB::remove_redundant_bnl_scan_conds()
     set_cond(NULL);
 }
 
-// OLEGS: see join_init_read_record, maybe no need for external func
-extern int parallel_scan_read_next(READ_RECORD *info);
-
-// OLEGS: consider moving to sql_parallel_workers
-int parallel_init_read_record(JOIN_TAB *tab)
-{
-  JOIN *join= tab->join;
-  THD *thd= join->thd;
-
-  if (!(join->parallel_work_manager= new (thd->mem_root) pwt_management))
-  {
-    my_error(ER_INTERNAL_ERROR, MYF(0),
-              "Failed to initialize parallel work mgr");
-    return 1;
-  }
-
-  int err= join->parallel_work_manager->init_parallel_workers(thd, join, tab);
-  if (err)
-  {
-    delete join->parallel_work_manager;
-    join->parallel_work_manager= NULL;
-    if (err == HA_ERR_UNSUPPORTED)
-    {
-      // Fall back to the serial record reader
-      tab->read_first_record= join_init_read_record;
-      return join_init_read_record(tab);
-    }
-    // Another error OLEGS: may conflict with file->print_error() inside init_parallel_workers()
-    my_error(ER_INTERNAL_ERROR, MYF(0),
-              "Failed to initialize parallel work mgr");
-    return 1;
-  }
-
-  tab->table->status= 0;
-  tab->read_record.table            = tab->table;
-  tab->read_record.thd              = tab->join->thd;
-  tab->read_record.read_record_func = parallel_scan_read_next;
-  tab->read_record.print_error      = TRUE;
-
-  /* Fetch the first row before returning — this is what
-   join_init_read_record does.*/
-  return tab->read_record.read_record();
-}
 
 /*
   Plan refinement stage: do various setup things for the executor
@@ -16739,22 +16696,28 @@ make_join_readinfo(JOIN *join, ulonglong options, uint no_jbuf_after)
     }
   }
   /*
-    Leverage parallel scan for the first join table if possible.
-    Engine-intrinsic constraints (consistent-read-only / locking reads,
-    record format, discarded tablespace, ...) are enforced inside
-    pscan_init_coordinator(), which declines with HA_ERR_UNSUPPORTED and we
-    fall back to the serial reader. Here we only check what needs the SQL-layer
-    JOIN context.
+    Run this query with parallel workers if possible. The first join table
+    must be eligible for a parallel worker scan (a full JT_ALL scan of a
+    parallel-scannable base table) and the query must be a select-project
+    query the workers can run end to end and ship final result rows for
+    (can_run_query_in_workers). Engine-intrinsic constraints (consistent-read
+    only, record format, discarded tablespace, ...) are enforced later inside
+    pscan_init_coordinator(), which declines with HA_ERR_UNSUPPORTED so
+    run_worker_side_join() falls back to serial execution. We leave the table's
+    read_first_record as the serial reader: the manager never scans it (it only
+    collects the workers' result rows), and the serial reader is what the
+    fall-back path needs. do_select() dispatches on worker_side_parallel.
   */
   JOIN_TAB *first= first_linear_tab(join, WITH_BUSH_ROOTS, WITHOUT_CONST_TABLES);
   if (join->thd->variables.parallel_worker_threads > 0 &&
     first && first->type == JT_ALL &&
     first->read_first_record == join_init_read_record &&
     !(first->select && first->select->quick) && // no range quick select
-    table_can_be_parallel_scanned(first->table))
+    table_can_be_parallel_scanned(first->table) &&
+    can_run_query_in_workers(join, first))
   {
     first->use_parallel_scan= true;
-    first->read_first_record       = parallel_init_read_record;
+    join->worker_side_parallel= true;
     if (unlikely(join->thd->trace_started()))
     {
       Json_writer_object trace_pscan(join->thd);
@@ -24342,12 +24305,36 @@ do_select(JOIN *join, Procedure *procedure)
 
     JOIN_TAB *join_tab= join->join_tab +
                         (join->tables_list ? join->const_tables : 0);
-    if (join->outer_ref_cond && !join->outer_ref_cond->val_bool())
-      error= NESTED_LOOP_NO_MORE_ROWS;
-    else
-      error= join->first_select(join,join_tab,0);
-    if (error >= NESTED_LOOP_OK && likely(join->thd->killed != ABORT_QUERY))
-      error= join->first_select(join,join_tab,1);
+    bool run_serial= true;
+    if (join->worker_side_parallel)
+    {
+      /*
+        The parallel workers run this whole select-project query over their
+        disjoint chunks and ship the final result rows; the manager only
+        collects them and sends them to the client. If the engine declines the
+        parallel scan, run_worker_side_join() returns < 0 and we fall through
+        to ordinary serial execution.
+      */
+      JOIN_TAB *scan_tab= first_linear_tab(join, WITH_BUSH_ROOTS,
+                                           WITHOUT_CONST_TABLES);
+      int wr= run_worker_side_join(join, scan_tab);
+      if (wr >= 0)
+      {
+        error= wr ? NESTED_LOOP_ERROR : NESTED_LOOP_OK;
+        run_serial= false;
+      }
+      else
+        join->worker_side_parallel= false;      // declined; run serially
+    }
+    if (run_serial)
+    {
+      if (join->outer_ref_cond && !join->outer_ref_cond->val_bool())
+        error= NESTED_LOOP_NO_MORE_ROWS;
+      else
+        error= join->first_select(join,join_tab,0);
+      if (error >= NESTED_LOOP_OK && likely(join->thd->killed != ABORT_QUERY))
+        error= join->first_select(join,join_tab,1);
+    }
   }
 
   join->thd->limit_found_rows= join->send_records - join->duplicate_rows;
