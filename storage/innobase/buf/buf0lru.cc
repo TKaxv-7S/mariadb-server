@@ -949,6 +949,7 @@ buf_LRU_block_free_non_file_page(
 /*=============================*/
 	buf_block_t*	block)	/*!< in: block, must not contain a file page */
 {
+	mysql_mutex_assert_owner(&buf_pool.mutex);
 	void*		data;
 
 	ut_ad(block->page.state() == buf_page_t::MEMORY);
@@ -978,7 +979,15 @@ buf_LRU_block_free_non_file_page(
 		UT_LIST_ADD_FIRST(buf_pool.free, &block->page);
 		ut_d(block->page.in_free_list = true);
 		buf_pool.try_LRU_scan= true;
-		pthread_cond_broadcast(&buf_pool.done_free);
+		/* One block satisfies exactly one waiter in
+		buf_LRU_get_free_block(). A broadcast would make every
+		waiter stampede on buf_pool.mutex, which the caller is
+		holding; during buf_flush_LRU_list_batch() that starves
+		buf_flush_page_cleaner() of its own mutex. Stragglers are
+		swept by the broadcast at the end of each batch in
+		buf_flush_LRU() and by the timed wait in
+		buf_LRU_get_free_block(). */
+		pthread_cond_signal(&buf_pool.done_free);
 	}
 
 	block->page.set_os_unused();

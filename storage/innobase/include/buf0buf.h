@@ -1628,7 +1628,7 @@ public:
 					purposes without holding any
 					mutex or latch */
   /** Cleared when buf_LRU_get_free_block() fails.
-  Set whenever the free list grows, along with a broadcast of done_free.
+  Set whenever the free list grows, along with a wakeup of done_free.
   Protected by buf_pool.mutex. */
   Atomic_relaxed<bool> try_LRU_scan;
 
@@ -1657,8 +1657,8 @@ public:
   /** list of blocks available for allocate() */
   UT_LIST_BASE_NODE_T(buf_page_t) free;
 
-  /** broadcast each time when the free list grows or try_LRU_scan is set;
-  protected by mutex */
+  /** signalled for each block added to the free list; broadcast when
+  try_LRU_scan is set at the end of a flush batch; protected by mutex */
   pthread_cond_t done_free;
 
 	/** "hazard pointer" used during scan of LRU while doing
