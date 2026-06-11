@@ -1632,6 +1632,12 @@ public:
   Protected by buf_pool.mutex. */
   Atomic_relaxed<bool> try_LRU_scan;
 
+  /** Number of threads waiting in buf_LRU_get_free_block() for done_free.
+  Modified while holding mutex. Also read without holding mutex, in
+  need_LRU_eviction(), so that buf_flush_page_cleaner() keeps producing
+  free blocks until every waiter can be satisfied. */
+  Atomic_relaxed<uint32_t> n_free_waiters;
+
 	/* @} */
 
 	/** @name LRU replacement algorithm fields */

@@ -1518,6 +1518,7 @@ bool buf_pool_t::create() noexcept
   pthread_cond_init(&done_free, nullptr);
 
   try_LRU_scan= true;
+  n_free_waiters= 0;
 
   ut_d(flush_hp.m_mutex= &flush_list_mutex;);
   ut_d(lru_hp.m_mutex= &mutex);

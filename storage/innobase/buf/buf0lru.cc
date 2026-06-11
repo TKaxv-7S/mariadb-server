@@ -414,6 +414,8 @@ got_block:
     return nullptr;
   }
 
+  buf_pool.n_free_waiters.fetch_add(1);
+
   while (!(block= buf_pool.allocate()))
   {
     buf_pool.stat.LRU_waits++;
@@ -432,6 +434,8 @@ got_block:
       buf_LRU_check_size_of_non_data_objects();
     }
   }
+
+  buf_pool.n_free_waiters.fetch_sub(1);
 
   goto got_block;
 }

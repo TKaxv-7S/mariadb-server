@@ -1245,6 +1245,10 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
   size_t free_limit{buf_pool.LRU_scan_depth};
   if (UNIV_UNLIKELY(to_withdraw > free_limit))
     to_withdraw= free_limit;
+  /* Each thread waiting in buf_LRU_get_free_block() will consume one
+  block; raise the target stock of buf_pool.free so that the batch
+  does not end before the already queued demand can be served. */
+  free_limit+= buf_pool.n_free_waiters;
   const auto neighbors= UT_LIST_GET_LEN(buf_pool.LRU) < BUF_LRU_OLD_MIN_LEN
     ? 0 : buf_pool.flush_neighbors;
   fil_space_t *space= nullptr;
@@ -2225,8 +2229,12 @@ static void buf_flush_sync_for_checkpoint(lsn_t lsn) noexcept
     if (buf_pool.need_LRU_eviction())
       /* We intend to only evict pages keeping maximum flush bandwidth for
       flush list pages advancing checkpoint. However, if the LRU tail is full
-      of dirty pages, we might need some flushing. */
-      std::ignore= buf_flush_LRU(srv_io_capacity);
+      of dirty pages, we might need some flushing. The quota follows the
+      queued demand, so that buf_LRU_get_free_block() waiters are not
+      starved while the checkpoint is being advanced. */
+      std::ignore= buf_flush_LRU(std::max<ulint>(srv_io_capacity,
+                                                 buf_pool.LRU_scan_depth +
+                                                 buf_pool.n_free_waiters));
     mysql_mutex_unlock(&buf_pool.mutex);
 
     mysql_mutex_lock(&buf_pool.flush_list_mutex);
@@ -2501,9 +2509,13 @@ bool buf_pool_t::running_out() const noexcept
 TPOOL_SUPPRESS_TSAN
 bool buf_pool_t::need_LRU_eviction() const noexcept
 {
-  /* try_LRU_scan==false means that buf_LRU_get_free_block() is waiting
-  for buf_flush_page_cleaner() to evict some blocks */
-  return UNIV_UNLIKELY(!try_LRU_scan ||
+  /* try_LRU_scan==false requests forced eviction: it is cleared when
+  a scan in buf_LRU_get_free_block() failed to free any block, by
+  LRU_warn(), and by shrink(). n_free_waiters!=0 means that some
+  buf_LRU_get_free_block() are waiting for done_free; each waiter
+  needs one block. Finally, eviction is also needed whenever the
+  buf_pool.free list is running low. */
+  return UNIV_UNLIKELY(!try_LRU_scan || n_free_waiters != 0 ||
                        (UT_LIST_GET_LEN(LRU) > BUF_LRU_MIN_LEN &&
                         UT_LIST_GET_LEN(free) < LRU_scan_depth / 2));
 }
