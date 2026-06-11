@@ -44,6 +44,13 @@ EXECUTE show_denies;
 --error ER_NONEXISTING_GRANT
 REVOKE DENY INSERT ON test.* FROM u@localhost;
 
+--echo # Revoke with existing GRANT without existing DENY
+GRANT INSERT ON test.* TO u@localhost;
+--error ER_NONEXISTING_GRANT
+REVOKE DENY INSERT ON test.* FROM u@localhost;
+REVOKE INSERT ON test.* FROM u@localhost;
+
+
 --echo #
 --echo # Table
 --echo #
@@ -55,6 +62,11 @@ EXECUTE show_denies;
 --echo # Second revoke should error
 --error ER_NONEXISTING_TABLE_GRANT
 REVOKE DENY UPDATE ON test.t1 FROM u@localhost;
+--echo # Revoke with existing GRANT without existing DENY
+GRANT UPDATE ON test.t1 TO u@localhost;
+--error ER_NONEXISTING_TABLE_GRANT
+REVOKE DENY UPDATE ON test.t1 FROM u@localhost;
+REVOKE UPDATE ON test.t1 FROM u@localhost;
 
 --echo #
 --echo # Column
@@ -67,6 +79,11 @@ EXECUTE show_denies;
 --echo # Second revoke should error
 --error ER_NONEXISTING_TABLE_GRANT
 REVOKE DENY SELECT (a) ON test.t1 FROM u@localhost;
+--echo # Revoke with existing GRANT without existing DENY
+GRANT SELECT(a) ON test.t1 TO u@localhost;
+--error ER_NONEXISTING_TABLE_GRANT
+REVOKE DENY SELECT (a) ON test.t1 FROM u@localhost;
+REVOKE SELECT(a) ON test.t1 FROM u@localhost;
 
 --echo #
 --echo # Procedure
@@ -79,6 +96,11 @@ EXECUTE show_denies;
 --echo # Second revoke should error
 --error ER_NONEXISTING_PROC_GRANT
 REVOKE DENY EXECUTE ON PROCEDURE test.p1 FROM u@localhost;
+--echo # Revoke with existing GRANT without existing DENY
+GRANT EXECUTE ON PROCEDURE test.p1 TO u@localhost;
+--error ER_NONEXISTING_PROC_GRANT
+REVOKE DENY EXECUTE ON PROCEDURE test.p1 FROM u@localhost;
+REVOKE EXECUTE ON PROCEDURE test.p1 FROM u@localhost;
 
 --echo #
 --echo # Function
@@ -91,6 +113,11 @@ EXECUTE show_denies;
 --echo # Second revoke should error
 --error ER_NONEXISTING_PROC_GRANT
 REVOKE DENY EXECUTE ON FUNCTION test.f1 FROM u@localhost;
+--echo # Revoke with existing GRANT without existing DENY
+GRANT EXECUTE ON FUNCTION test.f1 TO u@localhost;
+--error ER_NONEXISTING_PROC_GRANT
+REVOKE DENY EXECUTE ON FUNCTION test.f1 FROM u@localhost;
+REVOKE EXECUTE ON FUNCTION test.f1 FROM u@localhost;
 
 --echo #
 --echo # REVOKE ALL, GRANT OPTION clears grants and denies

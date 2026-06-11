@@ -7463,7 +7463,9 @@ static int replace_table_table(THD *thd, const User_table& user_table,
     int res=update_denies_in_user_table(user_table, combo, rights, revoke_grant,
                                        ACL_PRIV_TYPE::PRIV_TYPE_TABLE, db,
                                        table_name, NULL, out);
-    DBUG_RETURN(res);
+    if (res)
+      DBUG_RETURN(1);
+    DBUG_RETURN(revoke_grant?-1:0);
   }
 
   get_grantor(thd, grantor);
