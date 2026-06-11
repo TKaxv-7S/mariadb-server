@@ -2379,8 +2379,8 @@ static ulint page_cleaner_flush_pages_recommendation(ulint last_pages_in,
 	const lsn_t cur_lsn = log_sys.get_lsn_approx();
 	/* We may have cur_lsn < oldest_lsn if
 	log_t::write_buf() or log_t::persist() were executing concurrently. */
-	ulint pct_for_lsn = cur_lsn < oldest_lsn
-                ? 0 : af_get_pct_for_lsn(cur_lsn - oldest_lsn);
+	const lsn_t age = cur_lsn < oldest_lsn ? 0 : cur_lsn - oldest_lsn;
+	ulint pct_for_lsn = af_get_pct_for_lsn(age);
 	time_t curr_time = time(nullptr);
 	const double max_pct = srv_max_buf_pool_modified_pct;
 
@@ -2485,7 +2485,16 @@ func_exit:
 	n_pages = (ulint(double(srv_io_capacity) * total_ratio)
 		   + avg_page_rate + pages_for_lsn) / 3;
 
-	if (n_pages > srv_max_io_capacity) {
+	if (n_pages > srv_max_io_capacity
+	    && age <= log_sys.max_modified_age_async) {
+		/* innodb_io_capacity_max bounds background flushing.
+		Once the age of the oldest modification exceeds the
+		asynchronous flushing point, the target must be allowed
+		to follow the redo generation rate (avg_page_rate,
+		pages_for_lsn). A capped target below that rate could
+		not prevent the age from growing to max_checkpoint_age,
+		where furious flushing would stall all redo writers in
+		log_free_check(). */
 		n_pages = srv_max_io_capacity;
 	}
 
@@ -2749,7 +2758,7 @@ static void buf_flush_page_cleaner() noexcept
     buf_pool.n_flush_inc();
     mysql_mutex_unlock(&buf_pool.flush_list_mutex);
 
-    if (UNIV_UNLIKELY(soft_lsn_limit != 0))
+    if (UNIV_UNLIKELY(soft_lsn_limit != 0) && !srv_adaptive_flushing)
     {
       n= srv_max_io_capacity;
       goto background_flush;
@@ -2768,15 +2777,28 @@ static void buf_flush_page_cleaner() noexcept
                                    MONITOR_FLUSH_BACKGROUND_PAGES,
                                    n_flushed);
     }
+    /* The recommendation must be evaluated unconditionally: it
+    assigns n, and its internal statistics track the flushing cadence
+    across iterations. */
     else if ((n= page_cleaner_flush_pages_recommendation(last_pages,
                                                          oldest_lsn,
                                                          pct_lwm,
                                                          dirty_blocks,
-                                                         dirty_pct)) != 0)
+                                                         dirty_pct)) != 0
+             || UNIV_UNLIKELY(soft_lsn_limit != 0))
     {
+      if (UNIV_UNLIKELY(soft_lsn_limit != 0))
+        /* A buf_flush_ahead() request is pending: the age of the
+        oldest modification exceeded the asynchronous flushing point.
+        The adaptive recommendation follows the redo generation rate
+        above that point; the srv_max_io_capacity floor guarantees
+        progress towards the requested target even when the rate
+        statistics are stale. */
+        n= std::max<ulint>(n, srv_max_io_capacity);
       const ulint tm= ut_time_ms();
       mysql_mutex_lock(&buf_pool.mutex);
-      last_pages= n_flushed= buf_flush_list_holding_mutex(n);
+      last_pages= n_flushed= buf_flush_list_holding_mutex(
+        n, soft_lsn_limit ? soft_lsn_limit : LSN_MAX);
       page_cleaner.flush_time+= ut_time_ms() - tm;
       MONITOR_INC_VALUE_CUMULATIVE(MONITOR_FLUSH_ADAPTIVE_TOTAL_PAGE,
                                    MONITOR_FLUSH_ADAPTIVE_COUNT,
