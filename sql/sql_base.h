@@ -646,6 +646,10 @@ private:
 
 public:
   uint vers_create_count;
+  /*
+    If m_action==OT_ADD_RANGE_INTERVAL_PARTITION: How many range interval
+    partitions should be created
+  */
   uint range_interval_create_count;
 };
 

@@ -892,8 +892,14 @@ bool partition_info::vers_set_hist_part(THD *thd, uint *create_count)
 }
 
 /*
-  Determine the number of range interval partitions to create, like
-  partition_info::vers_set_hist_part.
+  @brief
+    Determine how many range interval partitions we will need to create to
+    cover the values up to the current date and time.
+
+  @param create_count OUT Number of partitions to create.
+
+  @detail
+    This function was inspired by partition_info::vers_set_hist_part()
 */
 bool partition_info::range_interval_set_count(THD* thd, uint *create_count)
 {
@@ -903,7 +909,8 @@ bool partition_info::range_interval_set_count(THD* thd, uint *create_count)
   if (!el || !(item= el->get_col_val(0).item_expression))
   {
     DBUG_ASSERT(0);
-    my_error(ER_INTERNAL_ERROR, MYF(0), "no range partition specified or invalid partition range expression");
+    my_error(ER_INTERNAL_ERROR, MYF(0), "no range partition specified or "
+                                        "invalid partition range expression");
     return true;
   }
   /*
@@ -939,7 +946,7 @@ bool partition_info::range_interval_set_count(THD* thd, uint *create_count)
   Common routine shared by vers_create_partitions and
   range_interval_create_partitions, to create partitions in earnest
 */
-static bool alter_add_partition(
+static bool alter_add_partitions(
   THD* thd, TABLE_LIST *tl,
   Alter_info &alter_info, Alter_table_ctx &alter_ctx,
   Table_specification_st &create_info, uint error)
@@ -1050,7 +1057,7 @@ bool vers_create_partitions(THD *thd, TABLE_LIST* tl, uint num_parts)
                tl->db.str, tl->table_name.str);
       goto exit;
     }
-    if (alter_add_partition(thd, tl, alter_info, alter_ctx, create_info,
+    if (alter_add_partitions(thd, tl, alter_info, alter_ctx, create_info,
                             ER_VERS_HIST_PART_FAILED))
       goto exit;
   }
@@ -1128,7 +1135,7 @@ bool range_interval_create_partitions(THD* thd, TABLE_LIST* tl, uint num_parts)
     part_info->int_type= table->part_info->int_type;
 
     thd->work_part_info= part_info;
-    if (alter_add_partition(thd, tl, alter_info, alter_ctx, create_info,
+    if (alter_add_partitions(thd, tl, alter_info, alter_ctx, create_info,
                             ER_RANGE_INTERVAL_PART_FAILED))
       goto exit;
   }
@@ -2950,6 +2957,11 @@ bool partition_info::set_range_interval(THD* thd, Item* ival,
   Check and set interval value for auto interval partitioning, from
   the ORACLE NUMTODSINTERVAL (is_ds == true) or NUMTOYMINTERVAL (is_ds
   == false) format.
+
+  @return
+    false - Ok, this->interval and this->int_type are set to describe the
+            interval.
+    true  - Invalid interval specified.
 */
 bool partition_info::set_range_interval(int num, LEX_CSTRING &type,
                                         bool is_ds,

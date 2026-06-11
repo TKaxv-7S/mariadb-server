@@ -1248,7 +1248,11 @@ int partition_info_compare_column_values(const void *first_arg,
   return 0;
 }
 
-/* Determine the range of the new RANGE COLUMNS partitions by interval */
+
+/*
+  @brief
+    Determine the range of the new RANGE COLUMNS partitions by interval
+*/
 static bool check_range_interval_constants(THD *thd, partition_info *part_info)
 {
   List_iterator<partition_element> part_it(part_info->partitions);
@@ -1279,7 +1283,8 @@ static bool check_range_interval_constants(THD *thd, partition_info *part_info)
   {
     DBUG_ASSERT(0);
     my_error(ER_INTERNAL_ERROR, MYF(0),
-             "no existing range partition, or that the transition partition has an invalid range");
+             "no existing range partition, or that the transition partition"
+               " has an invalid range");
     return true;
   }
   longlong packed= last_el_item->val_datetime_packed(thd);
@@ -1396,8 +1401,9 @@ static bool check_range_constants(THD *thd, partition_info *part_info)
   DBUG_PRINT("enter", ("RANGE with %d parts, column_list = %u",
                        part_info->num_parts, part_info->column_list));
 
-  if (part_info->is_range_interval() && check_range_interval_constants(thd, part_info))
-      goto end;
+  if (part_info->is_range_interval() &&
+      check_range_interval_constants(thd, part_info))
+    goto end;
   if (part_info->column_list)
   {
     part_column_list_val *loc_range_col_array;

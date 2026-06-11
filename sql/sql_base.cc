@@ -1924,10 +1924,15 @@ bool TABLE::vers_switch_partition(THD *thd, TABLE_LIST *table_list,
 }
 
 /*
-  Similar to vers_switch_partition, find how many partitions to create
-  and calls oc_ctx->request_backoff_action for actions to take when
-  failing opening_and_process_table
+  @brief
+    Similar to vers_switch_partition, find how many partitions to create
+    and call oc_ctx->request_backoff_action to record actions to be taken
+    after returning failure from open_and_process_table().
+
+  @retval true  Error or partition creation was requested.
+  @retval false No error
 */
+
 bool TABLE::range_interval_check_partition(THD *thd, TABLE_LIST *table_list,
                                            Open_table_context *ot_ctx)
 {

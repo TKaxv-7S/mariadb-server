@@ -208,7 +208,9 @@ public:
   };
 
   /* TODO: change to pointer */
+  /* Interval used with auto-partitioning */
   INTERVAL interval;
+  /* Type of the above interval, or INTERVAL_LAST if not defined */
   enum interval_type int_type;
 
   Vers_part_info *vers_info;
@@ -589,6 +591,8 @@ static inline uint range_interval_next_part_no(
     return 0;
   }
   cur= start;
+
+  /* For each partition named pNUMBER, put the NUMBER into an array */
   while ((el= it++))
   {
     name= el->partition_name.str;
@@ -601,12 +605,17 @@ static inline uint range_interval_next_part_no(
     }
   }
   end= cur;
+
+  /* Ok, got the numbers from pN partition names. Sort them. */
   my_qsort(start, end - start, sizeof(int), compare_int);
+
+  /* Look for the gap that's large enough */
   for (cur= start; cur < end && right >= (uint) *cur; cur++)
     right= (uint) *cur + new_parts;
   my_afree(start);
   return right - new_parts + 1;
 }
+
 
 inline
 uint partition_info::next_part_no(uint new_parts) const
