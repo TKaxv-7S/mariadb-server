@@ -38,6 +38,11 @@ no entries
 # Second revoke should error
 REVOKE DENY INSERT ON test.* FROM u@localhost;
 ERROR 42000: There is no such grant defined for user 'u' on host 'localhost'
+# Revoke with existing GRANT without existing DENY
+GRANT INSERT ON test.* TO u@localhost;
+REVOKE DENY INSERT ON test.* FROM u@localhost;
+ERROR 42000: There is no such grant defined for user 'u' on host 'localhost'
+REVOKE INSERT ON test.* FROM u@localhost;
 #
 # Table
 #
@@ -54,6 +59,11 @@ no entries
 # Second revoke should error
 REVOKE DENY UPDATE ON test.t1 FROM u@localhost;
 ERROR 42000: There is no such grant defined for user 'u' on host 'localhost' on table 't1'
+# Revoke with existing GRANT without existing DENY
+GRANT UPDATE ON test.t1 TO u@localhost;
+REVOKE DENY UPDATE ON test.t1 FROM u@localhost;
+ERROR 42000: There is no such grant defined for user 'u' on host 'localhost' on table 't1'
+REVOKE UPDATE ON test.t1 FROM u@localhost;
 #
 # Column
 #
@@ -71,6 +81,11 @@ no entries
 # Second revoke should error
 REVOKE DENY SELECT (a) ON test.t1 FROM u@localhost;
 ERROR 42000: There is no such grant defined for user 'u' on host 'localhost' on table 't1'
+# Revoke with existing GRANT without existing DENY
+GRANT SELECT(a) ON test.t1 TO u@localhost;
+REVOKE DENY SELECT (a) ON test.t1 FROM u@localhost;
+ERROR 42000: There is no such grant defined for user 'u' on host 'localhost' on table 't1'
+REVOKE SELECT(a) ON test.t1 FROM u@localhost;
 #
 # Procedure
 #
@@ -87,6 +102,11 @@ no entries
 # Second revoke should error
 REVOKE DENY EXECUTE ON PROCEDURE test.p1 FROM u@localhost;
 ERROR 42000: There is no such grant defined for user 'u' on host 'localhost' on routine 'p1'
+# Revoke with existing GRANT without existing DENY
+GRANT EXECUTE ON PROCEDURE test.p1 TO u@localhost;
+REVOKE DENY EXECUTE ON PROCEDURE test.p1 FROM u@localhost;
+ERROR 42000: There is no such grant defined for user 'u' on host 'localhost' on routine 'p1'
+REVOKE EXECUTE ON PROCEDURE test.p1 FROM u@localhost;
 #
 # Function
 #
@@ -103,6 +123,11 @@ no entries
 # Second revoke should error
 REVOKE DENY EXECUTE ON FUNCTION test.f1 FROM u@localhost;
 ERROR 42000: There is no such grant defined for user 'u' on host 'localhost' on routine 'f1'
+# Revoke with existing GRANT without existing DENY
+GRANT EXECUTE ON FUNCTION test.f1 TO u@localhost;
+REVOKE DENY EXECUTE ON FUNCTION test.f1 FROM u@localhost;
+ERROR 42000: There is no such grant defined for user 'u' on host 'localhost' on routine 'f1'
+REVOKE EXECUTE ON FUNCTION test.f1 FROM u@localhost;
 #
 # REVOKE ALL, GRANT OPTION clears grants and denies
 #
