@@ -332,21 +332,19 @@ This function is called from a user thread when it needs a clean
 block to read in a page. Note that we only ever get a block from
 the free list. Even when we flush a page or find a page in LRU scan
 we put it to free list to be used.
-* iteration 0:
-  * get a block from the buf_pool.free list
-  * if buf_pool.try_LRU_scan is set
-    * scan LRU up to 100 pages to free a clean block
-    * success:retry the free list
-  * invoke buf_pool.page_cleaner_wakeup(true) and wait its completion
-* subsequent iterations: same as iteration 0 except:
-  * scan the entire LRU list
+* get a block from the buf_pool.free list
+* if buf_pool.try_LRU_scan is set
+  * scan up to 100 blocks at the end of the LRU list to free one
+  * success: retry the free list
+* wake up buf_flush_page_cleaner() unless it is already active, and
+  keep waiting for it to refill the buf_pool.free list, retrying the
+  allocation on each wakeup
 
 @param get  how to allocate the block
 @return the free control block, in state BUF_BLOCK_MEMORY
 @retval nullptr if get==have_no_mutex_soft and memory was not available */
 buf_block_t* buf_LRU_get_free_block(buf_LRU_get get)
 {
-  bool waited= false;
   MONITOR_INC(MONITOR_LRU_GET_FREE_SEARCH);
   if (UNIV_LIKELY(get != have_mutex))
     mysql_mutex_lock(&buf_pool.mutex);
@@ -398,13 +396,11 @@ got_block:
   }
 
   MONITOR_INC(MONITOR_LRU_GET_FREE_LOOPS);
-  if (waited || buf_pool.try_LRU_scan)
+  if (buf_pool.try_LRU_scan)
   {
     /* If no block was in the free list, search from the end of the
-    LRU list and try to free a block there.  If we are doing for the
-    first time we'll scan only tail of the LRU list otherwise we scan
-    the whole LRU list. */
-    if (buf_LRU_scan_and_free_block(waited ? ULINT_UNDEFINED : 100))
+    LRU list whether some block could be freed there. */
+    if (buf_LRU_scan_and_free_block(100))
       goto retry;
 
     /* Tell other threads that there is no point in scanning the LRU
@@ -417,8 +413,6 @@ got_block:
     mysql_mutex_unlock(&buf_pool.mutex);
     return nullptr;
   }
-
-  waited= true;
 
   while (!(block= buf_pool.allocate()))
   {
