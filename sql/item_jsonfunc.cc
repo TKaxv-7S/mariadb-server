@@ -6014,10 +6014,13 @@ bool Item_func_json_array_intersect::fix_length_and_dec(THD *thd)
       goto end;
     }
   }
-
-  if (js1 && prepare_json_and_create_hash(&je1, js1))
+  else
   {
-    return TRUE;
+    String *js1= args[0]->val_json(&tmp_js1);
+    if (js1 && prepare_json_and_create_hash(&je1, js1))
+    {
+      return TRUE;
+    }
   }
 
 end:
