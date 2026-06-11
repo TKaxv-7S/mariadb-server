@@ -891,62 +891,12 @@ bool partition_info::vers_set_hist_part(THD *thd, uint *create_count)
   return false;
 }
 
-/*
-  @brief
-    Determine how many range interval partitions we will need to create to
-    cover the values up to the current date and time.
-
-  @param create_count OUT Number of partitions to create.
-
-  @detail
-    This function was inspired by partition_info::vers_set_hist_part()
-*/
-bool partition_info::range_interval_set_count(THD* thd, uint *create_count)
-{
-  partition_element *el= partitions.elem(partitions.elements - 1);
-  Item *item;
-  /* At least one range partition is defined */
-  if (!el || !(item= el->get_col_val(0).item_expression))
-  {
-    DBUG_ASSERT(0);
-    my_error(ER_INTERNAL_ERROR, MYF(0), "no range partition specified or "
-                                        "invalid partition range expression");
-    return true;
-  }
-  /*
-    Compute the transition partition range time and the query time.
-    They serve as the starting and the end points for new partitions
-  */
-  MYSQL_TIME cur_time, end_time;
-  longlong cur, end;
-  cur= item->val_datetime_packed(thd);
-  unpack_time(cur, &cur_time, MYSQL_TIMESTAMP_DATETIME);
-  thd->variables.time_zone->gmt_sec_to_TIME(&end_time, thd->query_start());
-  end= pack_time(&end_time);
-  *create_count= 0;
-  while (cur <= end)
-  {
-    if (date_add_interval(thd, &cur_time, int_type, interval))
-    {
-      my_error(ER_DATA_OUT_OF_RANGE, MYF(0), "partition range", "INTERVAL");
-      return true;
-    }
-    cur= pack_time(&cur_time);
-    ++*create_count;
-    if (partitions.elements + *create_count > MAX_PARTITIONS)
-    {
-      my_error(ER_TOO_MANY_PARTITIONS_ERROR, MYF(0));
-      return true;
-    }
-  }
-  return false;
-}
 
 /*
   Common routine shared by vers_create_partitions and
   range_interval_create_partitions, to create partitions in earnest
 */
-static bool alter_add_partitions(
+bool alter_add_partitions(
   THD* thd, TABLE_LIST *tl,
   Alter_info &alter_info, Alter_table_ctx &alter_ctx,
   Table_specification_st &create_info, uint error)
@@ -1076,83 +1026,6 @@ exit:
   return result;
 }
 
-/*
-  Similar to vers_create_partitions, create range interval partitions
-*/
-bool range_interval_create_partitions(THD* thd, TABLE_LIST* tl, uint num_parts)
-{
-  bool result= true;
-  Table_specification_st create_info;
-  Alter_info alter_info;
-  TABLE *table= tl->table;
-  partition_info *save_part_info= thd->work_part_info;
-  Query_tables_list save_query_tables;
-  Reprepare_observer *save_reprepare_observer= thd->m_reprepare_observer;
-  bool save_no_write_to_binlog= thd->lex->no_write_to_binlog;
-  thd->m_reprepare_observer= NULL;
-  thd->lex->reset_n_backup_query_tables_list(&save_query_tables);
-  /*
-    Do not write the partition creation triggered by a DML into the
-    binlog
-  */
-  thd->lex->no_write_to_binlog= true;
-
-  DBUG_ASSERT(!thd->is_error());
-  DBUG_ASSERT(num_parts);
-
-  {
-    alter_info.reset();
-    alter_info.partition_flags= ALTER_PARTITION_ADD;
-    create_info.init();
-    create_info.alter_info= &alter_info;
-    Alter_table_ctx alter_ctx(thd, tl, 1, &table->s->db, &table->s->table_name);
-
-    MDL_REQUEST_INIT(&tl->mdl_request, MDL_key::TABLE, tl->db.str,
-                    tl->table_name.str, MDL_SHARED_NO_WRITE, MDL_TRANSACTION);
-    if (thd->mdl_context.acquire_lock(&tl->mdl_request,
-                                      thd->variables.lock_wait_timeout))
-      goto exit;
-    DEBUG_SYNC(thd, "range_interval_create_partitions_lock_acquired");
-    table->mdl_ticket= tl->mdl_request.ticket;
-
-    create_info.db_type= table->s->db_type();
-    DBUG_ASSERT(create_info.db_type);
-
-    partition_info *part_info= new partition_info();
-    if (unlikely(!part_info))
-    {
-      my_error(ER_OUT_OF_RESOURCES, MYF(0));
-      goto exit;
-    }
-    part_info->use_default_num_partitions= false;
-    part_info->use_default_num_subpartitions= false;
-    part_info->num_parts= num_parts;
-    part_info->num_subparts= table->part_info->num_subparts;
-    part_info->subpart_type= table->part_info->subpart_type;
-    part_info->num_columns= table->part_info->num_columns;
-    part_info->part_type= RANGE_PARTITION;
-    /* for partition_info::fix_parser_data to exit early */
-    part_info->int_type= table->part_info->int_type;
-
-    thd->work_part_info= part_info;
-    if (alter_add_partitions(thd, tl, alter_info, alter_ctx, create_info,
-                            ER_RANGE_INTERVAL_PART_FAILED))
-      goto exit;
-  }
-
-  result= false;
-  // NOTE: we have to return DA_EMPTY for new command
-  DBUG_ASSERT(thd->get_stmt_da()->is_ok());
-  thd->get_stmt_da()->reset_diagnostics_area();
-  thd->variables.option_bits|= OPTION_BINLOG_THIS;
-
-exit:
-  thd->work_part_info= save_part_info;
-  thd->m_reprepare_observer= save_reprepare_observer;
-  thd->lex->restore_backup_query_tables_list(&save_query_tables);
-  thd->lex->no_write_to_binlog= save_no_write_to_binlog;
-  return result;
-}
 
 /**
   Warn at the end of DML command if the last history partition is out of LIMIT.
@@ -2935,89 +2808,6 @@ bool partition_info::vers_init_info(THD * thd)
   return false;
 }
 
-/* Check and set interval value for auto interval partitioning */
-bool partition_info::set_range_interval(THD* thd, Item* ival,
-                                        interval_type type,
-                                        const char *table_name)
-{
-  bool error= get_interval_value(thd, ival, type, &interval) ||
-    interval.neg || interval.second_part ||
-    !(interval.year || interval.month || interval.day || interval.hour ||
-      interval.minute || interval.second);
-  if (error)
-  {
-    my_error(ER_PART_WRONG_VALUE, MYF(0), table_name, "INTERVAL");
-    return true;
-  }
-  int_type= type;
-  return false;
-}
-
-/*
-  Check and set interval value for auto interval partitioning, from
-  the ORACLE NUMTODSINTERVAL (is_ds == true) or NUMTOYMINTERVAL (is_ds
-  == false) format.
-
-  @return
-    false - Ok, this->interval and this->int_type are set to describe the
-            interval.
-    true  - Invalid interval specified.
-*/
-bool partition_info::set_range_interval(int num, LEX_CSTRING &type,
-                                        bool is_ds,
-                                        const char *table_name)
-{
-  if (num < 0)
-    goto end;
-  if (is_ds)
-  {
-    if (type.length == 3 && !strncasecmp(type.str, "DAY", 3))
-    {
-      interval.day= num;
-      int_type= INTERVAL_DAY;
-      return false;
-    }
-    else if (type.length == 4 && !strncasecmp(type.str, "HOUR", 4))
-    {
-      interval.hour= num;
-      int_type= INTERVAL_HOUR;
-      return false;
-    }
-    else if (type.length == 6)
-    {
-      if (!strncasecmp(type.str, "MINUTE", 6))
-      {
-        interval.minute= num;
-        int_type= INTERVAL_MINUTE;
-        return false;
-      }
-      else if (!strncasecmp(type.str, "SECOND", 6))
-      {
-        interval.second= num;
-        int_type= INTERVAL_SECOND;
-        return false;
-      }
-    }
-  }
-  else
-  {
-    if (type.length == 4 && !strncasecmp(type.str, "YEAR", 4))
-    {
-      interval.year= num;
-      int_type= INTERVAL_YEAR;
-      return false;
-    }
-    else if (type.length == 5 && !strncasecmp(type.str, "MONTH", 5))
-    {
-      interval.month= num;
-      int_type= INTERVAL_MONTH;
-      return false;
-    }
-  }
-end:
-  my_error(ER_PART_WRONG_VALUE, MYF(0), table_name, "INTERVAL");
-  return true;
-}
 
 /**
   Assign INTERVAL and STARTS for SYSTEM_TIME partitions.

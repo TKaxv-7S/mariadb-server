@@ -1922,64 +1922,6 @@ bool TABLE::vers_switch_partition(THD *thd, TABLE_LIST *table_list,
 
   return false;
 }
-
-/*
-  @brief
-    Similar to vers_switch_partition, find how many partitions to create
-    and call oc_ctx->request_backoff_action to record actions to be taken
-    after returning failure from open_and_process_table().
-
-  @retval true  Error or partition creation was requested.
-  @retval false No error
-*/
-
-bool TABLE::range_interval_check_partition(THD *thd, TABLE_LIST *table_list,
-                                           Open_table_context *ot_ctx)
-{
-  rpl_group_info *rgi= thd->rgi_slave ? thd->rgi_slave : thd->rgi_fake;
-  if (!part_info || !part_info->is_range_interval() ||
-      table_list->mdl_request.type == MDL_EXCLUSIVE ||
-      ot_ctx->range_interval_create_count > 0)
-    return false;
-  switch (thd->lex->sql_command)
-  {
-  case SQLCOM_INSERT_SELECT:
-  case SQLCOM_INSERT:
-  case SQLCOM_LOAD:
-  case SQLCOM_UPDATE:
-  case SQLCOM_REPLACE:
-  case SQLCOM_REPLACE_SELECT:
-  case SQLCOM_UPDATE_MULTI:
-    break;
-  case SQLCOM_END:
-    if (!rgi || !rgi->current_event)
-      return false;
-    else
-    {
-      switch (rgi->current_event->get_type_code())
-      {
-      case UPDATE_ROWS_EVENT:
-      case UPDATE_ROWS_EVENT_V1:
-      case WRITE_ROWS_EVENT:
-      case WRITE_ROWS_EVENT_V1:
-        break;
-      default:
-        return false;
-      }
-    }
-    break;
-  default:
-    return false;
-  }
-  if (part_info->range_interval_set_count(
-        thd, &ot_ctx->range_interval_create_count))
-    return true;
-  if (ot_ctx->range_interval_create_count == 0)
-    return false;
-  ot_ctx->request_backoff_action(
-    Open_table_context::OT_ADD_RANGE_INTERVAL_PARTITION, table_list);
-  return true;
-}
 #endif /* WITH_PARTITION_STORAGE_ENGINE */
 
 

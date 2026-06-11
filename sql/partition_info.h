@@ -563,59 +563,7 @@ Lex_ident_partition make_partition_name(char *move_ptr, uint i)
 
 
 #ifdef WITH_PARTITION_STORAGE_ENGINE
-static int compare_int(const void *a, const void *b)
-{
-  if (*(int *) a < *(int *) b)
-    return -1;
-  if (*(int *) b < *(int *) a)
-    return 1;
-  return 0;
-}
-
-/*
-  Find the first index for naming range interval auto created
-  partitions. Find the first gap large enough to fit in all the new
-  partitions.
-*/
-static inline uint range_interval_next_part_no(
-  uint new_parts, List<partition_element>& partitions)
-{
-  int *cur, *start, *end;
-  List_iterator_fast<partition_element> it(partitions);
-  partition_element *el;
-  const char *name;
-  uint right= new_parts;
-  if(!(start= (int *) my_alloca(sizeof(int) * partitions.elements)))
-  {
-    /* Out of memory */
-    return 0;
-  }
-  cur= start;
-
-  /* For each partition named pNUMBER, put the NUMBER into an array */
-  while ((el= it++))
-  {
-    name= el->partition_name.str;
-    if (name[0] == 'p')
-    {
-      *cur= atoi(name + 1);
-      /* Ignore 0 which could be a failed conversion */
-      if (*cur > 0)
-        cur++;
-    }
-  }
-  end= cur;
-
-  /* Ok, got the numbers from pN partition names. Sort them. */
-  my_qsort(start, end - start, sizeof(int), compare_int);
-
-  /* Look for the gap that's large enough */
-  for (cur= start; cur < end && right >= (uint) *cur; cur++)
-    right= (uint) *cur + new_parts;
-  my_afree(start);
-  return right - new_parts + 1;
-}
-
+uint range_interval_next_part_no(uint new_parts, List<partition_element>& partitions);
 
 inline
 uint partition_info::next_part_no(uint new_parts) const
