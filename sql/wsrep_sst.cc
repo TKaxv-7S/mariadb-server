@@ -37,7 +37,10 @@
 #include <cstdlib>
 #include "debug_sync.h"
 #include "my_rnd.h"
-#include <filesystem>
+
+#ifdef HAVE_SYS_STATVFS_H
+#include <sys/statvfs.h>
+#endif
 
 #include <my_service_manager.h>
 
@@ -657,23 +660,38 @@ static bool sst_report_progress(const bool      joiner,
     const char *path = (wsrep_sst_tmp_dir_real && strlen(wsrep_sst_tmp_dir_real) != 0) ?
       wsrep_sst_tmp_dir_real : mysql_real_data_home_ptr;
 
-    const std::filesystem::path p(path);
-    std::error_code ec;
-    std::filesystem::space_info si = std::filesystem::space(p, ec);
-    constexpr std::uintmax_t failed(-1);
-    if (si.available == failed)
-      si.available= 0;
+    /* Determine available space on the target filesystem. On any failure
+       (or on platforms without statvfs) available stays 0, which keeps the
+       original fail-closed behaviour of aborting the SST. */
+    unsigned long long available= 0;
+#ifdef HAVE_SYS_STATVFS_H
+    struct statvfs si;
+    if (statvfs(path, &si) == 0)
+    {
+      if (si.f_frsize == 0)
+	available= (unsigned long long) si.f_bavail;
+      else
+        available= (unsigned long long) si.f_bavail * si.f_frsize;
+    }
+    else
+    {
+      WSREP_INFO("Failed to determine available space in path %s, errno %d",
+                 path, errno);
+    }
+#else
+    WSREP_INFO("Can't determine available space in path %s", path);
+#endif /* HAVE_SYS_STATVFS_H */
 
     const unsigned long long requested= total + total_prev;
 
     WSREP_INFO("Requested total size %llu space available %llu in path %s",
-               total, (unsigned long long)si.available, path);
+               total, available, path);
 
-    if (requested >= si.available)
+    if (requested >= available)
     {
       WSREP_ERROR("Target path %s does not have enough available space for"
 		  " SST data available: %llu bytes < requested total %llu bytes ",
-		  path, (unsigned long long)si.available, requested);
+		  path, available, requested);
       return true;
     }
   }
