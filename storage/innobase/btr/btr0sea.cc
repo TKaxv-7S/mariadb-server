@@ -165,7 +165,7 @@ void btr_sea::create() noexcept
 
 bool btr_sea::alloc(size_t hash_size) noexcept
 {
-  for (ulong i= 0; i < n_parts; ++i)
+  for (uint i= 0; i < n_parts; ++i)
     if (!parts[i].alloc(hash_size))
     {
       while (i--)
@@ -177,7 +177,7 @@ bool btr_sea::alloc(size_t hash_size) noexcept
 
 inline void btr_sea::clear() noexcept
 {
-  for (ulong i= 0; i < n_parts; ++i)
+  for (uint i= 0; i < n_parts; ++i)
     parts[i].clear();
 }
 
@@ -409,7 +409,7 @@ ATTRIBUTE_COLD ahi_status btr_sea::disable_and_lock() noexcept
 {
   dict_sys.freeze(SRW_LOCK_CALL);
 
-  for (ulong i= 0; i < n_parts; i++)
+  for (uint i= 0; i < n_parts; i++)
     parts[i].latch.wr_lock(SRW_LOCK_CALL);
 
   const ahi_status was_enabled{enabled};
@@ -433,7 +433,7 @@ ATTRIBUTE_COLD ahi_status btr_sea::disable_and_lock() noexcept
 
 ATTRIBUTE_COLD void btr_sea::unlock() noexcept
 {
-  for (ulong i= 0; i < n_parts; i++)
+  for (uint i= 0; i < n_parts; i++)
     parts[i].latch.wr_unlock();
 }
 
@@ -458,7 +458,7 @@ ATTRIBUTE_COLD void btr_sea::enable(bool resize,
       return;
   }
 
-  for (ulong i= 0; i < n_parts; i++)
+  for (uint i= 0; i < n_parts; i++)
     parts[i].latch.wr_lock(SRW_LOCK_CALL);
 
   if (!parts[0].table.array)
@@ -2279,14 +2279,14 @@ static bool ha_validate(const btr_sea::hash_table *table,
 /** Lock all search latches in exclusive mode. */
 static void btr_search_x_lock_all() noexcept
 {
-  for (ulong i= 0; i < btr_search.n_parts; i++)
+  for (uint i= 0; i < btr_search.n_parts; i++)
     btr_search.parts[i].latch.wr_lock(SRW_LOCK_CALL);
 }
 
 /** Unlock all search latches from exclusive mode. */
 static void btr_search_x_unlock_all() noexcept
 {
-  for (ulong i= 0; i < btr_search.n_parts; i++)
+  for (uint i= 0; i < btr_search.n_parts; i++)
     btr_search.parts[i].latch.wr_unlock();
 }
 
@@ -2460,7 +2460,7 @@ state_ok:
 @return true if ok */
 bool btr_search_validate(THD *thd) noexcept
 {
-  for (ulint i= 0; i < btr_search.n_parts; ++i)
+  for (uint i= 0; i < btr_search.n_parts; ++i)
     if (!btr_search_hash_table_validate(thd, i))
       return false;
   return true;

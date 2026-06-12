@@ -19609,7 +19609,7 @@ static MYSQL_SYSVAR_ENUM(adaptive_hash_index,
                          NULL, innodb_adaptive_hash_index_update, false,
                          &innodb_ahi_typelib);
 
-static MYSQL_SYSVAR_ULONG(adaptive_hash_index_parts, btr_search.n_parts,
+static MYSQL_SYSVAR_UINT(adaptive_hash_index_parts, btr_search.n_parts,
   PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_READONLY,
   "Number of InnoDB Adaptive Hash Index Partitions (default 8)",
   NULL, NULL, 8, 1, array_elements(btr_search.parts), 0);

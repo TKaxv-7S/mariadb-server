@@ -428,7 +428,7 @@ public:
   /** number of hash table entries, to be multiplied by n_parts */
   uint n_cells;
   /** innodb_adaptive_hash_index_parts */
-  ulong n_parts;
+  uint n_parts;
   /** Partitions of the adaptive hash index */
   partition parts[512];
 

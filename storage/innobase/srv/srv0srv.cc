@@ -743,7 +743,7 @@ srv_printf_innodb_monitor(
 		fputs("-------------------\n"
 		      "ADAPTIVE HASH INDEX\n"
 		      "-------------------\n", file);
-		for (ulong i = 0; i < btr_search.n_parts; ++i) {
+		for (uint i = 0; i < btr_search.n_parts; ++i) {
 			btr_sea::partition& part= btr_search.parts[i];
 			part.blocks_mutex.wr_lock();
 			fprintf(file, "Hash table size " ULINTPF
@@ -831,7 +831,7 @@ srv_export_innodb_status(void)
 
 #ifdef BTR_CUR_HASH_ADAPT
 	ulint mem_adaptive_hash = 0;
-	for (ulong i = 0; i < btr_search.n_parts; i++) {
+	for (uint i = 0; i < btr_search.n_parts; i++) {
 		mem_adaptive_hash += btr_search.parts[i].get_blocks();
 	}
 	mem_adaptive_hash <<= srv_page_size_shift;
