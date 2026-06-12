@@ -1311,48 +1311,40 @@ ATTRIBUTE_COLD void log_t::checkpoint_margin() noexcept
   ut_ad(this == &log_sys);
   ut_ad(!recv_no_log_write);
 
-  thd_wait_begin(nullptr, THD_WAIT_DISKIO);
-  tpool::tpool_wait_begin();
-
   while (check_for_checkpoint())
   {
-    latch.wr_lock();
-    ut_ad(!recv_no_log_write);
+    /* The age of the last checkpoint is computed without acquiring
+    latch. write_lsn_offset always stays below buf_size, and
+    write_buf() or persist() may reposition its bytes into base_lsn
+    between the two loads in get_lsn_approx(). Whatever the
+    interleaving, lsn + buf_size bounds the exact LSN from above as
+    of the moment base_lsn was loaded: the check below may spuriously
+    wait, but it only proceeds if the exact age was within the limit
+    at that moment. The sampled LSN may also be less than
+    last_checkpoint_lsn while a checkpoint completes concurrently.
+    need_checkpoint is cleared by log_checkpoint_low() and
+    write_checkpoint() as soon as a checkpoint brings the exact age
+    within the limit. */
+    /* The acquire load forbids reordering the loads in
+    get_lsn_approx() before it: a last_checkpoint_lsn sample newer
+    than the LSN sample would credit checkpoint progress against an
+    older LSN and understate the age. */
+    const lsn_t last{last_checkpoint_lsn.load(std::memory_order_acquire)};
+    const lsn_t lsn{get_lsn_approx()};
+    const lsn_t age= lsn < last ? 0 : lsn - last;
+    if (age + buf_size <= max_checkpoint_age)
+      return;
 
-    if (!check_for_checkpoint())
-    {
-    func_exit:
-      latch.wr_unlock();
-      break;
-    }
+    DBUG_EXECUTE_IF("ib_log_checkpoint_avoid_hard",
+                    set_check_for_checkpoint(false); return;);
 
-    const lsn_t last{last_checkpoint_lsn}, max_age{max_checkpoint_age};
-    lsn_t lsn{get_lsn()};
-
-    ut_ad(last >= first_lsn);
-    {
-      if (lsn - last <= max_age)
-      {
-#ifndef DBUG_OFF
-      skip_checkpoint:
-#endif
-        set_check_for_checkpoint(false);
-        goto func_exit;
-      }
-      DBUG_EXECUTE_IF("ib_log_checkpoint_avoid_hard", goto skip_checkpoint;);
-      lsn-= max_age;
-    }
-
-    mysql_mutex_lock(&buf_pool.flush_list_mutex);
-
-    /* We must wait to prevent the tail of the log overwriting the head. */
-    buf_flush_wait(lsn, false);
-    latch.wr_unlock();
-    mysql_mutex_unlock(&buf_pool.flush_list_mutex);
+    /* We must wait to prevent the tail of the log overwriting the
+    head. lsn + buf_size bounds the exact get_lsn() from above, so a
+    checkpoint at this target brings the exact age within
+    max_checkpoint_age; the check above guarantees that the target
+    exceeds last_checkpoint_lsn. */
+    buf_flush_ahead_wait(lsn + buf_size - max_checkpoint_age);
   }
-
-  tpool::tpool_wait_end();
-  thd_wait_end(nullptr);
 }
 
 /** Wait for a log checkpoint if needed.

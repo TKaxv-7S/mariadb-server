@@ -89,6 +89,10 @@ ATTRIBUTE_COLD void buf_flush_wait(lsn_t sync_lsn, bool checkpoint) noexcept;
 @param lsn      buf_pool.get_oldest_modification(LSN_MAX) target
 @param furious  true=furious flushing, false=limit to innodb_io_capacity */
 ATTRIBUTE_COLD void buf_flush_ahead(lsn_t lsn, bool furious) noexcept;
+/** Request furious flushing of dirty pages and wait until a round of
+page cleaner flushing completes, in log_t::checkpoint_margin().
+@param lsn  buf_pool.get_oldest_modification(LSN_MAX) target */
+ATTRIBUTE_COLD void buf_flush_ahead_wait(lsn_t lsn) noexcept;
 
 /** Initialize page_cleaner. */
 ATTRIBUTE_COLD void buf_flush_page_cleaner_init() noexcept;

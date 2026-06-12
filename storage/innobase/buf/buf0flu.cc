@@ -1866,6 +1866,11 @@ inline void log_t::write_checkpoint(lsn_t checkpoint, lsn_t end_lsn) noexcept
 
   next_checkpoint_no++;
   last_checkpoint_lsn= checkpoint;
+  /* The exclusive latch blocks append_prepare(), so get_lsn() is
+  exact and stable; end_lsn may be older if the latch was released
+  above for writing the checkpoint. */
+  if (get_lsn() - checkpoint <= max_checkpoint_age)
+    set_check_for_checkpoint(false);
 
   DBUG_PRINT("ib_log", ("checkpoint ended at " LSN_PF ", flushed to " LSN_PF,
                         checkpoint, get_flushed_lsn()));
@@ -1984,6 +1989,8 @@ static void log_checkpoint_low(lsn_t oldest_lsn, lsn_t end_lsn) noexcept
   {
     /* Do nothing, because nothing was logged (other than a
     FILE_CHECKPOINT record) since the previous checkpoint. */
+    if (end_lsn - log_sys.last_checkpoint_lsn <= log_sys.max_checkpoint_age)
+      log_sys.set_check_for_checkpoint(false);
     log_sys.latch.wr_unlock();
     return;
   }
@@ -2196,6 +2203,45 @@ ATTRIBUTE_COLD void buf_flush_ahead(lsn_t lsn, bool furious) noexcept
     }
     mysql_mutex_unlock(&buf_pool.flush_list_mutex);
   }
+}
+
+/** Request furious flushing of dirty pages and wait until a round of
+page cleaner flushing completes, in log_t::checkpoint_margin().
+Unlike buf_flush_wait(), this does not acquire log_sys.latch and does
+not wait until a target is reached: the caller reevaluates the
+checkpoint age and calls again while it is excessive.
+@param lsn  buf_pool.get_oldest_modification(LSN_MAX) target */
+ATTRIBUTE_COLD void buf_flush_ahead_wait(lsn_t lsn) noexcept
+{
+  ut_ad(!srv_read_only_mode);
+
+  thd_wait_begin(nullptr, THD_WAIT_DISKIO);
+  tpool::tpool_wait_begin();
+  mysql_mutex_lock(&buf_pool.flush_list_mutex);
+
+  if (buf_flush_sync_lsn < lsn)
+  {
+    buf_flush_sync_lsn= lsn;
+    ut_ad(buf_page_cleaner_is_active);
+    buf_pool.page_cleaner_set_idle(false);
+    pthread_cond_signal(&buf_pool.do_flush_list);
+  }
+
+  /* Whenever buf_flush_sync_lsn is cleared, buf_pool.done_flush_list
+  is broadcast in the same critical section, so the wake-up below
+  cannot be missed. A checkpoint may complete and clear
+  log_sys.need_checkpoint between the caller's age check and this
+  point; do not wait for a further round in that case. */
+  if (log_sys.check_for_checkpoint())
+  {
+    MONITOR_INC(MONITOR_FLUSH_SYNC_WAITS);
+    my_cond_wait(&buf_pool.done_flush_list,
+                 &buf_pool.flush_list_mutex.m_mutex);
+  }
+
+  mysql_mutex_unlock(&buf_pool.flush_list_mutex);
+  tpool::tpool_wait_end();
+  thd_wait_end(nullptr);
 }
 
 /** Conduct checkpoint-related flushing for innodb_flush_sync=ON,
@@ -2935,8 +2981,8 @@ ATTRIBUTE_COLD void buf_pool_t::print_flush_info() const noexcept
     "Max Age(Sync) : %" PRIu64 "\n"
     "Capacity      : %" PRIu64 "\n"
     "-------------------",
-    age, age_pct, log_sys.max_modified_age_async, log_sys.max_checkpoint_age,
-    log_sys.log_capacity);
+    age, age_pct, log_sys.max_modified_age_async,
+    log_sys.max_checkpoint_age.load(), log_sys.log_capacity);
 
   sql_print_information("InnoDB: Pending IO count\n"
     "-------------------\n"

@@ -192,7 +192,9 @@ public:
   /** innodb_log_buffer_size (usable append_prepare() size in bytes) */
   unsigned buf_size;
   /** set when there may be need to initiate a log checkpoint.
-  This must hold if lsn - last_checkpoint_lsn > max_checkpoint_age. */
+  This must hold if lsn - last_checkpoint_lsn > max_checkpoint_age.
+  Cleared while holding exclusive latch, by write_checkpoint() and
+  log_checkpoint_low() when the checkpoint age is within the limit. */
   std::atomic<bool> need_checkpoint;
   /** next checkpoint number (protected by latch.wr_lock()) */
   byte next_checkpoint_no;
@@ -309,10 +311,13 @@ public:
 					buf_pool.get_oldest_modification()
 					is exceeded, we start an
 					asynchronous preflush of pool pages */
-	lsn_t		max_checkpoint_age;
+	Atomic_relaxed<lsn_t> max_checkpoint_age;
 					/*!< this is the maximum allowed value
 					for lsn - last_checkpoint_lsn when a
-					new query step is started */
+					new query step is started; written by
+					set_capacity() while holding exclusive
+					latch, also read without holding any
+					latch in checkpoint_margin() */
 
   /** buffer for checkpoint header */
   byte *checkpoint_buf;
@@ -551,7 +556,8 @@ public:
   @param end_lsn    start LSN of the FILE_CHECKPOINT mini-transaction */
   inline void write_checkpoint(lsn_t checkpoint, lsn_t end_lsn) noexcept;
 
-  /** Wait for write_checkpoint() if necessary. */
+  /** Wait until the checkpoint age is within max_checkpoint_age,
+  without acquiring latch. */
   ATTRIBUTE_COLD void checkpoint_margin() noexcept;
 
   /** Variations of write_buf() */
