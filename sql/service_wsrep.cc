@@ -134,7 +134,15 @@ extern "C" my_bool wsrep_get_debug()
  */
 extern "C" my_bool wsrep_thd_is_local(const THD *thd)
 {
-  DBUG_ASSERT(WSREP_NNULL(thd));
+  /* If wsrep is not active on this THD at the moment, the THD can't
+     be a local wsrep transaction — return false rather than asserting.
+     Callers like ha_innobase::write_row consult trx->is_wsrep() (a
+     snapshot taken at trx start), which can stay true even after a
+     code path temporarily flips thd->variables.wsrep_on (e.g. the
+     MDEV-22421 toggle around TR_table::update in ha_commit_trans).
+     Asserting the precondition would crash in that legitimate case. */
+  if (!WSREP_NNULL(thd))
+    return FALSE;
   /*
     async replication IO and background threads have nothing to
     replicate in the cluster, marking them as non-local here to

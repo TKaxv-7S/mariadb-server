@@ -1918,10 +1918,11 @@ int ha_commit_trans(THD *thd, bool all)
 #ifdef WITH_WSREP
       /* mysql.transaction_registry is internal metadata; updates to it
          must not be replicated cluster-wide. Use the per-table ignore
-         flag rather than toggling thd->variables.wsrep_on, which would
-         create an inconsistency between THD-level and trx-level wsrep
-         state (trx->is_wsrep() is a snapshot taken at trx start).
-         Same idiom is used in rpl_gtid.cc for mysql.gtid_slave_pos. */
+         flag rather than toggling thd->variables.wsrep_on — the latter
+         would diverge THD-level wsrep state from the trx-level snapshot
+         (trx->is_wsrep() taken at trx start) and trip the assertion
+         in wsrep_thd_is_local() added by b8c93960e1f. Same idiom is
+         used in rpl_gtid.cc for mysql.gtid_slave_pos. */
       bool saved_wsrep_ignore_table= thd->wsrep_ignore_table;
       thd->wsrep_ignore_table= true;
 #endif

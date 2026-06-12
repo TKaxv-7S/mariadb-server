@@ -4112,10 +4112,20 @@ public:
       disable_wsrep();
   }
 
-  /* We come here if binlog open state has changed */
+  /* Refresh binlog_state if it no longer matches the runtime binlog
+     configuration. Two cases need to fire part2():
+     - mysql_bin_log open state differs from BINLOG_STATE_OPEN, or
+     - wsrep_emulate_bin_log is on with mysql_bin_log closed, but
+       BINLOG_STATE_WSREP isn't set yet. This second case matters for
+       fresh THDs in galera-without-log-bin setups: without it, row
+       writes never reach the binlog cache and wsrep_has_changes()
+       returns false, leading to wsrep_commit_empty() rolling back
+       transactions that did real work. */
   inline void sync_binlog_state_with_binlog_open()
   {
-    if (mysql_bin_log.is_open() != (binlog_state & BINLOG_STATE_OPEN))
+    if (mysql_bin_log.is_open() != (binlog_state & BINLOG_STATE_OPEN) ||
+        (wsrep_emulate_bin_log && !mysql_bin_log.is_open() &&
+         !(binlog_state & BINLOG_STATE_WSREP)))
       sync_binlog_state_with_binlog_open_part2();
   }
   void sync_binlog_state_with_binlog_open_part2();

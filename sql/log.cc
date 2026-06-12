@@ -7804,6 +7804,20 @@ err:
         cache_data->set_incident();
     }
   }
+  else if (WSREP_EMULATE_BINLOG(thd))
+  {
+    /* The binlog file isn't open because the cluster is running with
+       wsrep_emulate_bin_log (galera without log-bin). The caller's
+       intent — produce a binlog event — has no file destination, so
+       skip silently. This is the legitimate "applier/replayer can
+       skip writing binlog events" case noted in the comment at the
+       top of this if/else, generalized to also cover non-direct
+       writes from the applier's re-execution of statement-format
+       events (e.g. CREATE TABLE / INSERT on system-versioned tables,
+       which force statement format via StatementBinlog in
+       mysql_insert). */
+    DBUG_RETURN(0);
+  }
   else
     log_write_error(thd, "Binlog was unexpectedly closed");
 
