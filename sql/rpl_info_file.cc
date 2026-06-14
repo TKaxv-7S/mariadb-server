@@ -390,7 +390,7 @@ template<> void Info_file::Value<Uint32_3>::save_to(IO_CACHE *file)
 */
 static constexpr const char END_MARKER[]= "END_MARKER";
 
-static const Info_file::Mem_fn MASTER_VALUE_LIST[] {
+static const Info_file::Mem_fn MASTER_VALUE_LIST[33] {
   &Master_info_file::master_log_file,
   &Master_info_file::master_log_pos,
   &Master_info_file::master_host,
@@ -467,29 +467,13 @@ Master_info_file::Master_info_file(
 
 
 bool
-Info_file::load_from_file(const Mem_fn *values, size_t size, size_t default_line_count)
+Info_file::load_from_file(const Mem_fn *values, size_t size)
 {
-  long val;
-  /**
-    The first row is temporarily stored in the first value. If it is a line
-    count and not a log name (new format), the second row will overwrite it.
-  */
-  auto &line1= dynamic_cast<Char_array_value<> &>(values[0](this));
-  if (line1.load_from(&file))
+  Value<uint32_t> line_count_value= 1;
+  if (line_count_value.load_from(&file))
     return true;
-  char *end= str2int(line1.buf, 10, 0, INT32_MAX, &val);
-  /**
-    If this first line was not a number - the line count,
-    then it was the first value for real,
-    so the for loop should then skip over it, the index 0 of the list.
-  */
-  size_t i= !end || *end != '\0';
-  /*
-    Set the default after parsing: While std::from_chars() does not replace
-    the output if it failed, it does replace if the line is not fully spent.
-  */
-  size_t line_count= i ? default_line_count: static_cast<size_t>(val);
-  for (; i < line_count; ++i)
+  uint32_t line_count= std::move(line_count_value);
+  for (uint32_t i= 0; i < line_count; ++i)
   {
     int c;
     if (i < size) // line known in the `value_list`
@@ -521,7 +505,7 @@ bool Master_info_file::load_from_file()
 {
   /// Repurpose the trailing `\0` spot to prepare for the `=` or `\n`
   static constexpr size_t LONGEST_KEY_SIZE= sizeof("ssl_verify_server_cert");
-  if (Info_file::load_from_file(MASTER_VALUE_LIST, /* MASTER_CONNECT_RETRY */ 7))
+  if (Info_file::load_from_file(MASTER_VALUE_LIST))
     return true;
   /*
     Info_file::load_from_file() is only for fixed-position entries.
@@ -590,13 +574,12 @@ break_for:;
 
 bool Relay_log_info_file::load_from_file()
 {
-  return Info_file::load_from_file(RELAY_LOG_VALUE_LIST, /* Exec_Master_Log_Pos */ 4);
+  return Info_file::load_from_file(RELAY_LOG_VALUE_LIST);
 }
 
 
-void Info_file::save_to_file(const Mem_fn *values, size_t size, size_t total_line_count)
+void Info_file::save_to_file(const Mem_fn *values, size_t size)
 {
-  DBUG_ASSERT(total_line_count > size);
   my_b_seek(&file, 0);
   /*
     If the new contents take less space than the previous file contents,
@@ -604,7 +587,7 @@ void Info_file::save_to_file(const Mem_fn *values, size_t size, size_t total_lin
     But these garbage don't matter thanks to the number
     of effective lines in the first line of the file.
   */
-  Value<size_t>(total_line_count).save_to(&file);
+  Value<size_t>(size).save_to(&file);
   my_b_write_byte(&file, '\n');
   for (size_t i= 0; i < size; ++i)
   {
@@ -613,19 +596,12 @@ void Info_file::save_to_file(const Mem_fn *values, size_t size, size_t total_lin
       pm(this).save_to(&file);
     my_b_write_byte(&file, '\n');
   }
-  /*
-    Pad additional reserved lines:
-    (1 for the line count line + line count) inclusive -> max line inclusive
-      = line count exclusive <- max line inclusive
-  */
-  for (; total_line_count > size; --total_line_count)
-    my_b_write_byte(&file, '\n');
 }
 
 void Master_info_file::save_to_file()
 {
   // Write the line-based section with some reservations for MySQL additions
-  Info_file::save_to_file(MASTER_VALUE_LIST, 33);
+  Info_file::save_to_file(MASTER_VALUE_LIST);
   /* Write MariaDB `key=value` lines:
     The "value" can then be written individually after generating the`key=`.
   */
