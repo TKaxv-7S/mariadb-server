@@ -764,6 +764,23 @@ static int user_coll_fill(struct user_coll *c, char *users,
       return 0;
 
     (void) getkey_user(users, &cmp_length, FALSE);
+
+    /* THE FIX: Handle empty tokens (consecutive or trailing commas) */
+    if (cmp_length == 0)
+    {
+      while (*users && *users != ',')
+        users++;
+      
+      if (*users == ',')
+      {
+        /* If it's a trailing comma at the end of the string, null-terminate it */
+        if (!users[1])
+          *users = 0;
+        users++;
+      }
+      continue;
+    }
+
     if (cmp_c)
     {
       cmp_user= coll_search(cmp_c, users, cmp_length);
