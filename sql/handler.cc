@@ -8175,6 +8175,14 @@ static inline bool wsrep_check_if_binlog_row(TABLE *table)
        !(table->file->partition_ht()->flags & HTON_WSREP_REPLICATION)) ||
       thd->wsrep_ignore_table == true)
     return 0;
+
+  /* The cluster runs with wsrep_emulate_bin_log (no real binlog), but this
+     THD has wsrep_on=0 (e.g. after SET SESSION wsrep_on=FALSE) — there is
+     no destination for row events. Without this guard, row_logging would
+     stay on and downstream code (flush_and_set_pending_rows_event) asserts
+     on the missing target. */
+  if (wsrep_emulate_bin_log && !WSREP_NNULL(thd) && !mysql_bin_log.is_open())
+    return 0;
 #endif
   return 1;
 }

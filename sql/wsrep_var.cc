@@ -153,15 +153,18 @@ bool wsrep_on_update (sys_var *self, THD* thd, enum_var_type var_type)
   }
   else
   {
-    /* For SET SESSION wsrep_on=..., the sysvar framework has already
-       written thd->variables.wsrep_on. We still need to resync the
-       binlog_state bits — the Galera carve-out in set_binlog_bit()
-       suppresses USER_DISABLED/BYPASS while WSREP(this) is true, so
-       toggling wsrep_on changes which branch applies. Without this,
-       a "SET sql_log_bin=0; SET wsrep_on=0;" sequence leaves the THD
-       inconsistent and trips the invariants in decide_logging_format. */
+    /* SET SESSION wsrep_on=... — sysvar framework wrote
+       thd->variables.wsrep_on. Route through set_wsrep so that
+       enable_wsrep()/disable_wsrep() keep binlog_state in sync:
+       toggling wsrep_on off must clear BINLOG_STATE_ACTIVE_WSREP
+       (otherwise binlog_ready_with_wsrep() stays true and
+       binlog_query() / row events fire with no destination,
+       tripping the assertions in MYSQL_BIN_LOG::write,
+       flush_and_set_pending_rows_event, and binlog_query). Both
+       enable_wsrep() and disable_wsrep() also call set_binlog_bit()
+       so the Galera carve-out's branch selection is resynced. */
     wsrep_set_wsrep_on(thd);
-    thd->set_binlog_bit();
+    thd->set_wsrep(thd->variables.wsrep_on);
   }
 
   if (var_type == OPT_GLOBAL)

@@ -8271,7 +8271,16 @@ int THD::binlog_query(THD::enum_binlog_query_type qtype, char const *query_arg,
                        show_query_type(qtype), (int) query_len, query_arg));
 
   DBUG_ASSERT(query_arg);
-  DBUG_ASSERT(WSREP_EMULATE_BINLOG_NNULL(this) || mysql_bin_log.is_open());
+  /* No logging destination — neither wsrep_emulate active on this THD
+     nor real binlog open. Common case: galera cluster without log-bin
+     where this session has SET SESSION wsrep_on=FALSE. Many callers
+     (mysql_insert, mysql_rm_table_no_locks, etc.) invoke binlog_query
+     unconditionally; rather than gating every site, return success
+     here so the statement just doesn't get logged. Matches the
+     silent-skip already done in MYSQL_BIN_LOG::write for the same
+     scenario. */
+  if (!(WSREP_EMULATE_BINLOG_NNULL(this) || mysql_bin_log.is_open()))
+    DBUG_RETURN(0);
 
   if (get_binlog_local_stmt_filter() == BINLOG_FILTER_SET)
   {

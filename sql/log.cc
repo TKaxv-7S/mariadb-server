@@ -7577,6 +7577,16 @@ bool MYSQL_BIN_LOG::write(Log_event *event_info, my_bool *with_annotate)
 
     if (direct)
     {
+      /* Galera carve-out, direct branch: DDL etc. write directly to
+         the binlog file (not via cache). Under SET SQL_LOG_BIN=OFF the
+         user said "don't log this statement", so skip the file write
+         even though WSREP(thd) is true. Wsrep replicates DDL via TOI,
+         not via the binlog file, so cluster-wide replication is not
+         affected. Matches the analogous gate in
+         write_transaction_to_binlog() for the non-direct path. */
+      if (WSREP(thd) && !thd->variables.sql_log_bin)
+        DBUG_RETURN(0);
+
       /* We come here only for incident events */
       int res;
       uint64 commit_id= 0;
