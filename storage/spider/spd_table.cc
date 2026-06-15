@@ -6424,6 +6424,44 @@ static void spider_update_optimizer_costs(OPTIMIZER_COSTS *costs)
   costs->row_copy_cost=      0.00006087;
 }
 
+static void spider_pre_uninstall()
+{
+  THD *tmp_thd;
+  SPIDER_TRX *trx;
+  SPIDER_CONN *conn;
+  int i= 0;
+  pthread_mutex_lock(&spider_allocated_thds_mutex);
+  /*
+    More than one thd means at least one is not the current thd
+    trying to uninstall spider
+  */
+  if (spider_allocated_thds.array.elements != 1)
+    goto done;
+  tmp_thd = (THD *) my_hash_element(&spider_allocated_thds, 0);
+  if (tmp_thd != current_thd)
+    goto done;
+  trx = (SPIDER_TRX *) thd_get_ha_data(tmp_thd, spider_hton_ptr);
+  if (!trx)
+    goto done;
+  DBUG_ASSERT(tmp_thd == trx->thd);
+  while ((conn = (SPIDER_CONN*) my_hash_element(&trx->trx_conn_hash, i)))
+  {
+    if (conn->table_lock > 0)
+    {
+      if (!conn->trx_start)
+        conn->disable_reconnect = FALSE;
+      if (conn->table_lock != 2)
+        spider_db_unlock_tables(trx->tmp_spider, 0);
+      conn->table_lock = 0;
+    }
+    i++;
+  }
+  spider_free_trx(trx, FALSE);
+  thd_set_ha_data(tmp_thd, spider_hton_ptr, NULL);
+done:
+  pthread_mutex_unlock(&spider_allocated_thds_mutex);
+}
+
 /*
   Create or fix the system tables. See spd_init_query.h for the details.
 */
@@ -6527,6 +6565,7 @@ int spider_db_init(
   spider_hton->create_group_by = spider_create_group_by_handler;
   spider_hton->table_options= spider_table_option_list;
   spider_hton->update_optimizer_costs= spider_update_optimizer_costs;
+  spider_hton->pre_uninstall = spider_pre_uninstall;
 
   if (my_gethwaddr((uchar *) addr))
   {

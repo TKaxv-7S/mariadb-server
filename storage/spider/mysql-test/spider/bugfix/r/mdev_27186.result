@@ -30,5 +30,3 @@ LOCK TABLES t WRITE;
 CREATE OR REPLACE TABLE t (d INT) ENGINE=Spider PARTITION BY LIST COLUMNS (d) (PARTITION p VALUES IN (0));
 ERROR HY000: Unable to connect to foreign data source: localhost
 drop table t;
-Warnings:
-Warning	1620	Plugin is busy and will be uninstalled on shutdown

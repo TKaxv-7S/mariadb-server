@@ -2399,6 +2399,17 @@ static bool do_uninstall(THD *thd, TABLE *table, const LEX_CSTRING *name)
       return 1;
     }
 
+    if (plugin->ref_count &&
+        plugin->plugin->type == MYSQL_STORAGE_ENGINE_PLUGIN)
+    {
+      handlerton* hton= plugin_data(plugin_int_to_ref(plugin), handlerton *);
+      if (hton->pre_uninstall)
+      {
+        mysql_mutex_unlock(&LOCK_plugin);
+        hton->pre_uninstall();
+        mysql_mutex_lock(&LOCK_plugin);
+      }
+    }
     plugin->state= PLUGIN_IS_DELETED;
     if (plugin->ref_count)
       push_warning(thd, Sql_condition::WARN_LEVEL_WARN,
