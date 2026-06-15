@@ -305,12 +305,16 @@ public:
 					a serious error because it is possible
 					we will then overwrite log and spoil
 					crash recovery */
-	lsn_t		max_modified_age_async;
+	Atomic_relaxed<lsn_t> max_modified_age_async;
 					/*!< when this recommended
 					value for lsn -
 					buf_pool.get_oldest_modification()
 					is exceeded, we start an
-					asynchronous preflush of pool pages */
+					asynchronous preflush of pool pages;
+					written by set_capacity() while holding
+					exclusive latch, also read without
+					holding any latch in af_get_pct_for_lsn()
+					and af_needed_for_redo() */
 	Atomic_relaxed<lsn_t> max_checkpoint_age;
 					/*!< this is the maximum allowed value
 					for lsn - last_checkpoint_lsn when a

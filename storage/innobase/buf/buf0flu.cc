@@ -2981,7 +2981,7 @@ ATTRIBUTE_COLD void buf_pool_t::print_flush_info() const noexcept
     "Max Age(Sync) : %" PRIu64 "\n"
     "Capacity      : %" PRIu64 "\n"
     "-------------------",
-    age, age_pct, log_sys.max_modified_age_async,
+    age, age_pct, log_sys.max_modified_age_async.load(),
     log_sys.max_checkpoint_age.load(), log_sys.log_capacity);
 
   sql_print_information("InnoDB: Pending IO count\n"
