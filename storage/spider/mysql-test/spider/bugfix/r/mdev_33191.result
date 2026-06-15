@@ -12,5 +12,3 @@ Warning	138	The high availability feature of Spider has been deprecated and will
 TRUNCATE TABLE t1;
 ERROR 42S02: Table 'test.t3' doesn't exist
 drop table t1, t2;
-Warnings:
-Warning	1620	Plugin is busy and will be uninstalled on shutdown

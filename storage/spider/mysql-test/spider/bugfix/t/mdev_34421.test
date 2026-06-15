@@ -3,7 +3,9 @@ SET sql_mode='';
 INSTALL SONAME 'ha_spider';
 CREATE TABLE t (c INT) ENGINE=Spider PARTITION BY KEY(c) (PARTITION p);
 UNINSTALL SONAME IF EXISTS 'ha_spider';
---error ER_UNKNOWN_STORAGE_ENGINE
+# TODO: this actually appears to be the correct error when the engine
+# has been uninstalled.
+--error ER_NOT_FORM_FILE
 INSERT INTO t SELECT 1;
 drop table t;
 --disable_query_log

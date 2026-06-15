@@ -20,5 +20,3 @@ set global spider_connect_error_interval=0;
 ERROR HY000: Unable to connect to foreign data source: localhost
 drop table t1, t2;
 set global table_open_cache=@old_table_open_cache;
-Warnings:
-Warning	1620	Plugin is busy and will be uninstalled on shutdown

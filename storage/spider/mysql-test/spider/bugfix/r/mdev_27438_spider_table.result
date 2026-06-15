@@ -23,5 +23,3 @@ Error	1034	1 client is using or hasn't closed the table properly
 Error	1034	Table is fixed
 drop server srv;
 drop table t1, t2;
-Warnings:
-Warning	1620	Plugin is busy and will be uninstalled on shutdown

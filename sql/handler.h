@@ -1562,6 +1562,7 @@ struct handlerton : public transaction_participant
     purge thread) they need to be stopped now, not in deinit() or panic().
   */
   void (*pre_shutdown)(void);
+  void (*pre_uninstall)(void);
 
   /* Called at startup to update default engine costs */
   void (*update_optimizer_costs)(OPTIMIZER_COSTS *costs);
