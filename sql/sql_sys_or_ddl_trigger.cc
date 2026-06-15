@@ -1272,7 +1272,8 @@ static void init_thd_for_on_startup_shutdown_triggers(void *stack_top)
     /*
       Turn off read only mode for THD dedicated to handling system triggers
     */
-    thd_for_sys_triggers->security_ctx->master_access|= PRIV_IGNORE_READ_ONLY;
+    thd_for_sys_triggers->security_ctx->
+      master_access.force_allow(PRIV_IGNORE_READ_ONLY, true);
     thd_for_sys_triggers->tx_read_only= false;
     thd_for_sys_triggers->variables.tx_read_only= false;
     lex_start(thd_for_sys_triggers);
