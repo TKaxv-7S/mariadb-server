@@ -45,7 +45,8 @@ public:
   of its chunk that passed the WHERE filter), hands it to the manager and
   blocks until the manager has drained it, then refills it for the next batch.
 */
-#define PWT_CHUNK_ROWS 2048
+//#define PWT_CHUNK_ROWS 2048
+#define PWT_CHUNK_ROWS 128
 
 class pwt_manager;
 typedef struct st_join_table JOIN_TAB;
@@ -59,7 +60,7 @@ class TMP_TABLE_PARAM;
   the access method, a worker-bound clone of the ref (for REF/EQ_REF), and the
   cloned per-table condition. See setup_worker_inner_tabs / worker_join_inner.
 */
-struct pwt_inner_jointab
+struct pwt_jointab
 {
   TABLE          *table;   // worker's private copy of this join table
   enum join_type type;     // JT_EQ_REF, JT_REF or JT_ALL
@@ -82,7 +83,7 @@ struct pwt_inner_jointab
 class pwt_worker
 {
 public:
-  bool worker_run_query_to_manager();
+  void worker_run_query_to_manager();
   pwt_manager  *manager;
   THD             *thd;
   /*
@@ -92,7 +93,6 @@ public:
     refill. See pwt_manager::handoff_batch / the consumer read function.
   */
   bool            batch_full;
-  mysql_mutex_t   LOCK_worker;
   /* Close this worker's private table copies (called by the worker thread). */
   void close_worker_tables();
   void abort_worker();
@@ -106,8 +106,11 @@ public:
 
   /*
     Guards worker->thd while the worker nulls it on exit, so abort_worker()
-    sees either a live THD to awake() or nullptr. See parallel_worker_thread_func.
+    sees either a live THD to awake() or nullptr.
+    See parallel_worker_thread_func.
   */
+  mysql_mutex_t   LOCK_worker;
+
   char            conn_name[MAX_THREAD_NAME+1];
 
   /*
@@ -121,9 +124,10 @@ public:
 
   pthread_t       pthread;
 
+  int worker_join_inner(uint level);
   int worker_emit_row(uint level);
 
-  pwt_inner_jointab   *inner_tabs;
+  pwt_jointab   *join_tables;
 private:
   int worker_run_query();
 
@@ -171,7 +175,7 @@ private:
     (null_value, cached results) while they evaluate concurrently. Created on
     the manager thread in init_parallel_workers; evaluated only by this worker.
     worker_cond is the driving table's pushed condition, applied in the outer
-    scan; the inner tables' conditions live on inner_tabs.
+    scan; the inner tables' conditions live on join_tables.
   */
   Item            *worker_cond;
   Item            **worker_proj;
@@ -181,9 +185,9 @@ private:
     Multi-table join: this worker's private copy of every non-const join table
     (worker_tables[0] == our_scan_table, the parallel-scanned driving table;
     worker_tables[1 .. n_tables-1] are the tables joined after it, in join
-    order). inner_tabs[0 .. n_tables-2] describe how the worker joins those
+    order). join_tables[0 .. n_tables-2] describe how the worker joins those
     non-driving tables (access method, worker-bound ref, cloned condition).
-    For a single-table query n_tables == 1 and inner_tabs is NULL.
+    For a single-table query n_tables == 1 and join_tables is NULL.
   */
   TABLE           **worker_tables;
   uint            n_tables;
@@ -309,7 +313,7 @@ private:
   /* Open this worker's private copy of every non-const join table (into
      worker->worker_tables / our_scan_table). Returns true on error. */
   bool open_worker_tables(THD *thd, pwt_worker *worker);
-  /* Build worker->inner_tabs: per non-driving table, the access method, a
+  /* Build worker->join_tables: per non-driving table, the access method, a
      worker-bound clone of its ref, and a cloned+rebound condition. */
   bool setup_worker_inner_tabs(THD *thd, pwt_worker *worker);
   /* Free the manager and per-worker result containers. */
