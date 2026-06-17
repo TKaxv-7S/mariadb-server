@@ -16357,6 +16357,32 @@ void JOIN_TAB::remove_redundant_bnl_scan_conds()
     set_cond(NULL);
 }
 
+extern int parallel_rr_next(READ_RECORD *info);
+
+int parallel_init_read_record(JOIN_TAB *tab)
+{
+  TABLE *table = tab->table;
+  handler *file = table->file;
+
+  int err= file->pscan_init_coordinator(tab->join->thd->variables.parallel_worker_threads);
+  if (err)
+    return 1;
+
+  tab->read_record.table            = tab->table;
+  tab->read_record.thd              = tab->join->thd;
+  tab->read_record.read_record_func = parallel_rr_next;
+  tab->read_record.print_error      = TRUE;
+
+  Parallel_worker_ctx *worker_ctx= file->pscan_get_worker_context(0);
+  DBUG_ASSERT(worker_ctx);
+  err= file->pscan_init_worker(worker_ctx);
+  if (err)
+    return err; // -1 (no data); >0 (real error)
+  tab->read_record.pscan_worker_ctx = worker_ctx;
+
+  // Fetch the first row before returning — this is what join_init_read_record does.
+  return tab->read_record.read_record();
+}
 
 /*
   Plan refinement stage: do various setup things for the executor
@@ -16713,17 +16739,20 @@ make_join_readinfo(JOIN *join, ulonglong options, uint no_jbuf_after)
     first && first->type == JT_ALL &&
     first->read_first_record == join_init_read_record &&
     !(first->select && first->select->quick) && // no range quick select
-    table_can_be_parallel_scanned(first->table) &&
-    can_run_query_in_workers(join, first))
+    table_can_be_parallel_scanned(first->table) /*&&
+    can_run_query_in_workers(join, first)*/)
   {
+    // first->use_parallel_scan= true;
+    // join->worker_side_parallel= true;
+    // if (unlikely(join->thd->trace_started()))
+    // {
+    //   Json_writer_object trace_pscan(join->thd);
+    //   trace_pscan.add("chosen_for_parallel_scan",
+    //                   first->table->alias.c_ptr());
     first->use_parallel_scan= true;
-    join->worker_side_parallel= true;
-    if (unlikely(join->thd->trace_started()))
-    {
-      Json_writer_object trace_pscan(join->thd);
-      trace_pscan.add("chosen_for_parallel_scan",
-                      first->table->alias.c_ptr());
-    }
+     first->read_first_record       = parallel_init_read_record; 
+      first->read_record.read_record_func = parallel_rr_next;    
+
   }
 
   DBUG_RETURN(FALSE);
@@ -16859,10 +16888,15 @@ void JOIN_TAB::cleanup()
       table->file->ha_ft_end();
     else if (table->hlindex && table->hlindex->context)
       table->hlindex_read_end();
+    else if (use_parallel_scan)
+    {
+      table->file->pscan_end_worker();
+      table->file->pscan_end_coordinator();
+    }
     else
       table->file->ha_index_or_rnd_end();
     preread_init_done= FALSE;
-
+    
     if (table->pos_in_table_list && table->pos_in_table_list->jtbm_subselect)
     {
       if (table->pos_in_table_list->jtbm_subselect->is_jtbm_const_tab)

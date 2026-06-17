@@ -853,3 +853,11 @@ int read_record_func_for_rr_and_unpack(READ_RECORD *info)
   return error;
 }
 
+int parallel_rr_next(READ_RECORD *info)
+{
+  TABLE *table = info->table;
+  handler *file = table->file;
+
+  int err = file->ha_pscan_get_next_row(info->pscan_worker_ctx);
+  return err == 0 ? 0 : rr_handle_error(info, err);
+}

@@ -4093,7 +4093,7 @@ int handler::ha_rnd_pos(uchar *buf, uchar *pos)
   DBUG_RETURN(result);
 }
 
-int handler::ha_pscan_get_next_row(Parallel_scan::Worker_ctx *ctx)
+int handler::ha_pscan_get_next_row(Parallel_worker_ctx *ctx)
 {
   int result;
   DBUG_ENTER("handler::ha_pscan_get_next_row");
@@ -4117,8 +4117,6 @@ int handler::ha_pscan_get_next_row(Parallel_scan::Worker_ctx *ctx)
     table->status= STATUS_NOT_FOUND;   // EOF also marks not-found
   }
   status_var_increment(table->in_use->status_var.ha_read_rnd_next_count);
-
-  DEBUG_SYNC(ha_thd(), "handler_rnd_next_end");
 
   DBUG_RETURN(result);
 }

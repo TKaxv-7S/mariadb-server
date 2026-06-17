@@ -45,7 +45,7 @@
 #include "mem_root_array.h"
 #include <utility>     // pair
 #include <my_attribute.h> /* __attribute__ */
-#include "parallel_reader_iface.h"
+#include "parallel_worker_ctx.h"
 
 class Alter_info;
 class Virtual_column_info;
@@ -3766,7 +3766,7 @@ public:
   virtual int pscan_end_coordinator() { return 0; }
 
   /* Call from the master thread to get context data for each worker */
-  virtual Parallel_scan::Worker_ctx *pscan_get_worker_context(size_t worker_idx)
+  virtual Parallel_worker_ctx *pscan_get_worker_context(size_t worker_idx)
   {
     return nullptr;
   }
@@ -3776,7 +3776,7 @@ public:
     Prepares the worker to start scanning of data from the chunk assigned
     to this worker.  
   */
-  virtual int pscan_init_worker(Parallel_scan::Worker_ctx *wctx)
+  virtual int pscan_init_worker(Parallel_worker_ctx *wctx)
     __attribute__ ((warn_unused_result))
   {
     return HA_ERR_UNSUPPORTED;
@@ -3789,15 +3789,17 @@ public:
     1. Public non-virtual wrapper, called by SQL layer (parallel_rr_next).
     Does the same bookkeeping ha_rnd_next does.
   */
-  int ha_pscan_get_next_row(Parallel_scan::Worker_ctx *ctx);
+  int ha_pscan_get_next_row(Parallel_worker_ctx *ctx);
 
+protected:
   // Engine-private virtual: just fetch the next row, no SQL-side bookkeeping.
-  virtual int pscan_get_next_row(Parallel_scan::Worker_ctx *ctx)
+  virtual int pscan_get_next_row(Parallel_worker_ctx *ctx)
     __attribute__ ((warn_unused_result))
   {
     return HA_ERR_UNSUPPORTED;
   }
 
+public:
   /* Call from worker thread to finish the parallel scanning */
   virtual int pscan_end_worker() { return 0; }
 

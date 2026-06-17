@@ -22,7 +22,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #endif /* WITH_WSREP */
 
 #include "table.h"
-#include "row0pread.h"
+#include "row0pcoord.h"
 
 /* The InnoDB handler: the interface between MySQL and InnoDB. */
 
@@ -504,11 +504,11 @@ protected:
 
 	int pscan_end_coordinator() override;
 
-	Parallel_scan::Worker_ctx *pscan_get_worker_context(size_t worker_idx) override;
+	Parallel_worker_ctx *pscan_get_worker_context(size_t worker_idx) override;
 
-	int pscan_init_worker(::Parallel_scan::Worker_ctx *wctx) override;
+	int pscan_init_worker(Parallel_worker_ctx *wctx) override;
   
-	int pscan_get_next_row(Parallel_scan::Worker_ctx *wctx) override;
+	int pscan_get_next_row(Parallel_worker_ctx *wctx) override;
 
 	int pscan_end_worker() override;
 
@@ -550,7 +550,7 @@ protected:
 	bool                    m_disable_rowid_filter;
 
 	// OLEGS: describe
-	Parallel_reader m_parallel_reader;
+	Parallel_coordinator m_parallel_coordinator;
 
 	dtuple_t *m_pscan_saved_search_tuple{};
 	dtuple_t *m_pscan_start_tuple{};

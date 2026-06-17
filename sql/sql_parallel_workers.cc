@@ -1074,7 +1074,7 @@ int pwt_management::init_parallel_workers(THD *thd, JOIN *join, JOIN_TAB *scan_t
 
   for (i= 0; i < n; i++)
   {
-    Parallel_scan::Worker_ctx *engine_ctx= file->pscan_get_worker_context(i);
+    Parallel_worker_ctx *engine_ctx= file->pscan_get_worker_context(i);
     DBUG_ASSERT(engine_ctx);
     workers[i].engine_ctx= engine_ctx;
 

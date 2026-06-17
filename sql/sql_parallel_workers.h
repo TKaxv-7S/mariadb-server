@@ -157,7 +157,7 @@ public:
   uint            n_tables;
   pwt_inner_tab   *inner_tabs;
 
-  Parallel_scan::Worker_ctx *engine_ctx;
+  Parallel_worker_ctx *engine_ctx;
 };
 
 

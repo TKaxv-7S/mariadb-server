@@ -1,6 +1,7 @@
 /*****************************************************************************
 
 Copyright (c) 2018, 2025, Oracle and/or its affiliates.
+Copyright (c) 2026, MariaDB
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -25,13 +26,13 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 *****************************************************************************/
 
-/** @file include/row0pread.h
-Parallel read interface.
+/** @file include/row0pcoord.h
+Parallel coordinator interface.
 
-Created 2018-01-27 by Sunny Bains. */
+Based on MySQL commit dbfc59ffaf80 created 2018-01-27 by Sunny Bains. */
 
-#ifndef row0par_read_h
-#define row0par_read_h
+#ifndef row0par_coord_h
+#define row0par_coord_h
 
 #include <functional>
 #include <vector>
@@ -41,11 +42,8 @@ Created 2018-01-27 by Sunny Bains. */
 #include "btr0cur.h"
 #include "db0err.h"
 #include "fil0fil.h"
-//#include "os0event.h"
-//#include "page0size.h"
 #include "rem0types.h"
-//#include "ut0mpmcbq.h"
-#include "parallel_reader_iface.h"
+#include "parallel_worker_ctx.h"
 
 /** The core idea is to find the left and right paths down the B+Tree.These
 paths correspond to the scan start and scan end search. Follow the links
@@ -58,35 +56,36 @@ sub-tree dynamically when it is ready for scan.
 
 We want to allow multiple parallel range scans on different indexes at the
 same time. To achieve this split out the scan  context (Scan_ctx) from the
-execution context (Ctx). The Scan_ctx has the index  and transaction
-information and the Ctx keeps track of the cursor for a specific thread
+execution context (Exec_ctx). The Scan_ctx has the index  and transaction
+information and the Exec_ctx keeps track of the cursor for a specific thread
 during the scan.
 
-To start a scan we need to instantiate a Parallel_reader. A parallel reader
-can contain several Scan_ctx instances and a Scan_ctx can contain several
-Ctx instances. Its' the Ctx instances that are eventually executed.
+To start a scan we need to instantiate a Parallel_coordinator. A parallel
+coordinator can contain several Scan_ctx instances and a Scan_ctx can contain
+several Exec_ctx instances. Its' the Exec_ctx instances that are
+eventually executed.
 
-This design allows for a single Parallel_reader to scan multiple indexes
+This design allows for a single Parallel_coordinator to scan multiple indexes
 at once.  Each index range scan has to be added via its add_scan() method.
 This functionality is required to handle parallel partition scans because
 partitions are separate indexes. This can be used to scan completely
-different indexes and tables by one instance of a Parallel_reader.
+different indexes and tables by one instance of a Parallel_coordinator.
 
 To solve the imbalance problem we dynamically split the sub-trees as and
 when required. e.g., If you have 5 sub-trees to scan and 4 threads then
 it will tag the 5th sub-tree as "to_be_split" during phase I (add_scan()),
 the first thread that finishes scanning the first set of 4 partitions will
 then dynamically split the 5th sub-tree and add the newly created sub-trees
-to the execution context (Ctx) run queue in the Parallel_reader. As the
+to the execution context (Ctx) run queue in the Parallel_coordinator. As the
 other threads complete their sub-tree scans they will pick up more execution
-contexts (Ctx) from the Parallel_reader run queue and start scanning the
+contexts (Ctx) from the Parallel_coordinator run queue and start scanning the
 sub-partitions as normal.
 
-Note: The Ctx instances are in a virtual list. Each Ctx instance has a
-range to scan. The start point of this range instance is the end point
-of the Ctx instance scanning values less than its start point. A Ctx
+Note: The Exec_ctx instances are in a virtual list. Each Exec_ctx instance
+has arange to scan. The start point of this range instance is the end point
+of the Exec_ctx instance scanning values less than its start point. An Exec_ctx
 will scan from [Start, End) rows. We use std::shared_ptr to manage the
-reference counting, this allows us to dispose of the Ctx instances
+reference counting, this allows us to dispose of the Exec_ctx instances
 without worrying about dangling pointers.
 
 NOTE: Secondary index scans are not supported currently. */
@@ -101,54 +100,13 @@ struct dict_table_t;
 /** Page number */
 typedef uint32_t page_no_t;
 
-// Forward declaration
-class PCursor;
-
-class Parallel_reader : public Parallel_scan::Coordinator
+class Parallel_coordinator
 {
  public:
-  /** Maximum value for innodb-parallel-read-threads. */
-  constexpr static size_t MAX_THREADS{256};
-
-  /** Maximum value for reserved parallel read threads for data load so that
-  at least this many threads are always available for data load. */
-  constexpr static size_t MAX_RESERVED_THREADS{16};
-
-  /** Maximum value for at most number of parallel read threads that can be
-  spawned. */
-  constexpr static size_t MAX_TOTAL_THREADS{MAX_THREADS + MAX_RESERVED_THREADS};
-
-  using Links = std::vector<page_no_t, ut_allocator<page_no_t>>;
-
   // Forward declaration.
-  class Ctx;
+  class Exec_ctx;
   class Scan_ctx;
-  struct Thread_ctx;
   struct Worker_ctx;
-
-  /** Scan state. */
-  enum class State : uint8_t {
-    /** Undefined  state. */
-    UNDEFINED,
-
-    /** Start/Finish thread state. */
-    THREAD,
-
-    /** Start/Finish Ctx state. */
-    CTX,
-
-    /** Start/Finish page read. */
-    PAGE
-  };
-
-  /** Callback to initialise callers state. */
-  using Start = std::function<dberr_t(Thread_ctx *thread_ctx)>;
-
-  /** Callback to finalise callers state. */
-  using Finish = std::function<dberr_t(Thread_ctx *thread_ctx)>;
-
-  /** Callback to process the rows. */
-  using F = std::function<dberr_t(const Ctx *)>;
 
   /** Specifies the range from where to start the scan and where to end it. */
   struct Scan_range
@@ -196,9 +154,7 @@ class Parallel_reader : public Parallel_scan::Coordinator
 
     /** Copy constructor.
     @param[in] config           Instance to copy from. */
-    Config(const Config &config)
-
-        = default;
+    Config(const Config &config) = default;
 
     /** Range to scan. */
     const Scan_range m_scan_range;
@@ -210,8 +166,6 @@ class Parallel_reader : public Parallel_scan::Coordinator
     const bool m_is_compact{};
 
     /** Tablespace page size. */
-    /// OLEGS: we don't have such a type, temporarily replaced with ulong
-    /// const page_size_t m_page_size;
     const ulint m_zip_size;
 
     /** Btree level from which records need to be read. */
@@ -222,173 +176,52 @@ class Parallel_reader : public Parallel_scan::Coordinator
     size_t m_partition_id{std::numeric_limits<size_t>::max()};
   };
 
-  /** Thread related context information. */
-  struct Thread_ctx
+  struct Worker_ctx : public Parallel_worker_ctx
   {
-    /** Constructor.
-    @param[in]  id  Thread ID */
-    explicit Thread_ctx(size_t id) noexcept : m_thread_id(id) {}
-
-    /** Destructor. */
-    ~Thread_ctx() noexcept {
-      ut_a(m_callback_ctx == nullptr);
-
-      if (m_blob_heap != nullptr) {
-        mem_heap_free(m_blob_heap);
-      }
-    }
-
-    /** Set thread related callback information.
-    @param[in]  ctx callback context */
-    template <typename T>
-    void set_callback_ctx(T *ctx) noexcept {
-      ut_ad(m_callback_ctx == nullptr || ctx == nullptr);
-      m_callback_ctx = ctx;
-    }
-
-    /** Get the thread related callback information/
-    @return return context. */
-    template <typename T>
-    T *get_callback_ctx() noexcept {
-      return static_cast<T *>(m_callback_ctx);
-    }
-
-    /** Create BLOB heap. */
-    void create_blob_heap() noexcept {
-      ut_a(m_blob_heap == nullptr);
-      m_blob_heap = mem_heap_create(UNIV_PAGE_SIZE_DEF);
-    }
-
-    /** @return the worker thread state. */
-    State get_state() const noexcept { return m_state; }
-
-    /** @see PCursor::save_current_user_record_as_last_processed */
-    void save_current_user_record_as_last_processed() noexcept;
-
-    /** @see PCursor::restore_to_last_processed_user_record */
-    void restore_to_last_processed_user_record() noexcept;
-
-    /** @see PCursor::save_previous_user_record_as_last_processed */
-    void save_previous_user_record_as_last_processed() noexcept;
-
-    /** @see PCursor::restore_to_first_unprocessed */
-    void restore_to_first_unprocessed() noexcept;
-
-    /** Thread ID. */
-    size_t m_thread_id{std::numeric_limits<size_t>::max()};
-
-    /** Callback information related to the thread.
-    @note Needs to be created and destroyed by the callback itself. */
-    void *m_callback_ctx{};
-
-    /** BLOB heap per thread. */
-    mem_heap_t *m_blob_heap{};
-
-    /** Worker thread state. */
-    State m_state{State::UNDEFINED};
-
-    /** Current persistent cursor. */
-    PCursor *m_pcursor{};
-
-    /** Current execution context. */
-    std::shared_ptr<Ctx> m_ctx{};
-
-    Thread_ctx(Thread_ctx &&) = delete;
-    Thread_ctx(const Thread_ctx &) = delete;
-    Thread_ctx &operator=(Thread_ctx &&) = delete;
-    Thread_ctx &operator=(const Thread_ctx &) = delete;
-  };
-
-  // handler API
-  struct Worker_ctx : public ::Parallel_scan::Worker_ctx
-  {
-    Worker_ctx(size_t idx, Parallel_reader *r) : worker_idx(idx), preader(r) {}
+    Worker_ctx(size_t idx, Parallel_coordinator *pc)
+      : m_worker_idx(idx), m_pcoordinator(pc) {}
   
-    size_t worker_idx;
-    Parallel_reader *preader;
-    std::shared_ptr<Ctx> exec_ctx{};
+    size_t m_worker_idx;
+    Parallel_coordinator *m_pcoordinator;
+    std::shared_ptr<Parallel_coordinator::Exec_ctx> m_exec_ctx{};
   };
 
   /** Constructor */
-  Parallel_reader() = default;
+  Parallel_coordinator() = default;
 
   /** @return pre-allocated worker context for the given worker index. */
   Worker_ctx *get_worker_ctx(size_t worker_idx) const;
 
-  /** OLEGS: describe */
-  dberr_t init_worker(Worker_ctx *wctx);
-
-  std::shared_ptr<Parallel_reader::Ctx> get_job_for_worker(Worker_ctx *wctx);
+  std::shared_ptr<Parallel_coordinator::Exec_ctx>
+  get_job_for_worker(Worker_ctx *wctx);
 
   /** Initialization.
-    @param[in]  n_threads Number of threads expected to be used by the caller
+    @param[in]  n_workers Number of worker threads expected to be used
     @return 0 - SUCCESS, !=0 - error code
   */
-  int initialize(size_t n_threads) override;
+  int initialize(size_t n_workers);
   
   /** Destroy after finished processing */
-  void cleanup() override;
+  void cleanup();
   
   /** Destructor. */
-  ~Parallel_reader()
+  ~Parallel_coordinator()
   {
     cleanup();
   }
 
-  /** Check how many threads are available for parallel reads.
-  @param[in] n_required   Number of threads required.
-  @param[in] use_reserved true if reserved threads needs to be considered
-  while checking for availability of threads
-  @return number of threads available. */
-  [[nodiscard]] static size_t available_threads(size_t n_required,
-                                                bool use_reserved);
-
   /** Add scan context.
   @param[in,out]  trx         Covering transaction.
   @param[in]      config      Scan condfiguration.
-  @param[in]      f           Callback function.
-  (default is 0 which is leaf level)
   @return error. */
-  [[nodiscard]] dberr_t add_scan(trx_t *trx, const Config &config, F &&f);
-
-  /** Wait for the join of threads spawned by the parallel reader. */
-  /// OLEGS
-  // void join() {
-  //   for (auto &t : m_parallel_read_threads) {
-  //     t.wait();
-  //   }
-  // }
+  [[nodiscard]] dberr_t add_scan(trx_t *trx, const Config &config);
 
   /** Get the error stored in the global error state.
   @return global error state. */
   [[nodiscard]] dberr_t get_error_state() const { return m_err; }
 
-  /** @return true if the tree is empty, else false. */
-  [[nodiscard]] bool is_tree_empty() const {
-    return m_ctx_id.load(std::memory_order_relaxed) == 0;
-  }
-
-  /** Set the callback that must be called before any processing.
-  @param[in] f                  Call before first row is processed.*/
-  void set_start_callback(Start &&f) { m_start_callback = std::move(f); }
-
-  /** Set the callback that must be called after all processing.
-  @param[in] f                  Call after last row is processed.*/
-  void set_finish_callback(Finish &&f) { m_finish_callback = std::move(f); }
-
-  /** Spawn the threads to do the parallel read for the specified range.
-  Don't wait for the spawned to threads to complete.
-  @param[in]  n_threads number of threads that *need* to be spawned
-  @return DB_SUCCESS or error code. */
-  [[nodiscard]] dberr_t spawn(size_t n_threads) noexcept;
-
-  /** Start the threads to do the parallel read for the specified range.
-  @param[in] n_threads          Number of threads to use for the scan.
-  @return DB_SUCCESS or error code. */
-  [[nodiscard]] dberr_t run(size_t n_threads);
-
   /** @return the configured max threads size. */
-  [[nodiscard]] size_t max_threads() const { return m_max_threads; }
+  [[nodiscard]] size_t num_workers() const { return m_n_workers; }
 
   /** @return true if in error state. */
   [[nodiscard]] bool is_error_set() const {
@@ -401,89 +234,44 @@ class Parallel_reader : public Parallel_scan::Coordinator
     m_err.store(err, std::memory_order_relaxed);
   }
 
-  /** Set the number of threads to be spawned.
-  @param[in]  n_threads number of threads to be spawned. */
-  void set_n_threads(size_t n_threads) {
-    ut_ad(n_threads <= m_max_threads);
-    m_n_threads = n_threads;
-  }
-
   // Disable copying.
-  Parallel_reader(const Parallel_reader &) = delete;
-  Parallel_reader(const Parallel_reader &&) = delete;
-  Parallel_reader &operator=(Parallel_reader &&) = delete;
-  Parallel_reader &operator=(const Parallel_reader &) = delete;
+  Parallel_coordinator(const Parallel_coordinator &) = delete;
+  Parallel_coordinator(const Parallel_coordinator &&) = delete;
+  Parallel_coordinator &operator=(Parallel_coordinator &&) = delete;
+  Parallel_coordinator &operator=(const Parallel_coordinator &) = delete;
 
  private:
-  /** Release unused threads back to the pool.
-  @param[in] unused_threads     Number of threads to "release". */
-  /// OLEGS
-  // void release_unused_threads(size_t unused_threads) {
-  //   ut_a(m_max_threads >= unused_threads);
-  //   release_threads(unused_threads);
-  // }
-
   /** Add an execution context to the run queue.
   @param[in] ctx                Execution context to add to the queue. */
-  void enqueue(std::shared_ptr<Ctx> ctx);
+  void enqueue(std::shared_ptr<Exec_ctx> ctx);
 
   /** Fetch the next job execute.
   @return job to execute or nullptr. */
-  [[nodiscard]] std::shared_ptr<Ctx> dequeue();
-
-  /** @return true if job queue is empty. */
-  [[nodiscard]] bool is_queue_empty() const;
-
-  /** Poll for requests and execute.
-  @param[in]  thread_ctx  thread related context information */
-  void worker(Thread_ctx *thread_ctx);
-
-  /** Create the threads and do a parallel read across the partitions. */
-  void parallel_read();
-
-  /** @return true if tasks are still executing. */
-  [[nodiscard]] bool is_active() const {
-    return m_n_completed.load(std::memory_order_relaxed) <
-           m_ctx_id.load(std::memory_order_relaxed);
-  }
+  [[nodiscard]] std::shared_ptr<Exec_ctx> dequeue();
 
  private:
-  // clang-format off
-  using Ctxs =
-      std::list<std::shared_ptr<Ctx>,
-                ut_allocator<std::shared_ptr<Ctx>>>;
+  using Exec_ctxs =
+      std::list<std::shared_ptr<Exec_ctx>,
+                ut_allocator<std::shared_ptr<Exec_ctx>>>;
 
   using Scan_ctxs =
       std::list<std::shared_ptr<Scan_ctx>,
                 ut_allocator<std::shared_ptr<Scan_ctx>>>;
 
-  // clang-format on
+  /** Number of worker threads expected to use. */
+  size_t m_n_workers{};
 
-  /** Maximum number of worker threads to use. */
-  size_t m_max_threads{};
-
-  /** Number of worker threads that will be spawned. */
-  size_t m_n_threads{0};
-
-  /** Indicates the status of the reader */
-  bool is_initialized{false};
+  /** Indicates the status of the coordinator */
+  bool m_is_initialized{false};
 
   /** Mutex protecting m_ctxs. */
-  // OLEG: replaced
-  /// mutable ib_mutex_t m_mutex;
   mutable mysql_mutex_t m_mutex;
 
   /** Contexts that must be executed. */
-  Ctxs m_ctxs{};
+  Exec_ctxs m_ctxs{};
 
   /** Scan contexts. */
   Scan_ctxs m_scan_ctxs{};
-
-  /** For signalling worker threads about events. */
-  /// os_event_t m_event{};
-
-  /** Value returned by previous call of os_event_reset() on m_event. */
-  uint64_t m_sig_count;
 
   /** Counter for allocating scan context IDs. */
   size_t m_scan_ctx_id{};
@@ -491,51 +279,29 @@ class Parallel_reader : public Parallel_scan::Coordinator
   /** Context ID. Monotonically increasing ID. */
   std::atomic_size_t m_ctx_id{};
 
-  /** Total tasks executed so far. */
-  std::atomic_size_t m_n_completed{};
-
-  /** Callback at start (before processing any rows). */
-  Start m_start_callback{};
-
-  /** Callback at end (adter processing all rows). */
-  Finish m_finish_callback{};
-
   /** Error during parallel read. */
   std::atomic<dberr_t> m_err{DB_SUCCESS};
-
-  /** List of threads used for paralle_read purpose. */
-  ///std::vector<IB_thread, ut::allocator<IB_thread>> m_parallel_read_threads;
-
-  /** Number of threads currently doing parallel reads. */
-  static std::atomic_size_t s_active_threads;
-
-  /** If the caller wants to wait for the parallel_read to finish it's run */
-  bool m_sync;
-
-  /** Context information related to each parallel reader thread. */
-  std::vector<Thread_ctx *, ut_allocator<Thread_ctx *>> m_thread_ctxs;
 
   /** Per-worker context exposed to the SQL layer via the handler API.
   Pre-allocated in initialize(N) and freed in cleanup(). */
   std::vector<Worker_ctx *, ut_allocator<Worker_ctx *>> m_worker_ctxs;
 };
 
-/** Parallel reader context. */
-class Parallel_reader::Scan_ctx {
+/** Parallel coordinator context. */
+class Parallel_coordinator::Scan_ctx {
  public:
   /** Constructor.
-  @param[in]  reader          Parallel reader that owns this context.
+  @param[in]  coordinator     Parallel coordinator that owns this context.
   @param[in]  id              ID of this scan context.
   @param[in]  trx             Transaction covering the scan.
   @param[in]  config          Range scan config.
   @param[in]  f               Callback function. */
-  Scan_ctx(Parallel_reader *reader, size_t id, trx_t *trx,
-           const Parallel_reader::Config &config, F &&f);
+  Scan_ctx(Parallel_coordinator *coordinator, size_t id, trx_t *trx,
+           const Parallel_coordinator::Config &config);
 
   /** Destructor. */
   ~Scan_ctx() = default;
 
- // OLEGS commented out: private:
   /** Boundary of the range to scan. */
   struct Iter {
     /** Destructor. */
@@ -603,9 +369,11 @@ class Parallel_reader::Scan_ctx {
   key is null then we assume -infinity.
   @param[in]  block             Page to look in.
   @param[in] key                Key of the first record in the range.
+  @param[in,out]  err           Error code.
   @return the left child page number. */
   [[nodiscard]] page_no_t search(buf_block_t *block,
-                                 const dtuple_t *key) const;
+                                 const dtuple_t *key,
+                                 dberr_t *err) const;
 
   /** Traverse from given sub-tree page number to start of the scan range
   from the given page number.
@@ -651,20 +419,8 @@ class Parallel_reader::Scan_ctx {
   [[nodiscard]] std::shared_ptr<Iter> create_persistent_cursor(
       const page_cur_t &page_cursor, mtr_t *mtr) const;
 
-  /** Build an old version of the row if required.
-  @param[in,out]  rec           Current row read from the index. This can
-                                be modified by this method if an older version
-                                needs to be built.
-  @param[in,out]  offsets       Same as above but pertains to the rec offsets
-  @param[in,out]  heap          Heap to use if a previous version needs to be
-                                built from the undo log.
-  @param[in,out]  mtr           Mini-transaction covering the read.
-  @return true if row is visible to the transaction. */
-  [[nodiscard]] bool check_visibility(const rec_t *&rec, rec_offs *&offsets,
-                                      mem_heap_t *&heap, mtr_t *mtr);
-
   /** Create an execution context for a range and add it to
-  the Parallel_reader's run queue.
+  the Parallel_coordinator's run queue.
   @param[in] range              Range for which to create the context.
   @param[in] split              true if the sub-tree should be split further.
   @return DB_SUCCESS or error code. */
@@ -675,15 +431,10 @@ class Parallel_reader::Scan_ctx {
   @return DB_SUCCESS or error code. */
   [[nodiscard]] dberr_t create_contexts(const Ranges &ranges);
 
-  /** @return the maximum number of threads configured. */
-  [[nodiscard]] size_t max_threads() const { return m_reader->max_threads(); }
-
-  /** Release unused threads back to the pool.
-  @param[in] unused_threads     Number of threads to "release". */
-  /// OLEGS
-  // void release_threads(size_t unused_threads) {
-  //   m_reader->release_threads(unused_threads);
-  // }
+  /** @return the maximum number of worker thread configured. */
+  [[nodiscard]] size_t num_workers() const {
+     return m_coordinator->num_workers();
+  }
 
   /** S lock the index. */
   void index_s_lock();
@@ -697,7 +448,7 @@ class Parallel_reader::Scan_ctx {
   }
 
  private:
-  using Config = Parallel_reader::Config;
+  using Config = Parallel_coordinator::Config;
 
   /** Context ID. */
   size_t m_id{std::numeric_limits<size_t>::max()};
@@ -706,16 +457,13 @@ class Parallel_reader::Scan_ctx {
   Config m_config;
 
   /** Covering transaction. */
-  /*OLEGS: was: const*/ trx_t *m_trx{};
-
-  /** Callback function. */
-  F m_f;
+  trx_t *m_trx{};
 
   /** Depth of the Btree. */
   size_t m_depth{};
 
-  /** The parallel reader. */
-  Parallel_reader *m_reader{};
+  /** The parallel coordinator. */
+  Parallel_coordinator *m_coordinator{};
 
   /** Error during parallel read. */
   mutable std::atomic<dberr_t> m_err{DB_SUCCESS};
@@ -723,7 +471,7 @@ class Parallel_reader::Scan_ctx {
   /** Number of threads that have S locked the index. */
   std::atomic_size_t m_s_locks{};
 
-  friend class Parallel_reader;
+  friend class Parallel_coordinator;
 
   Scan_ctx(Scan_ctx &&) = delete;
   Scan_ctx(const Scan_ctx &) = delete;
@@ -731,18 +479,18 @@ class Parallel_reader::Scan_ctx {
   Scan_ctx &operator=(const Scan_ctx &) = delete;
 };
 
-/** Parallel reader execution context. */
-class Parallel_reader::Ctx {
+/** Parallel coordinator execution context. */
+class Parallel_coordinator::Exec_ctx {
  public:
   /** Constructor.
   @param[in]    id              Thread ID.
   @param[in]    scan_ctx        Scan context.
   @param[in]    range           Range that the thread has to read. */
-  Ctx(size_t id, Scan_ctx *scan_ctx, const Scan_ctx::Range &range)
-      : m_id(id), m_range(range), m_scan_ctx(scan_ctx) {}
+  Exec_ctx(size_t id, Scan_ctx *scan_ctx, const Scan_ctx::Range &range)
+      : m_range(range), m_scan_ctx(scan_ctx), m_id(id) {}
 
   /** Destructor. */
-  ~Ctx() = default;
+  ~Exec_ctx() = default;
 
  public:
   /** @return the context ID. */
@@ -759,12 +507,6 @@ class Parallel_reader::Ctx {
     return m_scan_ctx->m_config.m_index;
   }
 
-  /** @return ID of the thread processing this context */
-  [[nodiscard]] size_t thread_id() const { return m_thread_ctx->m_thread_id; }
-
-  /** @return the thread context of the reader thread. */
-  [[nodiscard]] Thread_ctx *thread_ctx() const { return m_thread_ctx; }
-
   /** @return the partition id of the index.
   @note this is std::numeric_limits<size_t>::max() if the index does not
   belong to a partition. */
@@ -772,43 +514,21 @@ class Parallel_reader::Ctx {
     return m_scan_ctx->m_config.m_partition_id;
   }
 
-  /** Build an old version of the row if required.
-  @param[in,out]  rec           Current row read from the index. This can
-                                be modified by this method if an older version
-                                needs to be built.
-  @param[in,out]  offsets       Same as above but pertains to the rec offsets
-  @param[in,out]  heap          Heap to use if a previous version needs to be
-                                built from the undo log.
-  @param[in,out]  mtr           Mini-transaction covering the read.
-  @return true if row is visible to the transaction. */
-  bool is_rec_visible(const rec_t *&rec, rec_offs *&offsets, mem_heap_t *&heap,
-                      mtr_t *mtr) {
-    return m_scan_ctx->check_visibility(rec, offsets, heap, mtr);
-  }
+  /** Range to read in this context. */
+  Scan_ctx::Range m_range{};
 
- private:
-  /** Traverse the pages by key order.
-  @return DB_SUCCESS or error code. */
-  [[nodiscard]] dberr_t traverse();
+  /** Scanner context. */
+  Scan_ctx *m_scan_ctx{};
 
-  /** Traverse the records in a node.
-  @param[in]  pcursor persistent b-tree cursor
-  @param[in]  mtr mtr
-  @return error */
-  dberr_t traverse_recs(PCursor *pcursor, mtr_t *mtr);
-
-  /** Move to the next node in the specified level.
-  @param[in]  pcursor persistent b-tree cursor
-  @return success */
-  bool move_to_next_node(PCursor *pcursor);
-
+private:
   /** Split the context into sub-ranges and add them to the execution queue.
   @return DB_SUCCESS or error code. */
   [[nodiscard]] dberr_t split();
 
   /** @return true if in error state. */
   [[nodiscard]] bool is_error_set() const {
-    return m_scan_ctx->m_reader->is_error_set() || m_scan_ctx->is_error_set();
+    return m_scan_ctx->m_coordinator->is_error_set() ||
+           m_scan_ctx->is_error_set();
   }
 
  private:
@@ -818,35 +538,7 @@ class Parallel_reader::Ctx {
   /** If true then split the context at the block level. */
   bool m_split{};
 
-public: // OLEGS: for debugging
-  /** Range to read in this context. */
-  Scan_ctx::Range m_range{};
-
-  /** Scanner context. */
-  Scan_ctx *m_scan_ctx{};
-
- public:
-  /** Context information related to executing thread ID. */
-  Thread_ctx *m_thread_ctx{};
-
-  /** Current block. */
-  const buf_block_t *m_block{};
-
-  /** Current row. */
-  const rec_t *m_rec{};
-
-  /** Number of pages traversed by the context. */
-  size_t m_n_pages{};
-
-  /** True if m_rec is the first record in the page. */
-  bool m_first_rec{true};
-
-  rec_offs *m_offsets{};
-
-  /** Start of a new range to scan. */
-  bool m_start{};
-
-  friend class Parallel_reader;
+  friend class Parallel_coordinator;
 };
 
-#endif /* !row0par_read_h */
+#endif /* !row0par_coord_h */

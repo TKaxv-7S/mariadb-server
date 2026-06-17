@@ -99,7 +99,6 @@ bool is_update_query(enum enum_sql_command command);
 #include "row0quiesce.h"
 #include "row0sel.h"
 #include "row0upd.h"
-#include "row0pread.h"
 #include "fil0crypt.h"
 #include "srv0mon.h"
 #include "srv0start.h"
@@ -14515,16 +14514,15 @@ int ha_innobase::pscan_init_coordinator(size_t n_threads)
 		m_prebuilt->trx->read_view.open(m_prebuilt->trx);
 	}
 
-	const Parallel_reader::Scan_range FULL_SCAN;
-  	m_parallel_reader.initialize(n_threads);
+	const Parallel_coordinator::Scan_range FULL_SCAN;
+  	m_parallel_coordinator.initialize(n_threads);
 
 	// Get the clustered index which is always first in the list
 	dict_index_t *index = m_prebuilt->table->indexes.start;
 	ut_ad(index->is_clust());
-	Parallel_reader::Config config(FULL_SCAN, index);
+	Parallel_coordinator::Config config(FULL_SCAN, index);
 
-	dberr_t err = m_parallel_reader.add_scan(m_prebuilt->trx, config,
-		[&](const Parallel_reader::Ctx *ctx) {return DB_SUCCESS;});
+	dberr_t err = m_parallel_coordinator.add_scan(m_prebuilt->trx, config);
 	if (err != DB_SUCCESS) {
 		return convert_error_code_to_mysql(err, m_prebuilt->table->flags,
 						   m_user_thd);
@@ -14532,25 +14530,25 @@ int ha_innobase::pscan_init_coordinator(size_t n_threads)
 	return 0;
 }
 
-::Parallel_scan::Worker_ctx *ha_innobase::pscan_get_worker_context(
+Parallel_worker_ctx *ha_innobase::pscan_get_worker_context(
 	size_t worker_idx)
 {
-	return m_parallel_reader.get_worker_ctx(worker_idx);
+	return m_parallel_coordinator.get_worker_ctx(worker_idx);
 }
 
-int ha_innobase::pscan_init_worker(::Parallel_scan::Worker_ctx *wctx)
+int ha_innobase::pscan_init_worker(Parallel_worker_ctx *wctx)
 {
-	auto worker_ctx= static_cast<Parallel_reader::Worker_ctx*>(wctx);
-	DBUG_ASSERT(worker_ctx && worker_ctx->preader);
-	auto ctx= worker_ctx->preader->get_job_for_worker(worker_ctx);
-	if (ctx == nullptr)
+	auto worker_ctx= static_cast<Parallel_coordinator::Worker_ctx*>(wctx);
+	DBUG_ASSERT(worker_ctx && worker_ctx->m_pcoordinator);
+	auto exec_ctx= worker_ctx->m_pcoordinator->get_job_for_worker(worker_ctx);
+	if (exec_ctx == nullptr)
 		return HA_ERR_END_OF_FILE; // No more data
 	if (int err= ha_rnd_init(/*scan*/ true))
 		return err; // preserve HA_ERR_* (e.g. HA_ERR_TABLE_DEF_CHANGED)
 
-	worker_ctx->exec_ctx= ctx;
-	auto start_tuple= const_cast<dtuple_t *>(ctx->m_range.first->m_tuple);
-	auto end_tuple= const_cast<dtuple_t *>(ctx->m_range.second->m_tuple);
+	worker_ctx->m_exec_ctx= exec_ctx;
+	auto start_tuple= const_cast<dtuple_t *>(exec_ctx->m_range.first->m_tuple);
+	auto end_tuple= const_cast<dtuple_t *>(exec_ctx->m_range.second->m_tuple);
 	ut_ad(start_tuple != nullptr);
 
 	m_pscan_start_tuple= start_tuple;
@@ -14559,7 +14557,8 @@ int ha_innobase::pscan_init_worker(::Parallel_scan::Worker_ctx *wctx)
 
 	/*
 	  Save the prebuilt-owned search_tuple ONCE at worker init.
-      Restored in pscan_end before parallel_reader.cleanup() frees the chunks.
+      Restored in pscan_end before m_parallel_coordinator.cleanup() 
+	  frees the chunks.
 	*/
     m_pscan_saved_search_tuple= m_prebuilt->search_tuple;
 	ut_ad(m_pscan_start_tuple != nullptr);
@@ -14567,7 +14566,7 @@ int ha_innobase::pscan_init_worker(::Parallel_scan::Worker_ctx *wctx)
 }
 
 
-int ha_innobase::pscan_get_next_row(Parallel_scan::Worker_ctx *wctx)
+int ha_innobase::pscan_get_next_row(Parallel_worker_ctx *wctx)
 {
 	/* Loop: when a chunk is exhausted we pull the next job */
 	for (;;) {
@@ -14588,7 +14587,8 @@ int ha_innobase::pscan_get_next_row(Parallel_scan::Worker_ctx *wctx)
 					err= row_search_mvcc(table->record[0], PAGE_CUR_GE,
 											m_prebuilt, 0, 0 /*opening*/);
 				} else {
-					// -infinity: empty (0-field) tuple + PAGE_CUR_G = first user record.
+					/* -infinity: empty (0-field) tuple + PAGE_CUR_G =
+					 first user record. */
 					m_prebuilt->search_tuple = dtuple_create(m_prebuilt->heap, 0);
 					err = row_search_mvcc(table->record[0], PAGE_CUR_G,
 											m_prebuilt, 0, 0 /*opening*/);
@@ -14612,14 +14612,17 @@ int ha_innobase::pscan_get_next_row(Parallel_scan::Worker_ctx *wctx)
 			return convert_error_code_to_mysql(err, m_prebuilt->table->flags,
 											   m_user_thd);
 
-		auto worker_ctx = static_cast<Parallel_reader::Worker_ctx*>(wctx);
-		auto ctx = worker_ctx->preader->get_job_for_worker(worker_ctx);
-		if (ctx == nullptr)
+		auto worker_ctx = static_cast<Parallel_coordinator::Worker_ctx*>(wctx);
+		auto exec_ctx =
+		  worker_ctx->m_pcoordinator->get_job_for_worker(worker_ctx);
+		if (exec_ctx == nullptr)
 			return HA_ERR_END_OF_FILE; // No more data
 
-		worker_ctx->exec_ctx = ctx;
-		m_pscan_start_tuple = const_cast<dtuple_t *>(ctx->m_range.first->m_tuple);
-		m_pscan_end_tuple   = const_cast<dtuple_t *>(ctx->m_range.second->m_tuple);
+		worker_ctx->m_exec_ctx = exec_ctx;
+		m_pscan_start_tuple =
+		  const_cast<dtuple_t *>(exec_ctx->m_range.first->m_tuple);
+		m_pscan_end_tuple  =
+		  const_cast<dtuple_t *>(exec_ctx->m_range.second->m_tuple);
 		ut_ad(m_pscan_start_tuple != nullptr);
 		m_pscan_first_call  = true;
 		// loop: re-enter the search for the new chunk
@@ -14628,7 +14631,8 @@ int ha_innobase::pscan_get_next_row(Parallel_scan::Worker_ctx *wctx)
 
 int ha_innobase::pscan_end_worker()
 {
-	ha_rnd_end();
+	if (inited == RND)
+	  ha_rnd_end();
 	if (m_pscan_saved_search_tuple)
 	{
 		m_prebuilt->search_tuple = m_pscan_saved_search_tuple;
@@ -14643,7 +14647,7 @@ int ha_innobase::pscan_end_worker()
 
 int ha_innobase::pscan_end_coordinator()
 {
-	m_parallel_reader.cleanup();
+	m_parallel_coordinator.cleanup();
 	return 0;
 }
 
