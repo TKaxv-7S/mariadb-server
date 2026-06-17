@@ -1,0 +1,31 @@
+#
+# MDEV-40014 Access to freed/poisoned memory in SHOW GRANTS
+# after REVOKE DENY, if only negative grants are present
+#
+CREATE TABLE t1(val int);
+CREATE USER u;
+DENY EXECUTE ON test.* TO u;
+DENY UPDATE (val) ON t1 TO u;
+REVOKE DENY EXECUTE ON test.* FROM u;
+SHOW GRANTS FOR u;
+Grants for u@%
+GRANT USAGE ON *.* TO `u`@`%`
+DENY UPDATE (`val`) ON `test`.`t1` TO `u`@`%`
+DROP USER u;
+DROP TABLE t1;
+#
+# MDEV-40028 Assertion `rights.allow_bits() == merged->cols' failed in int update_role_columns
+#
+CREATE TABLE t (c1 INT, c2 INT, c3 int);
+CREATE ROLE r;
+DENY SELECT (c2) ON t TO r;
+SHOW GRANTS FOR r;
+Grants for r
+GRANT USAGE ON *.* TO `r`
+DENY SELECT (`c2`) ON `test`.`t` TO `r`
+REVOKE DENY SELECT (c2) ON t FROM r;
+SHOW GRANTS FOR r;
+Grants for r
+GRANT USAGE ON *.* TO `r`
+DROP ROLE r;
+DROP TABLE t;
