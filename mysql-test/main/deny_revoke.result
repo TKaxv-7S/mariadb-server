@@ -71,7 +71,6 @@ DENY SELECT (a) ON test.t1 TO u@localhost;
 SHOW GRANTS FOR u@localhost;
 Grants for u@localhost
 GRANT ALL PRIVILEGES ON *.* TO `u`@`localhost`
-GRANT SELECT ON `test`.`t1` TO `u`@`localhost`
 DENY SELECT (`a`) ON `test`.`t1` TO `u`@`localhost`
 # END SHOW GRANTS
 REVOKE DENY SELECT (a) ON test.t1 FROM u@localhost;

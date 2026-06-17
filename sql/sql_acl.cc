@@ -7036,7 +7036,7 @@ static int apply_deny_column(const LEX_USER &combo, const access_t &access,const
     String col_name(column, strlen(column),
                     system_charset_info);
     grant_column=
-        new GRANT_COLUMN(col_name, access);
+        new (&grant_memroot) GRANT_COLUMN(col_name, access);
     if (!grant_column)
       return 1;
     if (my_hash_insert(&grant_table->hash_columns, (uchar *) grant_column))
@@ -7183,7 +7183,6 @@ static int replace_column_table(GRANT_TABLE *g_t, const User_table &user_table,
   int result=0;
   uchar key[MAX_KEY_LENGTH];
   uint key_prefix_length;
-  KEY_PART_INFO *key_part= table->key_info->key_part;
   DBUG_ENTER("replace_column_table");
 
   if (is_deny)
@@ -7211,6 +7210,7 @@ static int replace_column_table(GRANT_TABLE *g_t, const User_table &user_table,
      DBUG_RETURN(0);
   } /* is_deny */
 
+  KEY_PART_INFO *key_part= table->key_info->key_part;
   table->use_all_columns();
   table->field[0]->store(combo.host.str,combo.host.length,
                          system_charset_info);
@@ -8268,7 +8268,7 @@ static int update_role_columns(GRANT_TABLE *merged,
 {
   IF_DBUG(access_t rights(NO_ACL);,)
   int changed= 0;
-  if (!merged->cols)
+  if (!merged->has_column_priv_info())
   {
     changed= merged->hash_columns.records > 0;
     my_hash_reset(&merged->hash_columns);
@@ -8728,7 +8728,12 @@ int mysql_table_grant(THD *thd, TABLE_LIST *table_list,
         }
         if (unlikely(f == (Field *)-1))
           DBUG_RETURN(TRUE);
-        column_priv|= column->rights;
+        /*
+          Aggregate column allow bits in mysql.tables_priv/
+          GRANT_TABLE::cols
+        */
+        if (!is_deny)
+          column_priv|= column->rights;
       }
       close_mysql_tables(thd);
     }
@@ -8762,8 +8767,8 @@ int mysql_table_grant(THD *thd, TABLE_LIST *table_list,
     Don't open column table if we don't need it !
   */
   int tables_to_open= Table_user | Table_tables_priv;
-  if (column_priv ||
-      (revoke_grant && ((rights & COL_ACLS) || columns.elements)))
+  if (!is_deny &&
+     (column_priv ||(revoke_grant && ((rights & COL_ACLS) || columns.elements))))
     tables_to_open|= Table_columns_priv;
 
   /*
@@ -8896,7 +8901,7 @@ int mysql_table_grant(THD *thd, TABLE_LIST *table_list,
 
     /* TODO(cvicentiu) refactor replace_table_table to use Tables_priv_table
        instead of TABLE directly. */
-    if (tables.columns_priv_table().table_exists())
+    if (is_deny || tables.columns_priv_table().table_exists())
     {
       /* TODO(cvicentiu) refactor replace_column_table to use Columns_priv_table
          instead of TABLE directly. */
