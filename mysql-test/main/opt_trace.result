@@ -11544,7 +11544,7 @@ SELECT 'a\0' LIMIT 0	{
         "select_id": 1,
         "steps": [
           {
-            "expanded_query": "select 'a\\\\0' AS `a\\\\x00` limit 0"
+            "expanded_query": "select 'a\\0' AS `a\\x00` limit 0"
           }
         ]
       }
@@ -12923,21 +12923,21 @@ LENGTH("a")
 1
 SELECT json_valid(trace) AS valid_json, json_detailed(json_extract(trace,'$**.expanded_query')) AS expanded_query FROM information_schema.optimizer_trace;
 valid_json	expanded_query
-1	["select octet_length('a') AS `LENGTH(\\\"a\\\")`"]
+1	["select octet_length('a') AS `LENGTH(\"a\")`"]
 # Test 2: Nested quotes
 SELECT LENGTH("a\"b");
 LENGTH("a\"b")
 3
 SELECT json_valid(trace) AS valid_json, json_detailed(json_extract(trace,'$**.expanded_query')) FROM information_schema.optimizer_trace;
 valid_json	json_detailed(json_extract(trace,'$**.expanded_query'))
-1	["select octet_length('a\\\"b') AS `LENGTH(\\\"a\\\\\\\"b\\\")`"]
+1	["select octet_length('a\"b') AS `LENGTH(\"a\\\"b\")`"]
 # Test 3: Special characters with quotes
 SELECT LENGTH("a\n\"b\t\"c");
 LENGTH("a\n\"b\t\"c")
 7
 SELECT json_valid(trace) AS valid_json, json_detailed(json_extract(trace,'$**.expanded_query')) FROM information_schema.optimizer_trace;
 valid_json	json_detailed(json_extract(trace,'$**.expanded_query'))
-1	["select octet_length('a\\\\n\\\"b\\\\t\\\"c') AS `LENGTH(\\\"a\\\\n\\\\\\\"b\\\\t\\\\\\\"c\\\")`"]
+1	["select octet_length('a\\n\"b\\t\"c') AS `LENGTH(\"a\\n\\\"b\\t\\\"c\")`"]
 # Test 4: New line
 SELECT COLUMN_JSON(COLUMN_CREATE("foo", "New
 line" AS CHAR));
@@ -12946,21 +12946,21 @@ line" AS CHAR))
 {"foo":"New\u000Aline"}
 SELECT json_valid(trace) AS valid_json, json_detailed(json_extract(trace,'$**.expanded_query')) FROM information_schema.optimizer_trace;
 valid_json	json_detailed(json_extract(trace,'$**.expanded_query'))
-1	["select column_json(column_create('foo','New\\\\nline' AS char charset latin1 collate latin1_swedish_ci )) AS `COLUMN_JSON(COLUMN_CREATE(\\\"foo\\\", \\\"New\\nline\\\" AS CHAR))`"]
+1	["select column_json(column_create('foo','New\\nline' AS char charset latin1 collate latin1_swedish_ci )) AS `COLUMN_JSON(COLUMN_CREATE(\"foo\", \"New\nline\" AS CHAR))`"]
 # Test 5: Backslashes
 SELECT LENGTH("a\\b");
 LENGTH("a\\b")
 3
 SELECT json_valid(trace) AS valid_json, json_detailed(json_extract(trace,'$**.expanded_query')) FROM information_schema.optimizer_trace;
 valid_json	json_detailed(json_extract(trace,'$**.expanded_query'))
-1	["select octet_length('a\\\\\\\\b') AS `LENGTH(\\\"a\\\\\\\\b\\\")`"]
+1	["select octet_length('a\\\\b') AS `LENGTH(\"a\\\\b\")`"]
 # Test 6: JSON functions
 SELECT JSON_EXTRACT('{"key":"value"}', "$.key");
 JSON_EXTRACT('{"key":"value"}', "$.key")
 "value"
 SELECT json_valid(trace) AS valid_json, json_detailed(json_extract(trace,'$**.expanded_query')) FROM information_schema.optimizer_trace;
 valid_json	json_detailed(json_extract(trace,'$**.expanded_query'))
-1	["select json_extract('{\\\"key\\\":\\\"value\\\"}','$.key') AS `JSON_EXTRACT('{\\\"key\\\":\\\"value\\\"}', \\\"$.key\\\")`"]
+1	["select json_extract('{\"key\":\"value\"}','$.key') AS `JSON_EXTRACT('{\"key\":\"value\"}', \"$.key\")`"]
 # Test 7: Failed escape due to illegal symbol
 SET NAMES utf8mb4;
 SELECT "𝄞" AS x;
@@ -12968,7 +12968,7 @@ x
 𝄞
 SELECT json_valid(trace) AS valid_json, json_detailed(json_extract(trace,'$**.expanded_query')) FROM information_schema.optimizer_trace;
 valid_json	json_detailed(json_extract(trace,'$**.expanded_query'))
-1	["Error: failed to escape query string for JSON output"]
+1	["select '𝄞' AS x"]
 SET NAMES DEFAULT;
 set optimizer_trace=@saved_optimizer_trace;
 # End of 10.11 tests
