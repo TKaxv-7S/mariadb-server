@@ -77,7 +77,17 @@ public:
   bool can_return_date() const override { return false; }
   bool can_return_time() const override { return false; }
 
+  bool has_methods() const override { return true; }
+  bool has_functors() const override { return true; }
+  virtual Item *create_item_method(THD *thd,
+                                   object_method_type_t type,
+                                   const Lex_ident_sys &ca,
+                                   const Lex_ident_sys &cb,
+                                   List<Item> *args,
+                                   const Lex_ident_cli_st &query_fragment)
+                                                   const override;
 };
+
 
 extern Type_handler_xmltype type_handler_xmltype;
 
