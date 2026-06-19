@@ -3533,9 +3533,6 @@ mysql_execute_command(THD *thd, bool is_called_from_prepared_stmt)
   */
   thd->last_sql_command= lex->sql_command;
 
-  init_optimizer_context_replay_if_needed(thd);
-  init_optimizer_context_recorder_if_needed(thd, all_tables);
-
   /*
     Reset warning count for each query that uses tables
     A better approach would be to reset this for any commands
@@ -3736,6 +3733,9 @@ mysql_execute_command(THD *thd, bool is_called_from_prepared_stmt)
   /* After SET STATEMENT is done, we can initialize the Optimizer Trace: */
   ots.init(thd, all_tables, lex->sql_command, &lex->var_list, thd->query(),
            thd->query_length(), thd->variables.character_set_client);
+
+  init_optimizer_context_replay_if_needed(thd);
+  init_optimizer_context_recorder_if_needed(thd, all_tables);
 
   if (thd->lex->mi.connection_name.str == NULL)
       thd->lex->mi.connection_name= thd->variables.default_master_connection;
