@@ -195,8 +195,7 @@ void _CONCAT_UNDERSCORED(turn_parser_debug_on,yyparse)()
 
 %code requires
 {
-// Master_info_file, enum_master_use_gtid, std::optional
-#include "rpl_master_info_file.h"
+#include "rpl_info_file.h"
 }
 
 %union {

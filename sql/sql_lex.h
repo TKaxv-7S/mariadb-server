@@ -41,7 +41,7 @@
 #include "table.h"
 #include "sql_class.h"                // enum enum_column_usage
 #include "select_handler.h"
-#include "rpl_master_info_file.h"     // Master_info_file
+#include "rpl_info_file.h"            // *_info_file
 
 /* Used for flags of nesting constructs */
 #define SELECT_NESTING_MAP_SIZE 64

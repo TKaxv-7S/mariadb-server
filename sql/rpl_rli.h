@@ -17,7 +17,7 @@
 #ifndef RPL_RLI_H
 #define RPL_RLI_H
 
-#include "rpl_relay_log_info_file.h"
+#include "rpl_info_file.h"
 #include "rpl_tblmap.h"
 #include "rpl_reporting.h"
 #include "rpl_utility.h"

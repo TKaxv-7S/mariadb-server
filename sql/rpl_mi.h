@@ -18,7 +18,6 @@
 
 #ifdef HAVE_REPLICATION
 
-#include "rpl_master_info_file.h"
 #include "rpl_rli.h"
 #include "rpl_reporting.h"
 #include <my_sys.h>
