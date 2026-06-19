@@ -29,3 +29,29 @@ Grants for r
 GRANT USAGE ON *.* TO `r`
 DROP ROLE r;
 DROP TABLE t;
+#
+# MDEV-36503 Single routine-level DENY EXECUTE hides other routine metadata in the database
+#
+CREATE DATABASE d1;
+CREATE DEFINER=root@localhost PROCEDURE d1.p1() BEGIN SELECT 1; END$$
+CREATE DEFINER=root@localhost PROCEDURE d1.p2() BEGIN SELECT 2; END$$
+CREATE USER u@localhost;
+GRANT EXECUTE ON d1.* TO u@localhost;
+DENY EXECUTE ON PROCEDURE d1.p1 TO u@localhost;
+DENY ALTER ROUTINE ON PROCEDURE d1.p2 TO u@localhost;
+FLUSH PRIVILEGES;
+connect  con_bug36503, localhost, u,,d1;
+# p2 must be callable and both p1, p2 must appear in INFORMATION_SCHEMA.ROUTINES
+CALL p2();
+2
+2
+SELECT ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='d1' ORDER BY ROUTINE_NAME;
+ROUTINE_NAME
+p2
+# p1 is denied, calling it must fail
+CALL p1();
+ERROR 42000: execute command denied to user 'u'@'localhost' for routine 'd1.p1'
+disconnect con_bug36503;
+connection default;
+DROP DATABASE d1;
+DROP USER u@localhost;
