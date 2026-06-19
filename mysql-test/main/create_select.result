@@ -75,3 +75,16 @@ t2	CREATE TABLE `t2` (
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
 drop table t1, t2;
 # End of 12.1 tests
+#
+# MDEV-36990: SIGFPE in get_max_range_rowid_filter_elems_for_table
+#
+DROP TABLE IF EXISTS t;
+Warnings:
+Note	1051	Unknown table 'test.t'
+CREATE TABLE t (a INT,b INT,PRIMARY KEY(a),INDEX (b))Engine=InnoDB;
+ALTER TABLE t CHANGE COLUMN a a BINARY (0);
+ERROR 42000: The storage engine InnoDB can't index column `a`
+SELECT * FROM t WHERE b>-1;
+a	b
+DROP TABLE IF EXISTS t;
+# End of 10.11 tests

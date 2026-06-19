@@ -79,3 +79,16 @@ show create table t2;
 drop table t1, t2;
 
 --echo # End of 12.1 tests
+
+--echo #
+--echo # MDEV-36990: SIGFPE in get_max_range_rowid_filter_elems_for_table
+--echo #
+
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (a INT,b INT,PRIMARY KEY(a),INDEX (b))Engine=InnoDB;
+--error ER_WRONG_KEY_COLUMN
+ALTER TABLE t CHANGE COLUMN a a BINARY (0);
+SELECT * FROM t WHERE b>-1;
+
+DROP TABLE IF EXISTS t;
+--echo # End of 10.11 tests
