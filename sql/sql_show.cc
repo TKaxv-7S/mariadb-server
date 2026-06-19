@@ -1246,7 +1246,7 @@ mysqld_show_create_get_fields(THD *thd, TABLE_LIST *table_list,
     DBUG_PRINT("debug", ("table_list->grant.privilege: %llx",
                          (longlong) (table_list->grant.privilege.allow_bits())));
     if (check_some_access(thd, SHOW_CREATE_TABLE_ACLS, table_list) ||
-        (table_list->grant.privilege & SHOW_CREATE_TABLE_ACLS) == NO_ACL)
+        table_list->grant.privilege.maybe_allowed(SHOW_CREATE_TABLE_ACLS) == NO_ACL)
     {
       my_error(ER_TABLEACCESS_DENIED_ERROR, MYF(0),
               "SHOW", thd->security_ctx->priv_user,

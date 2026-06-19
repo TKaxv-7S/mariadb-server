@@ -53,3 +53,31 @@ disconnect con_bug36503;
 connection default;
 DROP DATABASE d1;
 DROP USER u@localhost;
+
+--echo #
+--echo # MDEV-40116 Column-level DENY SELECT hides accessible columns and table metadata
+--echo #
+CREATE DATABASE d1;
+CREATE TABLE d1.t1 (a INT, b INT, c INT, KEY(a));
+INSERT INTO d1.t1 VALUES (1,2,3);
+CREATE USER u@localhost;
+GRANT SELECT ON d1.t1 TO u@localhost;
+DENY SELECT (b) ON d1.t1 TO u@localhost;
+FLUSH PRIVILEGES;
+
+connect (con_bug40116, localhost, u,,d1);
+--echo # a and c are accessible, b is denied
+SELECT a, c FROM d1.t1;
+--error ER_COLUMNACCESS_DENIED_ERROR
+SELECT * FROM d1.t1;
+--echo # metadata commands must work and show a, c (not b)
+SHOW COLUMNS FROM d1.t1;
+SHOW INDEX FROM d1.t1;
+SHOW CREATE TABLE d1.t1;
+SELECT COLUMN_NAME FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA='d1' AND TABLE_NAME='t1' ORDER BY COLUMN_NAME;
+
+disconnect con_bug40116;
+connection default;
+DROP DATABASE d1;
+DROP USER u@localhost;
