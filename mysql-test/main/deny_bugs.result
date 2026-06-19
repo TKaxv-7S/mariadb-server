@@ -55,3 +55,45 @@ disconnect con_bug36503;
 connection default;
 DROP DATABASE d1;
 DROP USER u@localhost;
+#
+# MDEV-40116 Column-level DENY SELECT hides accessible columns and table metadata
+#
+CREATE DATABASE d1;
+CREATE TABLE d1.t1 (a INT, b INT, c INT, KEY(a));
+INSERT INTO d1.t1 VALUES (1,2,3);
+CREATE USER u@localhost;
+GRANT SELECT ON d1.t1 TO u@localhost;
+DENY SELECT (b) ON d1.t1 TO u@localhost;
+FLUSH PRIVILEGES;
+connect  con_bug40116, localhost, u,,d1;
+# a and c are accessible, b is denied
+SELECT a, c FROM d1.t1;
+a	c
+1	3
+SELECT * FROM d1.t1;
+ERROR 42000: SELECT command denied to user 'u'@'localhost' for column 'b' in table 't1'
+# metadata commands must work and show a, c (not b)
+SHOW COLUMNS FROM d1.t1;
+Field	Type	Null	Key	Default	Extra
+a	int(11)	YES	MUL	NULL	
+c	int(11)	YES		NULL	
+SHOW INDEX FROM d1.t1;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Ignored
+t1	1	a	1	a	A	NULL	NULL	NULL	YES	BTREE			NO
+SHOW CREATE TABLE d1.t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
+  KEY `a` (`a`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+SELECT COLUMN_NAME FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA='d1' AND TABLE_NAME='t1' ORDER BY COLUMN_NAME;
+COLUMN_NAME
+a
+c
+disconnect con_bug40116;
+connection default;
+DROP DATABASE d1;
+DROP USER u@localhost;

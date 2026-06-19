@@ -10503,7 +10503,7 @@ static bool has_some_table_privs(GRANT_TABLE *grant_table,
   if (cols != NO_ACL && table_access.denied_privs(cols) != cols)
     return true;
 
-  /* Neither table level nor, no column level grants.*/
+  /* Neither table level nor column level grants.*/
   return false;
 }
 
@@ -10517,7 +10517,7 @@ static bool has_some_table_privs_for_show(GRANT_TABLE *grant_table,
 {
   access_t table_access= merge_same_level(grant_table->privs,
                                           access_t(NO_ACL, denies));
-  if (table_access & TABLE_ACLS)
+  if (table_access.maybe_allowed(TABLE_ACLS))
     return true;
   /*
     The below ignored "in-doubt" bits, deny_subtree, as we do
