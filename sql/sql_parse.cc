@@ -7162,11 +7162,10 @@ bool check_some_routine_access(THD *thd, const char *db, const char *name,
   if (thd->security_ctx->master_access & SHOW_PROC_WITHOUT_DEFINITION_ACLS)
     return FALSE;
   if (!check_access(thd, SHOW_PROC_WITHOUT_DEFINITION_ACLS,
-                    db, &save_priv, NULL, 0, 1) ||
-      (save_priv & SHOW_PROC_WITHOUT_DEFINITION_ACLS))
+                    db, &save_priv, NULL, 0, 1))
     return FALSE;
   return check_routine_level_acl(thd, SHOW_PROC_WITHOUT_DEFINITION_ACLS,
-                                 db, name, sph);
+                                 db, name, sph, save_priv);
 }
 
 

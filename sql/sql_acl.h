@@ -160,7 +160,8 @@ bool sp_grant_privileges(THD *thd,
                          const Sp_handler *sph);
 bool check_routine_level_acl(THD *thd, privilege_t acl,
                              const char *db, const char *name,
-                             const Sp_handler *sph);
+                             const Sp_handler *sph,
+                             const access_t &db_access);
 bool is_acl_user(const LEX_CSTRING &host, const LEX_CSTRING &user);
 int fill_users_schema_table(THD *thd, TABLE_LIST *tables, COND *cond);
 int fill_schema_user_privileges(THD *thd, TABLE_LIST *tables, COND *cond);

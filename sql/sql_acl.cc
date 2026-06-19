@@ -10752,41 +10752,46 @@ err:
   Check if routine has any of the
   routine level grants
 
-  SYNPOSIS
+  SYNOPSIS
    bool    check_routine_level_acl()
    thd	        Thread handler
    db           Database name
    name         Routine name
-
+   db_access    db level grants/denies
   RETURN
    0            Ok
-   1            error
+   1            No access / explicitly denied
 */
 
 bool check_routine_level_acl(THD *thd, privilege_t acl,
                              const char *db, const char *name,
-                             const Sp_handler *sph)
+                             const Sp_handler *sph,
+                             const access_t &db_access)
 {
-  bool no_routine_acl= 1;
+  if (db_access.certainly_allowed(acl))
+    return 0;
+  if (db_access.denied_privs(acl) == acl)
+    return 1;
+
+  access_t proc_privs(NO_ACL);
   GRANT_NAME *grant_proc;
   Security_context *sctx= thd->security_ctx;
   mysql_rwlock_rdlock(&LOCK_grant);
-  if ((grant_proc= routine_hash_search(sctx->priv_host,
-                                       sctx->ip, db,
-                                       sctx->priv_user,
-                                       name, sph, 0)))
-    no_routine_acl= !(grant_proc->privs & acl);
-
-  if (no_routine_acl && sctx->priv_role[0]) /* current set role check */
+  if ((grant_proc= routine_hash_search(sctx->priv_host, sctx->ip, db,
+                                       sctx->priv_user, name, sph, 0)))
+  {
+    proc_privs= grant_proc->privs;
+  }
+  else if (sctx->priv_role[0]) /* current set role check */
   {
     if ((grant_proc= routine_hash_search("",
                                          NULL, db,
                                          sctx->priv_role,
                                          name, sph, 0)))
-      no_routine_acl= !(grant_proc->privs & acl);
+      proc_privs= grant_proc->privs;
   }
   mysql_rwlock_unlock(&LOCK_grant);
-  return no_routine_acl;
+  return !(proc_privs.merge_with_parent(db_access) & acl);
 }
 
 
@@ -15182,7 +15187,8 @@ void fill_effective_table_privileges(THD *thd, GRANT_INFO *grant,
 
 bool check_routine_level_acl(THD *thd, privilege_t acl,
                              const char *db, const char *name,
-                             const Sp_handler *sph)
+                             const Sp_handler *sph,
+                             const access_t &)
 {
   return FALSE;
 }
