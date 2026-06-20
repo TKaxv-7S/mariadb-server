@@ -21,7 +21,6 @@
 #ifndef SQL_LEX_INCLUDED
 #define SQL_LEX_INCLUDED
 
-#include <functional>
 #include "lex_ident_sys.h"
 #include "violite.h"                            /* SSL_type */
 #include "sql_trigger.h"
@@ -41,7 +40,6 @@
 #include "table.h"
 #include "sql_class.h"                // enum enum_column_usage
 #include "select_handler.h"
-#include "rpl_info_file.h"            // *_info_file
 
 /* Used for flags of nesting constructs */
 #define SELECT_NESTING_MAP_SIZE 64
@@ -382,18 +380,15 @@ struct LEX_MASTER_INFO
     repl_ignore_server_ids_opt,
     repl_do_domain_ids_opt, repl_ignore_domain_ids_opt;
 
-  /**TODO
-    Going through this struct means it must contain a repeated set of CHANGE
-    MASTER and START SLAVE variables that additionally knows which values are
-    not changing, not to mention support for `CHANGE MASTER ...= DEFAULT`.
-    This creates complexity and leads to inconsistency.
-    Instead, it is possible to track and apply CHANGE MASTER configs during
-    parsing (in `sql_yacc.yy`) without stashing them in a @ref LEX_MASTER_INFO.
-    But for now, lambdas in `sql_yacc.yy` demonstrates this concept while
-    keeping them deferred to the "post-processing" in change_master().
+  /** Utilize this subset of the @ref Item library to represent:
+    * set values: @ref Item_literal)
+      * This is a stepping stone towards automatically converting
+        types, or even supporting expressions eventually.
+    * reset values: @ref Item_null for now
+    * unchanged values: `nullptr`
   */
-  using mi_functor= std::function<void(Master_info_file *mi)>;
-  mi_functor connect_retry, heartbeat_period, ssl,
+  using Mi_arg= Item_basic_constant *;
+  Mi_arg connect_retry, heartbeat_period, ssl,
     ssl_key, ssl_cert, ssl_ca, ssl_capath, ssl_cipher, ssl_crl, ssl_crlpath,
     ssl_verify_server_cert, retry_count, use_gtid;
 

@@ -195,7 +195,7 @@ void _CONCAT_UNDERSCORED(turn_parser_debug_on,yyparse)()
 
 %code requires
 {
-#include "rpl_info_file.h"
+#include "rpl_info_file.h" // enum_master_use_gtid
 }
 
 %union {
@@ -205,20 +205,6 @@ void _CONCAT_UNDERSCORED(turn_parser_debug_on,yyparse)()
   longlong longlong_number;
   uint sp_instr_addr;
 
-  /* structs */
-  /**
-    This is a stand-in for @ref std::optional,
-    which is not trivially `union`-safe.
-    @deprecated TODO: Replace this with an expression @ref item
-  */
-  struct
-  {
-    bool has_value; uint64_t value;
-#if __cplusplus >= 201703L || _MSVC_LANG >= 201703L
-    template<typename I> operator std::optional<I>()
-    { return has_value ? std::optional(static_cast<I>(value)) : std::nullopt; }
-#endif
-  } optional_uint;
   LEX_CSTRING lex_str;
   Lex_comment_st lex_comment;
   Lex_ident_cli_st kwd;
@@ -1457,7 +1443,6 @@ bool my_yyoverflow(short **a, YYSTYPE **b, size_t *yystacksize);
 %type <const_simple_string>
         field_length_str
         opt_compression_method
-        path_or_default
 
 %type <string>
         text_string hex_or_bin_String opt_gconcat_separator
@@ -1627,7 +1612,6 @@ bool my_yyoverflow(short **a, YYSTYPE **b, size_t *yystacksize);
 
 %type <item_num>
         NUM_literal
-        num_or_default
 
 %type <item_basic_constant> text_literal
 
@@ -2042,9 +2026,13 @@ rule:
         sp_package_function_body
         sp_package_procedure_body
 
-%type <optional_uint> uint32_or_default
-%type <optional_uint> uint64_or_default
-%type <optional_uint> bool_or_default
+%type <item_basic_constant>
+        item_default
+        uint32_or_default
+        uint64_or_default
+        path_or_default
+        bool_or_default
+        use_gtid_or_default
 %type <master_use_gtid> master_use_gtid_enum
 
 
@@ -2353,15 +2341,11 @@ master_def:
           }
         | MASTER_CONNECT_RETRY_SYM '=' uint32_or_default
           {
-            Lex->mi.connect_retry= [optional=
-              static_cast<std::optional<uint32_t>>($3)](Master_info_file *mi)
-            { mi->master_connect_retry= std::move(optional); };
+            Lex->mi.connect_retry= $3;
           }
         | MASTER_RETRY_COUNT_SYM '=' uint64_or_default
           {
-            Lex->mi.retry_count= [optional=
-              static_cast<std::optional<uint64_t>>($3)](Master_info_file *mi)
-            { mi->master_retry_count= std::move(optional); };
+            Lex->mi.retry_count= $3;
           }
         | MASTER_DELAY_SYM '=' ulong_num
           {
@@ -2375,84 +2359,74 @@ master_def:
           }
         | MASTER_SSL_SYM '=' bool_or_default
           {
-            Lex->mi.ssl= [trilean=
-              static_cast<std::optional<bool>>($3)](Master_info_file *mi)
-            { mi->master_ssl= std::move(trilean); };
+            Lex->mi.ssl= $3;
           }
         | MASTER_SSL_CA_SYM '=' path_or_default
           {
-            Lex->mi.ssl_ca= [path= $3](Master_info_file *mi)
-            { mi->master_ssl_ca= path; };
+            Lex->mi.ssl_ca= $3;
           }
         | MASTER_SSL_CAPATH_SYM '=' path_or_default
           {
-            Lex->mi.ssl_capath= [path= $3](Master_info_file *mi)
-            { mi->master_ssl_capath= path; };
+            Lex->mi.ssl_capath= $3;
           }
         | MASTER_SSL_CERT_SYM '=' path_or_default
           {
-            Lex->mi.ssl_cert= [path= $3](Master_info_file *mi)
-            { mi->master_ssl_cert= path; };
+            Lex->mi.ssl_cert= $3;
           }
         | MASTER_SSL_CIPHER_SYM '=' path_or_default
           {
-            Lex->mi.ssl_cipher= [path= $3](Master_info_file *mi)
-            { mi->master_ssl_cipher= path; };
+            Lex->mi.ssl_cipher= $3;
           }
         | MASTER_SSL_KEY_SYM '=' path_or_default
           {
-            Lex->mi.ssl_key= [path= $3](Master_info_file *mi)
-            { mi->master_ssl_key= path; };
+            Lex->mi.ssl_key= $3;
           }
         | MASTER_SSL_VERIFY_SERVER_CERT_SYM '=' bool_or_default
           {
-            Lex->mi.ssl_verify_server_cert= [trilean=
-              static_cast<std::optional<bool>>($3)](Master_info_file *mi)
-            { mi->master_ssl_verify_server_cert= std::move(trilean); };
+            Lex->mi.ssl_verify_server_cert= $3;
           }
         | MASTER_SSL_CRL_SYM '=' path_or_default
           {
-            Lex->mi.ssl_crl= [path= $3](Master_info_file *mi)
-            { mi->master_ssl_crl= path; };
+            Lex->mi.ssl_crl= $3;
           }
         | MASTER_SSL_CRLPATH_SYM '=' path_or_default
           {
-            Lex->mi.ssl_crlpath= [path= $3](Master_info_file *mi)
-            { mi->master_ssl_crlpath= path; };
+            Lex->mi.ssl_crlpath= $3;
           }
 
-        | MASTER_HEARTBEAT_PERIOD_SYM '=' opt_plus num_or_default
+        | MASTER_HEARTBEAT_PERIOD_SYM '=' opt_plus NUM_literal
           {
-            if ($4)
-            {
-              Uint32_3 milliseconds;
-              my_decimal decimal_buf, *decimal= $4->val_decimal(&decimal_buf);
-              DBUG_ASSERT(decimal);
-              switch (milliseconds.from_decimal(*decimal)) {
-              case Uint32_3::FAILED:
-                my_yyabort_error((ER_SLAVE_HEARTBEAT_VALUE_OUT_OF_RANGE, MYF(0),
-                  Uint32_3::MAX_STR));
-              case Uint32_3::ROUNDED:
-                if (unlikely(!milliseconds))
-                {
-                  push_warning(thd, Sql_condition::WARN_LEVEL_WARN,
-                    ER_SLAVE_HEARTBEAT_VALUE_OUT_OF_RANGE_MIN,
-                    ER_THD(thd, ER_SLAVE_HEARTBEAT_VALUE_OUT_OF_RANGE_MIN));
-                  break;
-                }
-                [[fallthrough]];
-              case Uint32_3::OK:
-                if (unlikely(milliseconds > slave_net_timeout*1000ULL))
-                  push_warning(thd, Sql_condition::WARN_LEVEL_WARN,
-                    ER_SLAVE_HEARTBEAT_VALUE_OUT_OF_RANGE_MAX,
-                    ER_THD(thd, ER_SLAVE_HEARTBEAT_VALUE_OUT_OF_RANGE_MAX));
+            Uint32_3 milliseconds;
+            my_decimal decimal_buf, *decimal= $4->val_decimal(&decimal_buf);
+            DBUG_ASSERT(decimal);
+            switch (milliseconds.from_decimal(*decimal)) {
+            case Uint32_3::FAILED:
+              my_yyabort_error((ER_SLAVE_HEARTBEAT_VALUE_OUT_OF_RANGE, MYF(0),
+                Uint32_3::MAX_STR));
+            case Uint32_3::ROUNDED:
+              if (unlikely(!milliseconds))
+              {
+                push_warning(thd, Sql_condition::WARN_LEVEL_WARN,
+                  ER_SLAVE_HEARTBEAT_VALUE_OUT_OF_RANGE_MIN,
+                  ER_THD(thd, ER_SLAVE_HEARTBEAT_VALUE_OUT_OF_RANGE_MIN));
+                break;
               }
-              Lex->mi.heartbeat_period= [milliseconds](Master_info_file *mi)
-              { mi->master_heartbeat_period= milliseconds; };
-            }
-            else
-              Lex->mi.heartbeat_period= [](Master_info_file *mi)
-              { mi->master_heartbeat_period.set_default(); };
+              [[fallthrough]];
+            case Uint32_3::OK:
+              if (unlikely(milliseconds > slave_net_timeout*1000ULL))
+                push_warning(thd, Sql_condition::WARN_LEVEL_WARN,
+                  ER_SLAVE_HEARTBEAT_VALUE_OUT_OF_RANGE_MAX,
+                  ER_THD(thd, ER_SLAVE_HEARTBEAT_VALUE_OUT_OF_RANGE_MAX));
+              }
+            Lex->mi.heartbeat_period= new (thd->mem_root) Item_int(thd,
+              static_cast<ulonglong>(milliseconds),
+              Info_file::Value<uint32_t>::MAX_CHARS10);
+            if (unlikely(!Lex->mi.heartbeat_period))
+              MYSQL_YYABORT;
+          }
+        | MASTER_HEARTBEAT_PERIOD_SYM '=' item_default
+          {
+            Lex->mi.heartbeat_period= $3;
           }
         | IGNORE_SERVER_IDS_SYM '=' '(' ignore_server_id_list ')'
           {
@@ -2470,31 +2444,63 @@ master_def:
         master_file_def
         ;
 
+item_default: DEFAULT
+        {
+          // Reuse the item for NULL for now
+          $$= new (thd->mem_root) Item_null(thd);
+          if (unlikely(!$$))
+            MYSQL_YYABORT;
+        }
 uint32_or_default:
-          ulong_num     { $$= {true, $1}; }
-        | DEFAULT       { $$= {false, 0}; }
+          ulong_num // there is no `uint_num`
+          {
+            $$= new (thd->mem_root) Item_int(thd, static_cast<ulonglong>($1));
+            if (unlikely(!$$))
+              MYSQL_YYABORT;
+          }
+        | item_default
         ;
 uint64_or_default:
-          ulonglong_num { $$= {true, $1}; }
-        | DEFAULT       { $$= {false, 0}; }
+          ulonglong_num
+          {
+            $$= new (thd->mem_root) Item_int(thd, $1);
+            if (unlikely(!$$))
+              MYSQL_YYABORT;
+          }
+        | item_default
         ;
 path_or_default:
-          TEXT_STRING_sys { $$=  $1.str; DBUG_ASSERT($$); }
-        | DEFAULT         { $$= nullptr; }
+          TEXT_STRING_sys
+          {
+            $$= new (thd->mem_root)
+              Item_string_with_introducer(thd, $1, &my_charset_bin);
+            if (unlikely(!$$))
+              MYSQL_YYABORT;
+          }
+        | item_default
         ;
 bool_or_default:
-          bool          { $$= {true, $1}; }
-        | DEFAULT       { $$= {false, 0}; }
+          bool
+          {
+            $$= new (thd->mem_root) Item_bool(thd, $1);
+            if (unlikely(!$$))
+              MYSQL_YYABORT;
+          }
+        | item_default
         ;
 master_use_gtid_enum:
           NO_SYM          { $$= enum_master_use_gtid::NO; }
         | CURRENT_POS_SYM { $$= enum_master_use_gtid::CURRENT_POS; }
         | SLAVE_POS_SYM   { $$= enum_master_use_gtid::SLAVE_POS; }
-        | DEFAULT         { $$= enum_master_use_gtid::AUTO; } // reuse unused
         ;
-num_or_default:
-          NUM_literal { DBUG_ASSERT($$); }
-        | DEFAULT { $$= nullptr; }
+use_gtid_or_default:
+          master_use_gtid_enum
+          {
+            $$= new (thd->mem_root) Item_int(thd, static_cast<int32>($1), 1);
+            if (unlikely(!$$))
+              MYSQL_YYABORT;
+          }
+        | item_default
         ;
 
 ignore_server_id_list:
@@ -2566,16 +2572,14 @@ master_file_def:
             /* Adjust if < BIN_LOG_HEADER_SIZE (same comment as Lex->mi.pos) */
             Lex->mi.relay_log_pos= MY_MAX(BIN_LOG_HEADER_SIZE, Lex->mi.relay_log_pos);
           }
-        | MASTER_USE_GTID_SYM '=' master_use_gtid_enum
+        | MASTER_USE_GTID_SYM
           {
             if (Lex->mi.use_gtid)
               my_yyabort_error((ER_DUP_ARGUMENT, MYF(0), "MASTER_use_gtid"));
-            if ($3 == enum_master_use_gtid::AUTO) // reuse unused for now
-              Lex->mi.use_gtid= [](Master_info_file *mi)
-              { mi->master_use_gtid.set_default(); };
-            else
-              Lex->mi.use_gtid= [use_gtid= $3](Master_info_file *mi)
-              { mi->master_use_gtid= use_gtid; };
+          }
+          '=' use_gtid_or_default
+          {
+            Lex->mi.use_gtid= $4;
           }
         | MASTER_DEMOTE_TO_SLAVE_SYM '=' bool
           {
