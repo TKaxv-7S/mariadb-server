@@ -20,7 +20,7 @@
 
 #include <cstdint> // uintN_t
 #include <string_view>
-#include <functional> // superclass of Info_file::Mem_fn
+#include <utility> // std::pair (Info_file::KV)
 #include <optional> // Base of Info_file::Value
 // Interface type of Master_info_file::master_heartbeat_period
 #include "my_decimal.h"
@@ -232,51 +232,36 @@ struct Info_file
 
   IO_CACHE file;
   virtual ~Info_file()= default;
-  virtual bool load_from_file()= 0;
-  virtual void save_to_file()= 0;
 
-  /**
-    std::Mem_fn()-like nullable replacement for
-    [member pointer upcasting](https://wg21.link/P0149R3)
-  */
-  struct Mem_fn: std::function<Value_interface &(Info_file *self)>
-  {
-    /// Null Constructor
-    Mem_fn(std::nullptr_t null= nullptr):
-      std::function<Value_interface &(Info_file *)>(null) {}
-    /** Non-Null Constructor
-      @tparam T CRTP subclass of Info_file
-      @tparam M @ref Value_interface subclass of the member
-      @param pm member pointer
-    */
-    template<class T, typename M> Mem_fn(M T::* pm):
-      std::function<Value_interface &(Info_file *)>(
-        [pm](Info_file *self) -> Value_interface &
-        { return self->*static_cast<M Info_file::*>(pm); }
-      ) {}
-  };
+  bool load_from_file() { return get_values(&Info_file::load_from_file_impl); };
+  void save_to_file() { get_values(&Info_file::save_to_file_impl); };
+
 
 protected:
+  using KV= std::pair<const std::string_view, Value_interface *>;
+  using get_values_impl= bool (
+    std::initializer_list<Value_interface *> mysql_lines,
+    std::initializer_list<KV> key_values);
+
   /**
-    (Re)load the MySQL line-based section from the @ref file
-    @param value_list List of wrapped member pointers to values.
-    @return `false` if the file has parsed successfully or `true` if error
+    Call `implementation` on `this` with
+    * a consistently ordered list of MySQL line-oriented values, and
+    * a not-necessarily-ordered set of `key=value` section values.
+
+    For bidirectional compatibility with MySQL
+    (codenames only at this writing) and earlier versions of MariaDB,
+    keys should match the corresponding old property name in @ref Master_info.
+
+    @note This should not need to allocate dynamic memory.
+    @return whatever `implementation` returns
+    @see load_from_file()
+    @see save_to_file()
   */
-  template<size_t size> bool load_from_file(const Mem_fn (&value_list)[size])
-  { return load_from_file(value_list, size); }
-  /**
-    Flush the MySQL line-based section to the @ref file
-    @param value_list List of wrapped member pointers to values.
-  */
-  template<size_t size> void save_to_file(
-    const Mem_fn (&value_list)[size],
-    size_t total_line_count= size + /* line count line */ 1
-  ) { return save_to_file(value_list, size); }
+  virtual bool get_values(get_values_impl Info_file::*implementation)= 0;
 
 private:
-  bool
-  load_from_file(const Mem_fn *values, size_t size);
-  void save_to_file(const Mem_fn *values, size_t size);
+  get_values_impl load_from_file_impl;
+  get_values_impl save_to_file_impl;
 };
 
 
@@ -429,8 +414,8 @@ struct Master_info_file: Info_file
     DYNAMIC_ARRAY &ignore_server_ids,
     DYNAMIC_ARRAY &do_domain_ids, DYNAMIC_ARRAY &ignore_domain_ids
   );
-  bool load_from_file() override;
-  void save_to_file() override;
+
+  bool get_values(get_values_impl Info_file::*implementation) override;
 };
 #endif // RPL_MASTER_INFO_FILE_H
 
@@ -449,8 +434,7 @@ struct Relay_log_info_file: Info_file
   Value<uint32_t> sql_delay= uint32_t(0);
   ///@}
 
-  bool load_from_file() override;
-  void save_to_file() override;
+  bool get_values(get_values_impl Info_file::*implementation) override;
 };
 
 
