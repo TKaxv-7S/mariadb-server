@@ -16,7 +16,7 @@
 */
 
 #include "rpl_info_file.h"
-#include <unordered_map> // Index for Info_file::load_from_file_impl()
+#include "sql_hset.h" // Index for Info_file::load_from_file_impl()
 
 
 int change_master_id_cmp(const void *arg1, const void *arg2)
@@ -524,11 +524,19 @@ bool Info_file::load_from_file_impl(
       is designed for string contents in a specified charset.
   */
   // C++ default allocator to match that `mysql_execute_command()` uses `new`
-  std::unordered_map<std::string_view, Value_interface *> map=
-    std::move(key_values);
-  [[maybe_unused]] std::pair<decltype(map)::iterator, bool> result=
-    map.insert({END_MARKER, nullptr});
-  DBUG_ASSERT(result.second); // inserted
+  auto map= Hash_set<KV>(PSI_INSTRUMENT_ME,
+    [] (const void *ptr, size_t *r_size, [[maybe_unused]] my_bool)
+    {
+      const std::string_view &key= static_cast<const KV *>(ptr)->first;
+      *r_size= key.size();
+      return reinterpret_cast<const uchar *>(key.data());
+    });
+  constexpr KV END_MARK= {END_MARKER, nullptr};
+  if (map.insert(&END_MARK))
+    return true;
+  for (const KV &kv: key_values)
+    if (map.insert(&kv))
+      return true;
   while (true)
   {
 
@@ -548,22 +556,23 @@ bool Info_file::load_from_file_impl(
       [[fallthrough]];
       case '\n':
       {
-        /*
-          MariaDB 10.0 does not have the `END_MARKER` before any left-overs at
-          the end of the file, so ignore any non-first occurrences of a key.
-          std::unordered_map::extract() removes the key-value from the map.
-        */
-        decltype(map)::node_type kv= map.extract(std::string_view(
+        KV *kv= map.find(
           key,
           i // size = exclusive end index of the string
-        ));
+        );
         // The "unknown" lines would be ignored to facilitate downgrades.
         if (kv) // found
         {
           // Compare the underlying string directly, no need to do char-by-char.
-          if (kv.key().data() == END_MARKER.data())
+          if (kv->first.data() == END_MARKER.data())
             return false;
-          if (Value_interface *value= kv.mapped())
+          /*
+            MariaDB 10.0 does not have the `END_MARKER` before any left-overs at
+            the end of the file, so ignore any non-first occurrences of a key.
+          */
+          [[maybe_unused]] bool not_found= map.remove(kv);
+          DBUG_ASSERT(!not_found);
+          if (Value_interface *value= kv->second)
           {
             if (found_equal ? value->load_from(&file) : value->set_default())
               return true;
