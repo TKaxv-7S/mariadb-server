@@ -1283,11 +1283,13 @@ static int deny_entry_from_json(const char *element, int element_len,
                           (const uchar*)field_val + field_len,
                           system_charset_info,
                           (uchar*)db_buf, (uchar*)db_buf + db_buf_len);
-    if (len >= 0)
+    if (len >= 0 && (size_t)len < db_buf_len)
     {
       db_buf[len]= '\0';
       entry.db= db_buf;
     }
+    else
+      return 1; // Error unescaping db name
   }
   else
     return 1; // db field is mandatory for non-global entries
@@ -1305,7 +1307,7 @@ static int deny_entry_from_json(const char *element, int element_len,
                           (const uchar*)field_val + field_len,
                           system_charset_info,
                           (uchar*)table_buf, (uchar*)table_buf + table_buf_len);
-    if (len >= 0)
+    if (len >= 0 && (size_t)len < table_buf_len)
     {
       table_buf[len]= '\0';
       entry.table_or_routine= table_buf;
@@ -1329,7 +1331,7 @@ static int deny_entry_from_json(const char *element, int element_len,
                           (const uchar*)field_val + field_len,
                           system_charset_info,
                           buf, buf + column_buf_len);
-    if (len >= 0)
+    if (len >= 0 && (size_t)len < column_buf_len)
     {
       buf[len]= '\0';
       entry.column= (char *)buf;
@@ -1342,6 +1344,8 @@ static int deny_entry_from_json(const char *element, int element_len,
 
   return 0;
 }
+
+enum DENY_ENTRIES_FLAGS { DENY_FLAGS_NONE, DENY_FLAGS_PRINT_PARSE_WARNINGS };
 
 /**
   Lazy, range-for compatible iterator over deny entries in the
@@ -1368,10 +1372,13 @@ class deny_iter_t
   char column_buf[NAME_LEN + 1];
   deny_data_t cur;
   bool valid;
+  bool warn_malformed;
 
   /** Emit a warning about a malformed entry at JSON array position idx. */
   void report_warning(int idx)
   {
+    if (!warn_malformed)
+      return;
     String host_str, user_str;
     const char *host= "", *user= "";
     uint host_len= 0, user_len= 0;
@@ -1422,9 +1429,11 @@ public:
       charset(nullptr), user_tbl(nullptr), valid(false) {}
 
   deny_iter_t(const char *arr, size_t arr_len, int cnt,
-               CHARSET_INFO *cs, TABLE *tbl)
+               CHARSET_INFO *cs, TABLE *tbl,
+               DENY_ENTRIES_FLAGS flags= DENY_FLAGS_NONE)
     : arr(arr), arr_end(arr + arr_len), count(cnt), pos(0),
-      charset(cs), user_tbl(tbl), valid(false)
+      charset(cs), user_tbl(tbl), valid(false),
+      warn_malformed(flags == DENY_FLAGS_PRINT_PARSE_WARNINGS)
   { advance(); }
 
   const deny_data_t &operator*()  const { return cur; }
@@ -1502,8 +1511,10 @@ class User_table: public Grant_table_base
                                 const char *column, privilege_t new_privs,
                                 bool revoke, privilege_t &out_privs) const = 0;
 
+  /** Return true if the current row has any deny entries (valid or malformed). */
+  virtual bool has_denies() const = 0;
   /** Iterate over all deny entries for the current row. */
-  virtual deny_iter_t deny_entries() const = 0;
+  virtual deny_iter_t deny_entries(DENY_ENTRIES_FLAGS flags= DENY_FLAGS_NONE) const = 0;
 
   /** Remove all deny entries (sets "denies" to []). */
   virtual int remove_all_deny_entries() const = 0;
@@ -1870,7 +1881,8 @@ class User_table_tabular: public User_table
     return 1;
   }
 
-  deny_iter_t deny_entries() const override
+  bool has_denies() const override { return false; }
+  deny_iter_t deny_entries(DENY_ENTRIES_FLAGS f = DENY_FLAGS_NONE) const override
   {
     return deny_iter_t();
   }
@@ -2361,7 +2373,21 @@ class User_table_json: public User_table
     Return an iterator over the "denies" JSON array for the current row.
     Returns an empty iterator if the key is absent or unparseable.
   */
-  deny_iter_t deny_entries() const override
+  bool has_denies() const override
+  {
+    size_t array_len;
+    const char *array_start;
+    if (get_value("denies", JSV_ARRAY, &array_start, &array_len))
+      return false;
+    const char *element;
+    int element_len;
+    if (json_get_array_item(array_start, array_start + array_len,
+                            INT_MAX, &element, &element_len) != JSV_NOTHING)
+      return false;
+    return element_len > 0;
+  }
+
+  deny_iter_t deny_entries(DENY_ENTRIES_FLAGS flags=DENY_FLAGS_NONE) const override
   {
     size_t array_len;
     const char *array_start;
@@ -2372,13 +2398,13 @@ class User_table_json: public User_table
     const char *element;
     int element_len;
 
-    /* json_get_array_item with idx==array_len returns the element count */
+    /* json_get_array_item with idx==INT_MAX returns the element count */
     if (json_get_array_item(array_start, array_start + array_len,
                             INT_MAX, &element, &element_len) != JSV_NOTHING)
       return deny_iter_t();
 
     return deny_iter_t(array_start, array_len, element_len,
-                        m_table->field[2]->charset(), m_table);
+                        m_table->field[2]->charset(), m_table, flags);
   }
 
   int remove_all_deny_entries() const override
@@ -3512,15 +3538,8 @@ static bool acl_load(THD *thd, const Grant_tables& tables)
       user.default_rolename.str= user_table.get_default_role(&acl_memroot);
       user.default_rolename.length= safe_strlen(user.default_rolename.str);
       /* set user_table_has_denies for later loading in load_grant() */
-      if (!user_table_has_denies)
-      {
-        for (const deny_data_t &d : user_table.deny_entries())
-        {
-          (void) d;
-          user_table_has_denies= true;
-          break;
-        }
-      }
+      if (!user_table_has_denies && user_table.has_denies())
+        user_table_has_denies= true;
     }
     push_new_user(user);
   }
@@ -6906,7 +6925,7 @@ static int clear_all_denies(const LEX_USER &combo)
 */
 static int apply_all_denies_to_caches(const User_table &user_table, const LEX_USER &combo)
 {
-  for (auto &e : user_table.deny_entries())
+  for (auto &e : user_table.deny_entries(DENY_FLAGS_PRINT_PARSE_WARNINGS))
   {
     if (apply_deny_to_caches(combo,
                             access_t{NO_ACL, e.deny_bits, NO_ACL},
@@ -9741,8 +9760,7 @@ static bool grant_load(THD *thd,
                         "for '%s'@'%s'",
                         safe_str(combo.user.str), safe_str(combo.host.str));
         return_val= 1;
-        end_read_record(&read_record_info);
-        goto end_unlock_p;
+        break;
       }
     }
     end_read_record(&read_record_info);
