@@ -18,26 +18,15 @@
 #ifndef RPL_INFO_FILE_H
 #define RPL_INFO_FILE_H
 
-#include <cstdint>    // uintN_t
+#include <cstdint> // uintN_t
+#include <string_view>
 #include <functional> // superclass of Info_file::Mem_fn
-#include <optional>   // Storage type of Master_info_file::Optional_int_value
+#include <optional> // Base of Info_file::Value
 // Interface type of Master_info_file::master_heartbeat_period
 #include "my_decimal.h"
-#include <my_sys.h>   // IO_CACHE, FN_REFLEN, ...
+#include <my_sys.h> // IO_CACHE, FN_REFLEN, ...
 #include "sql_const.h" // MAX_PASSWORD_LENGTH
 
-
-/** Helpers for reading and writing integers to and from @ref IO_CACHE
-*/
-namespace Int_IO_CACHE
-{
-  /** Number of fully-utilized decimal digits plus
-    * the partially-utilized digit (e.g., the 2's place in "2147483647")
-    * The sign, if signed (:
-  */
-  template<typename I> static constexpr size_t BUF_SIZE=
-    std::numeric_limits<I>::digits10 + 1 + std::numeric_limits<I>::is_signed;
-};
 
 /**
   A three-way comparison function for using
@@ -51,27 +40,67 @@ int change_master_id_cmp(const void *arg1, const void *arg2);
 
 //TODO: Remove stub from mariadb-corporation/mariadb-columnstore-engine#3951
 #ifndef RPL_MASTER_INFO_FILE_H
-/// enum for @ref Master_info_file::Optional_bool_value
-/*TODO:
-  `UNKNOWN` is the general term in ternary logic, but this name is `#define`d in
-  `item_cmpfunc.h`, which is used by target RocksDB, whose *C++11* requirement
-  doesn't recognize `inline` constants (whereas the server is on C++17).
-*/
-enum struct trilean { NO, YES, DEFAULT= -1 };
 /// enum for @ref Master_info_file::master_use_gtid
-enum struct enum_master_use_gtid { NO, CURRENT_POS, SLAVE_POS, DEFAULT };
+enum struct enum_master_use_gtid
+{ NO, CURRENT_POS, SLAVE_POS,
+  /**
+    Currently, this value is only a sentinel representing that
+    @ref master_use_gtid is unset or autoset.
+    It is indistinguishable from its effective value to the user,
+    as Master_info_file::Use_gtid_value::operator enum_master_use_gtid()
+    automatically converts this value according to
+    @ref Master_info_file::Use_gtid_value::gtid_supported.
+  */
+  AUTO
+};
 /// String names for non-@ref enum_master_use_gtid::DEFAULT values
 inline const char *master_use_gtid_names[]=
   {"No", "Current_Pos", "Slave_Pos", nullptr};
+
+
+/**
+  Namespace of helpers for @ref Master_info_file::master_heartbeat_period,
+  which is a non-negative `DECIMAL(10,3)` seconds value stored
+  internally as a @ref uint32_t milliseconds value.
+*/
+class Uint32_3
+{
+  uint32_t value;
+public:
+
+  /**
+      @return std::numeric_limits<uint32_t>::max() / 1000.0
+      as a constant '\0'-terminated string
+  */
+  static constexpr char MAX_STR[]= "4294967.295";
+  Uint32_3() {}
+  Uint32_3(uint32_t value): value(value) {}
+  operator uint32_t &() { return value; }
+
+  enum conversion_status
+  { OK, ROUNDED,
+    FAILED ///< @see ER_SLAVE_HEARTBEAT_VALUE_OUT_OF_RANGE
+  };
+  // Also used by the parser
+  conversion_status from_decimal(const decimal_t &decimal);
+  // Also used by the server option master_heartbeat_period
+  /**
+    @param delimiter
+      This method also returns @ref conversion_status::FAILED if the
+      exclusive end of the decimal (which may be `str.end()`!) is this char.
+  */
+  conversion_status from_chars(const std::string_view &str, char delimiter= '\0');
+};
+
 
 /**
   `mariadbd` Options for the `DEFAULT` values of @ref Master_info_file values
   @{
 */
-/// Computes the `DEFAULT` value of @ref ::master_heartbeat_period
+/// Computes the `DEFAULT` value of @ref master_heartbeat_period
 extern uint slave_net_timeout;
 inline uint32_t master_connect_retry= 60;
-inline std::optional<uint32_t> master_heartbeat_period= std::nullopt;
+inline std::optional<Uint32_3> master_heartbeat_period= std::nullopt;
 inline bool master_ssl= true;
 inline const char *master_ssl_ca     = "";
 inline const char *master_ssl_capath = "";
@@ -82,9 +111,9 @@ inline const char *master_ssl_key    = "";
 inline const char *master_ssl_cipher = "";
 inline bool master_ssl_verify_server_cert= true;
 /// `ulong` is the data type `my_getopt` expects.
-inline ulong master_use_gtid= static_cast<ulong>(enum_master_use_gtid::DEFAULT);
+inline ulong master_use_gtid= static_cast<ulong>(enum_master_use_gtid::AUTO);
 inline uint64_t master_retry_count= 100000;
-/// }@
+/// @}
 #endif // RPL_MASTER_INFO_FILE_H
 
 
@@ -95,74 +124,113 @@ inline uint64_t master_retry_count= 100000;
   As only the @ref Master_info_file has a MariaDB `key=value`
   section with a mix of explicit and `DEFAULT`-able values,
   code for those are in @ref Master_info_file instead.
-
-  Each value is an instance of an implementation of the
-  @ref Info_file::Persistent interface. For convenience, they also have
-  assignment and implicit conversion operators for their underlying types.
 */
 struct Info_file
 {
-  IO_CACHE file;
-
-  /// Persistence interface for an unspecified item
-  struct Persistent
+  /**
+    This is the base for @ref Value that provides a type-agnostic
+    interface for file reading/writing and (if supported) `DEFAULT` handing.
+    All methods automatically cover the is_default() case, so callers that
+    don't diffentiate `DEFAULT` from set values don't need to check themselves.
+    @note
+      TODO: Split value members from meta-classes (similar
+      to @ref Show::Type) to avoid instance-level duplication
+  */
+  struct Value_interface
   {
-    virtual ~Persistent()= default;
-    // for save_to_file()
+    virtual ~Value_interface()= default;
     virtual bool is_default() { return false; }
-    /// @return `true` if the item is mandatory and couldn't provide a default
+    /// @return `true` if the value is mandatory and cannot provide a default
     virtual bool set_default() { return true; }
-    /** set the value by reading a line from the IO and consume the `\n`
-      @return `false` if the line has parsed successfully or `true` if error
+    /** Set the value by reading a line from the IO and consume the `\n`
+      @return `false` if the line has parsed successfully, or `true` on error
       @post is_default() is `false`
     */
     virtual bool load_from(IO_CACHE *file)= 0;
-    /** write the *effective* value to the IO **without** a `\n`
-      (The caller will separately determine how
-      to represent using the default value.)
+    /**
+      Write the *effective* value to the IO **without** a `\n`
+      (that is, agnostic of the is_default() state to facilitate downgrades)
+      @note The caller should separately represent the is_default() state.
     */
     virtual void save_to(IO_CACHE *file)= 0;
   };
 
-  /** Integer Value
-    @tparam I signed or unsigned integer type
-    @see Master_info_file::Optional_int_value
-      version with `DEFAULT` (not a subclass)
+  /** This is the actual abstract base template of every value in the info file.
+    @tparam T represented type
+    @note
+      Please explicitly specialize the methods of this type-oriented
+      template rather than inheriting from an abstract template class.
+      Specializations keep this as a template, reducing bytesize;
+      whereas inheritance produces instances of this template
+      that are unused on their own beyond as a superclass.
   */
-  template<typename I> struct Int_value: Persistent
+  template<typename T> struct Value: Value_interface
   {
-    I value;
-    operator I() { return value; }
-    auto &operator=(I value)
+  protected:
+    std::optional<T> optional= std::nullopt;
+  public:
+    static constexpr size_t MAX_CHARS10=
+      std::numeric_limits<T>::digits10 + // Fully-utilized decimal digits
+      1 + // The partially-utilized digit (e.g., the 2's place in "2147483647")
+      std::numeric_limits<T>::is_signed; // The sign, if signed (:
+    const T *const default_value= nullptr;
+
+    Value(T value): optional(std::move(value)) {}
+    Value(const T *default_value): default_value(default_value) {}
+
+    ///@pre @ref optional and @ref default_value are not both null.
+    virtual operator T() { return is_default() ? get_default() : *optional; }
+    /// Fowards to @ref optional perfectly
+    template<typename O> auto &operator=(O&& other)
     {
-      this->value= value;
+      optional= std::forward<O>(other);
       return *this;
     }
-    virtual bool load_from(IO_CACHE *file) override;
-    virtual void save_to(IO_CACHE *file) override;
-  };
-
-  /// Null-Terminated String (usually file name) Value
-  template<size_t size= FN_REFLEN> struct String_value: Persistent
-  {
-    char buf[size];
-    /**
-      Reads should consider this an immutable '\0'-terminated string (especially
-      with @ref Optional_path_value where a `DEFAULT` may substitute the value).
-      Writes may prefers to directly address the underlying @ref buf.
+    /** Direct reference
+      @deprecated TODO: finish migrating @ref Master_info & @ref Relay_log_info
     */
-    virtual operator const char *() { return buf; }
-    /// @param other non-`nullptr` `\0`-terminated string
-    auto &operator=(const char *other)
+    T &value() { return *optional; }
+
+    virtual T get_default() { return *default_value; }
+    bool is_default() override { return !optional.has_value(); }
+    bool set_default() override
     {
-      strmake(buf, other, size-1);
-      return *this;
+      if (default_value)
+      {
+        optional.reset();
+        return false;
+      }
+      return Value_interface::set_default();
     }
     virtual bool load_from(IO_CACHE *file) override;
-    virtual void save_to(IO_CACHE *file) override;
+    virtual void save_to  (IO_CACHE *file) override;
   };
 
 
+  /// @ref '\0'-terminated string subclass
+  struct String_value: protected LEX_STRING, Value<const char *>
+  {
+    String_value(char *str, size_t length):
+      LEX_STRING({str, length}), Value(str) {}
+    String_value(char *str, size_t length, const char *const *default_value):
+      LEX_STRING({str, length}), Value(default_value) { DBUG_ASSERT(str); }
+    /// @param other `\0`-terminated string, or `nullptr` to call set_default()
+    String_value &operator=(const char *other);
+    virtual bool load_from(IO_CACHE *file) override;
+  };
+
+  /// Shorthand to create a self-managed @ref String_value
+  template<size_t size= FN_REFLEN> struct Char_array_value: String_value
+  {
+    char buf[size]= {'\0'}; // G++ Bug 89053: `""` is too long for `char[1<<28]`
+    Char_array_value(): String_value(buf, size) {}
+    Char_array_value(const char *const *default_value):
+      String_value(buf, size, default_value) {}
+    using String_value::operator=;
+  };
+
+
+  IO_CACHE file;
   virtual ~Info_file()= default;
   virtual bool load_from_file()= 0;
   virtual void save_to_file()= 0;
@@ -171,19 +239,19 @@ struct Info_file
     std::Mem_fn()-like nullable replacement for
     [member pointer upcasting](https://wg21.link/P0149R3)
   */
-  struct Mem_fn: std::function<Persistent &(Info_file *self)>
+  struct Mem_fn: std::function<Value_interface &(Info_file *self)>
   {
     /// Null Constructor
     Mem_fn(std::nullptr_t null= nullptr):
-      std::function<Persistent &(Info_file *)>(null) {}
+      std::function<Value_interface &(Info_file *)>(null) {}
     /** Non-Null Constructor
       @tparam T CRTP subclass of Info_file
-      @tparam M @ref Persistent subclass of the member
+      @tparam M @ref Value_interface subclass of the member
       @param pm member pointer
     */
     template<class T, typename M> Mem_fn(M T::* pm):
-      std::function<Persistent &(Info_file *)>(
-        [pm](Info_file *self) -> Persistent &
+      std::function<Value_interface &(Info_file *)>(
+        [pm](Info_file *self) -> Value_interface &
         { return self->*static_cast<M Info_file::*>(pm); }
       ) {}
   };
@@ -193,7 +261,7 @@ protected:
     (Re)load the MySQL line-based section from the @ref file
     @param value_list
       List of wrapped member pointers to values. The first element must be a
-      file name @ref String_value to be unambiguous with the line count line.
+      file name @ref Char_array_value<> to be unambiguous with the line count line.
     @param default_line_count
       We cannot simply read lines until EOF as all versions
       of MySQL/MariaDB may generate more lines than needed.
@@ -234,235 +302,148 @@ private:
 
 //TODO: Remove stub from mariadb-corporation/mariadb-columnstore-engine#3951
 #ifndef RPL_MASTER_INFO_FILE_H
+/// @name Explicit template instantiations and specializations
+///@{
+/// @name Integers
+///@{
+  extern template struct Info_file::Value<uint32_t>;
+  extern template struct Info_file::Value<uint64_t>;
+  /**
+    Using @ref Uint32_3 instead of @ref uint32_t diffentiates the
+    specializations of Master_info_file::master_heartbeat_period.
+  */
+  ///@{
+    template<> bool Info_file::Value<Uint32_3>::load_from(IO_CACHE *);
+    template<> void Info_file::Value<Uint32_3>::save_to  (IO_CACHE *);
+  ///@}
+///@}
+
+/** @name
+  These are engineered (that is, hard-coded)
+  on the types' single-digit ranges.
+*/
+///@{
+  template<> bool Info_file::Value<bool>::load_from(IO_CACHE *);
+  template<> void Info_file::Value<bool>::save_to  (IO_CACHE *);
+  template<> bool Info_file::Value<enum_master_use_gtid>::load_from(IO_CACHE *);
+  template<> void Info_file::Value<enum_master_use_gtid>::save_to  (IO_CACHE *);
+///@}
+
+template<> [[deprecated("use Info_file::String_value instead")]]
+inline
+bool Info_file::Value<const char *>::load_from(IO_CACHE *file) { return true; }
+template<> void Info_file::Value<const char *>::save_to(IO_CACHE *);
+
+  /** Array of `long`s (FIXME: Domain and Server IDs should be `uint32_t`s.)
+  @deprecated
+    Only one of `DO_DOMAIN_IDS` and `IGNORE_DOMAIN_IDS`
+    can be active at a time, so separate arrays are wasteful.
+    Until we refactor this pairs, this struct only reference existing arrays
+    doesn't construct/destruct) to avoid code that will be obsolete by then.
+*/
+///@{
+  /// @pre @ref array is initialized
+  template<>
+  inline Info_file::Value<DYNAMIC_ARRAY *>::Value(DYNAMIC_ARRAY *array):
+    optional(array) { DBUG_ASSERT(array); }
+
+  template<> bool Info_file::Value<DYNAMIC_ARRAY *>::load_from(IO_CACHE *);
+  template<> void Info_file::Value<DYNAMIC_ARRAY *>::save_to  (IO_CACHE *);
+///@}
+///@}
+
+
 struct Master_info_file: Info_file
 {
-  /** General Optional Value
-    @tparam T wrapped type
- */
-  template<typename T> struct Optional_value: Persistent
-  {
-    std::optional<T> optional;
-    virtual operator T()= 0;
-    /// Fowards to @ref optional perfectly
-    template<typename O> auto &operator=(O&& other)
-    {
-      optional= std::forward<O>(other);
-      return *this;
-    }
-    bool is_default() override { return !optional.has_value(); }
-    bool set_default() override
-    {
-      optional.reset();
-      return false;
-    }
-  };
-
-  /** Integer Value with `DEFAULT`
-    @tparam mariadbd_option
-      server options variable that determines the value of `DEFAULT`
-    @tparam I integer type (auto-deduced from `mariadbd_option`)
-    @see Int_value version without `DEFAULT` (not a superclass)
+  /** @name
+    `@@master_info_file` values,
+    in SHOW SLAVE STATUS order where applicable
   */
-  template<auto &mariadbd_option,
-           typename I= std::remove_reference_t<decltype(mariadbd_option)>>
-  struct Optional_int_value: Optional_value<I>
-  {
-    using Optional_value<I>::operator=;
-    operator I() override
-    { return Optional_value<I>::optional.value_or(mariadbd_option); }
-    virtual bool load_from(IO_CACHE *file) override;
-    virtual void save_to(IO_CACHE *file) override;
-  };
+  ///@{
 
-  /**
-    Optional Path Value (for SSL): @ref FN_REFLEN-sized '\0'-
-    terminated string with a `mariadbd` option for the `DEFAULT`.
-    @note This reuses the @ref String_value::buf to track the `DEFAULT`ed state,
-      which is a bit more efficient and convenient than
-      `std::optional<std::array<char, FN_REFLEN>>`.
-      Specifically, when the strlen() is 0, the value is an empty string if
-      the index 1 char is also '\0', or is set_default() if it is '\1'.
-  */
-  template<const char *&mariadbd_option>
-  struct Optional_path_value: String_value<>
-  {
-    operator const char *() override
-    {
-      if (is_default())
-        return mariadbd_option;
-      return String_value<>::operator const char *();
-    }
-    /// @param other `\0`-terminated string, or `nullptr` to call set_default()
-    Optional_path_value<mariadbd_option> &operator=(const char *other);
-    bool is_default() override { return /* strlen() == 0 */ !buf[0] && buf[1]; }
-    bool set_default() override
-    {
-      buf[0]= false;
-      buf[1]= true;
-      return false;
-    }
-    bool load_from(IO_CACHE *file) override
-    {
-      buf[1]= false; // not default
-      return String_value<>::load_from(file);
-    }
-  };
-
-  /** Boolean Value with `DEFAULT`.
-    @note
-    * This uses the @ref trilean enum,
-      which is more efficient than `std::optional<bool>`.
-    * load_from() and save_to() are also engineered
-      to make use of the range of only two cases.
-  */
-  template<bool &mariadbd_option> struct Optional_bool_value: Persistent
-  {
-    trilean value;
-    operator bool()
-    { return is_default() ? mariadbd_option : (value != trilean::NO); }
-    bool is_default() override { return value <= trilean::DEFAULT; }
-    bool set_default() override
-    {
-      value= trilean::DEFAULT;
-      return false;
-    }
-    auto &operator=(trilean other)
-    {
-      this->value= other;
-      return *this;
-    }
-    auto &operator=(bool value)
-    { return operator=(value ? trilean::YES : trilean::NO); }
-    /// @return `true` if the line is `0` or `1`, `false` otherwise or on error
-    bool load_from(IO_CACHE *file) override;
-    void save_to(IO_CACHE *file) override;
-  };
-
-  /** @ref uint32_t Array value
-    @deprecated
-      Only one of `DO_DOMAIN_IDS` and `IGNORE_DOMAIN_IDS` can be active
-      at a time, so giving them separate arrays, let alone value instances,
-      is wasteful. Until we refactor this pair, this will only reference
-      to existing arrays to reduce changes that will be obsolete by then.
-      As references, the struct does not manage (construct/destruct) the array.
-  */
-  struct ID_array_value: Persistent
-  {
-    /// Array of `long`s (FIXME: Domain and Server IDs should be `uint32_t`s.)
-    DYNAMIC_ARRAY &array;
-    ID_array_value(DYNAMIC_ARRAY &array): array(array) {}
-    operator DYNAMIC_ARRAY &() { return array; }
-    /// @pre @ref array is initialized
-    bool load_from(IO_CACHE *file) override;
-    /// Store the total number of elements followed by the individual elements.
-    void save_to(IO_CACHE *file) override;
-  };
-
-
-  /**
-    `@@master_info_file` values, in SHOW SLAVE STATUS order where applicable
-    @{
-  */
-
-  String_value<HOSTNAME_LENGTH*SYSTEM_CHARSET_MBMAXLEN + 1> master_host;
-  String_value<USERNAME_LENGTH + 1> master_user;
+  Char_array_value<HOSTNAME_LENGTH*SYSTEM_CHARSET_MBMAXLEN + 1> master_host;
+  Char_array_value<USERNAME_LENGTH + 1> master_user;
   // Not in SHOW SLAVE STATUS
-  String_value<MAX_PASSWORD_LENGTH*SYSTEM_CHARSET_MBMAXLEN + 1> master_password;
-  Int_value<uint32_t> master_port;
+  Char_array_value<MAX_PASSWORD_LENGTH*SYSTEM_CHARSET_MBMAXLEN + 1>
+    master_password;
+  Value<uint32_t> master_port= MYSQL_PORT;
   /// Connect_Retry
-  Optional_int_value<::master_connect_retry> master_connect_retry;
-  String_value<> master_log_file;
+  Value<uint32_t> master_connect_retry= &::master_connect_retry;
+  Char_array_value<> master_log_file;
   /// Read_Master_Log_Pos
-  Int_value<my_off_t> master_log_pos;
+  Value<my_off_t> master_log_pos= my_off_t(0);
   /// Master_SSL_Allowed
-  Optional_bool_value<::master_ssl> master_ssl;
+  Value<bool> master_ssl= &::master_ssl;
   /// Master_SSL_CA_File
-  Optional_path_value<::master_ssl_ca> master_ssl_ca;
+  Char_array_value<> master_ssl_ca= &::master_ssl_ca;
   /// Master_SSL_CA_Path
-  Optional_path_value<::master_ssl_capath> master_ssl_capath;
-  Optional_path_value<::master_ssl_cert> master_ssl_cert;
-  Optional_path_value<::master_ssl_cipher> master_ssl_cipher;
-  Optional_path_value<::master_ssl_key> master_ssl_key;
-  Optional_bool_value<::master_ssl_verify_server_cert>
-    master_ssl_verify_server_cert;
+  Char_array_value<> master_ssl_capath= &::master_ssl_capath;
+  Char_array_value<> master_ssl_cert= &::master_ssl_cert;
+  Char_array_value<> master_ssl_cipher= &::master_ssl_cipher;
+  Char_array_value<> master_ssl_key= &::master_ssl_key;
+  Value<bool> master_ssl_verify_server_cert=
+    &::master_ssl_verify_server_cert;
   /// Replicate_Ignore_Server_Ids
-  ID_array_value ignore_server_ids;
-  Optional_path_value<::master_ssl_crl> master_ssl_crl;
-  Optional_path_value<::master_ssl_crlpath> master_ssl_crlpath;
+  Value<DYNAMIC_ARRAY *> ignore_server_ids;
+  Char_array_value<> master_ssl_crl= &::master_ssl_crl;
+  Char_array_value<> master_ssl_crlpath= &::master_ssl_crlpath;
 
   /** Singleton class of @ref Master_info_file::master_use_gtid:
     It is a @ref enum_master_use_gtid value
     with a `DEFAULT` value of @ref ::master_use_gtid,
     which in turn has a `DEFAULT` value based on @ref gtid_supported.
   */
-  struct: Persistent
+  struct Use_gtid_value: Value<enum_master_use_gtid>
   {
-    enum_master_use_gtid mode;
     /**
-      The default `master_use_gtid` is normally `SLAVE_POS`; however, if the
-      master does not supports GTIDs, we fall back to `NO`. This value caches
+      @ref master_use_gtid::AUTO is normally `SLAVE_POS`; however, if the
+      master does not support GTIDs, we fall back to `NO`. This value caches
       the check so future RESET SLAVE commands don't revert to `SLAVE_POS`.
-      load_from() and save_to() are engineered (that is, hard-coded)
-      on the single-digit range of @ref enum_master_use_gtid,
-      similar to Optional_bool_value.
     */
     bool gtid_supported= true;
-    operator enum_master_use_gtid();
+    Use_gtid_value(): Value(
+      // Substitute until `my_getopt.c` switches from @ref ulongs to enums
+      reinterpret_cast<const enum_master_use_gtid *>(&::master_use_gtid)
+    ) {}
+    operator enum_master_use_gtid() override;
     operator bool()
     { return operator enum_master_use_gtid() != enum_master_use_gtid::NO; }
-    auto &operator=(enum_master_use_gtid mode)
-    {
-      this->mode= mode;
-      return *this;
-    }
-    bool is_default() override
-    { return mode >= enum_master_use_gtid::DEFAULT; }
-    bool set_default() override
-    {
-      mode= enum_master_use_gtid::DEFAULT;
-      return false;
-    }
-    bool load_from(IO_CACHE *file) override;
-    void save_to(IO_CACHE *file) override;
+    using Value<enum_master_use_gtid>::operator=;
+    enum_master_use_gtid get_default() override
+    { return static_cast<enum_master_use_gtid>(::master_use_gtid); }
   }
   /// Using_Gtid
   master_use_gtid;
 
   /// Replicate_Do_Domain_Ids
-  ID_array_value do_domain_ids;
+  Value<DYNAMIC_ARRAY *> do_domain_ids;
   /// Replicate_Ignore_Domain_Ids
-  ID_array_value ignore_domain_ids;
-  Optional_int_value<::master_retry_count> master_retry_count;
+  Value<DYNAMIC_ARRAY *> ignore_domain_ids;
+  Value<uint64_t> master_retry_count= &::master_retry_count;
 
-  /** Singleton class of Master_info_file::master_heartbeat_period:
-    It is a non-negative `DECIMAL(10,3)` seconds value internally
-    calculated as an unsigned integer milliseconds value.
-    It has a `DEFAULT` value of @ref ::master_heartbeat_period,
+  /** Singleton class of @ref Master_info_file::master_heartbeat_period:
+    It is a @ref Uint32_3 value
+    It has a `DEFAULT` value of @ref ::master_heartbeat_period
     which in turn has a `DEFAULT` value of `@@slave_net_timeout / 2` seconds.
+    (TODO: A new "`master_heartbeat_frequency`" would be more explicit
+     at configuring the"relative to @ref slave_net_timeout" aspect.)
   */
-  struct Heartbeat_period_value: Optional_value<uint32_t>
+  struct Heartbeat_period_value: Value<Uint32_3>
   {
-    /**
-      @return std::numeric_limits<uint32_t>::max() / 1000.0
-        as a constant '\0'-terminated string
-    */
-    static constexpr char MAX[]= "4294967.295";
-    using Optional_value::operator=;
-    operator uint32_t() override;
-    static uint from_decimal(
-      uint32_t &result, const decimal_t &decimal, bool &overprecise
-    );
-    static uint from_chars(
-      std::optional<uint32_t> &self, const char *str,
-      const char *str_end, bool &overprecise, char expected_end= '\n'
-    );
-    bool load_from(IO_CACHE *file) override;
-    void save_to(IO_CACHE *file) override;
+    Heartbeat_period_value(): Value<Uint32_3>(
+      // Substitute since can't use directly at the moment
+      reinterpret_cast<const Uint32_3 *>(&::master_heartbeat_period)
+    ) {}
+    using Value<Uint32_3>::operator Uint32_3;
+    operator uint32_t() { return operator Uint32_3(); }
+    using Value<Uint32_3>::operator=;
+    Uint32_3 get_default() override;
   }
   /// `Slave_heartbeat_period` of SHOW ALL SLAVES STATUS
   master_heartbeat_period;
 
-  /// }@
+  ///@}
+
 
   Master_info_file(
     DYNAMIC_ARRAY &ignore_server_ids,
@@ -476,19 +457,17 @@ struct Master_info_file: Info_file
 
 struct Relay_log_info_file: Info_file
 {
-  /**
-    `@@relay_log_info_file` values in SHOW SLAVE STATUS order
-    @{
-  */
-  String_value<> relay_log_file;
-  Int_value<my_off_t> relay_log_pos;
+  ///@name `@@relay_log_info_file` values in SHOW SLAVE STATUS order
+  ///@{
+  Char_array_value<> relay_log_file;
+  Value<my_off_t> relay_log_pos= my_off_t(0);
   /// Relay_Master_Log_File (of the event *group*)
-  String_value<> read_master_log_file;
+  Char_array_value<> read_master_log_file;
   /// Exec_Master_Log_Pos (of the event *group*)
-  Int_value<my_off_t> read_master_log_pos;
+  Value<my_off_t> read_master_log_pos= my_off_t(0);
   /// SQL_Delay
-  Int_value<uint32_t> sql_delay;
-  /// }@
+  Value<uint32_t> sql_delay= uint32_t(0);
+  ///@}
 
   bool load_from_file() override;
   void save_to_file() override;

@@ -53,9 +53,7 @@ Master_info::Master_info(LEX_CSTRING *connection_name_arg,
    semi_sync_reply_enabled(0)
 {
   char *tmp;
-  port= MYSQL_PORT;
   host[0] = 0; user[0] = 0; password[0] = 0;
-  master_log_pos = 0;
   master_log_name[0] = 0;
 
   /*
@@ -726,7 +724,7 @@ bool Master_info_index::init_all_master_info()
 {
   int thread_mask;
   int err_num= 0, succ_num= 0; // The number of success read Master_info
-  Info_file::String_value<MAX_CONNECTION_NAME+1> sign;
+  Info_file::Char_array_value<MAX_CONNECTION_NAME+1> sign;
   File index_file_nr;
   THD *thd;
   DBUG_ENTER("init_all_master_info");
@@ -1657,7 +1655,7 @@ void setup_mysql_connection_for_master(MYSQL *mysql, Master_info *mi,
     mysql_options(mysql, MYSQL_OPT_SSL_CRLPATH, mi->master_ssl_crlpath);
     /*
       mysql_options() expects a pointer to my_bool. master_ssl_verify_server_cert
-      is a trilean that can be -1 (default), 0 (no), or 1 (yes). When the default
+      is a trilean (optional bool). When the default
       value is used, the bool() conversion operator redirects to the global option
       ::master_ssl_verify_server_cert. We must use this conversion rather than
       passing a pointer directly, as (my_bool*)&trilean would not handle the

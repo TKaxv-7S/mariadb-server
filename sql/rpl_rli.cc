@@ -66,7 +66,6 @@ Relay_log_info::Relay_log_info(bool is_slave_recovery, const char* thread_name)
    m_flags(0)
 {
   DBUG_ENTER("Relay_log_info::Relay_log_info");
-  group_relay_log_pos= group_master_log_pos= sql_delay= 0;
   relay_log.is_relay_log= TRUE;
   relay_log_state.init();
 #ifdef HAVE_PSI_INTERFACE

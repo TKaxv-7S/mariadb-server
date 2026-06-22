@@ -8744,24 +8744,25 @@ mysqld_get_one_option(const struct my_option *opt, const char *argument,
       master_heartbeat_period.reset();
     else
     {
-      bool overprecise;
-      if (Master_info_file::Heartbeat_period_value::from_chars(
-        master_heartbeat_period, master_heartbeat_period_str,
-        strchr(master_heartbeat_period_str, '\0'), overprecise, '\0')
-      )
-      {
+      Uint32_3 milliseconds;
+      switch (milliseconds.from_chars(master_heartbeat_period_str)) {
+      case Uint32_3::FAILED:
         sql_print_error(
           "Bad value for master-heartbeat-period; "
           "should be between 0 and %s seconds inclusive.",
-          Master_info_file::Heartbeat_period_value::MAX
+          Uint32_3::MAX_STR
         );
         return true;
+      case Uint32_3::ROUNDED:
+        if (unlikely(!milliseconds))
+          sql_print_warning(
+            "master-heartbeat-period rounded to 0, "
+            "meaning that heartbeating will effectively be disabled."
+          );
+        [[fallthrough]];
+      case Uint32_3::OK:
+        master_heartbeat_period= std::move(milliseconds);
       }
-      if (unlikely(!*master_heartbeat_period && overprecise))
-        sql_print_warning(
-          "master-heartbeat-period rounded to 0, "
-          "meaning that heartbeating will effectively be disabled."
-        );
     }
     break;
 #endif /* HAVE_REPLICATION */

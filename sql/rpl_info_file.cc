@@ -17,118 +17,102 @@
 
 #include "rpl_info_file.h"
 #include <unordered_map> // Type of MASTER_VALUE_MAP
-#include <string_view>   // Key type of MASTER_VALUE_MAP
 #include <unordered_set> // Used by Master_info_file::load_from_file() to dedup
 
 
 int change_master_id_cmp(const void *arg1, const void *arg2)
 {
-  const ulong &id1= *(const ulong *)arg1, &id2= *(const ulong *)arg2;
+  const ulong &id1= *static_cast<const ulong *>(arg1);
+  const ulong &id2= *static_cast<const ulong *>(arg2);
   return (id1 > id2) - (id1 < id2);
 }
 
 
-namespace Int_IO_CACHE
+/**
+  @return
+    The `error` output from my_strtoll10(),
+    or @ref MY_ERRNO_EDOM if the number is not terminated by a '\n'
+  @deprecated my_strtoll10() doesn't cover every use case; what would that be?
+*/
+static int my_b_getsll(IO_CACHE *file, longlong &value)
 {
-  /**
-    @ref IO_CACHE (reading one line with the `\n`) version of std::from_chars()
-    @tparam I integer type
-    @return `false` if the line has parsed successfully or `true` if error
-  */
-  template<typename I> static bool from_chars(IO_CACHE *file, I &value)
+  int error;
+  /// +1 for the trailing '\n' that my_b_gets() includes
+  char buf[LONGLONG_BUFFER_SIZE + 1];
+  /// includes the `\n` but excludes the `\0`
+  size_t length= my_b_gets(file, buf, sizeof(buf));
+  if (!length) // EOF
+    return MY_ERRNO_EDOM;
+  char *end= &(buf[length]);
+  value= my_strtoll10(buf, &end, &error);
+  switch (error) {
+  case -1:
+  case 0:
+    if (*end != '\n')
+      return MY_ERRNO_EDOM;
+  }
+  return error;
+}
+
+template<typename T> bool Info_file::Value<T>::load_from(IO_CACHE *file)
+{
+  longlong val;
+  switch (my_b_getsll(file, val)) {
+  case -1:
+    if (!std::numeric_limits<T>::is_signed)
+      return true;
+    [[fallthrough]];
+  case 0:
   {
-    int error;
-    /**
-      +2 for the terminating `\n\0`
-      (They are ignored, but my_b_gets() includes them.)
+    T value= static_cast<T>(val);
+    /*TODO:
+      This upper range check is not needed when using type-
+      specific variants of a safe string-to-integer converter
+      (e.g., std::from_chars() when all platforms support it).
     */
-    char buf[BUF_SIZE<I> + 2];
-    /// includes the `\n` but excludes the `\0`
-    size_t length= my_b_gets(file, buf, sizeof(buf));
-    if (!length) // EOF
-      return true;
-    char *end= &(buf[length]);
-    longlong val= my_strtoll10(buf, &end, &error);
-    switch (error) {
-    case -1:
-      if (!std::numeric_limits<I>::is_signed)
-        return true;
-      [[fallthrough]];
-    case 0:
-      /*TODO
-        This upper range check is not needed when using type-
-        specific variants of a safe string-to-integer converter
-        (e.g., std::from_chars() when all platforms support it).
-      */
-      if (*end == '\n' && value <= std::numeric_limits<I>::max())
-      {
-        value= static_cast<I>(val);
-        return false;
-      }
-      [[fallthrough]];
-    default:
-      return true;
+    if (value <= std::numeric_limits<T>::max())
+    {
+      (*this)= value;
+      return false;
     }
   }
-  /**
-    Convenience overload of from_chars(IO_CACHE *, I &) for `operator=` types
-    @tparam I inner integer type
-    @tparam T wrapper type
-  */
-  template<typename I, class T> static bool from_chars(IO_CACHE *file, T *self)
-  {
-    I value;
-    if (from_chars(file, value))
-      return true;
-    (*self)= value;
-    return false;
   }
+  return true;
+}
 
-  /**
-    @ref IO_CACHE (writing *without* a `\n`) version of std::to_chars()
-    @tparam I (inner) integer type
-  */
-  template<typename I> static void to_chars(IO_CACHE *file, I value)
-  {
-    char buf[BUF_SIZE<I>];
-    /*TODO:
-      * my_b_printf() needs updates and so doesn't
-        support `long long`s at the moment.
-      * We can avoid format parsing by expanding
-        int10_to_str() if not supporting std::to_chars().
-    */
-    int len= std::numeric_limits<I>::is_signed ?
-      snprintf(buf, BUF_SIZE<I>, "%lld", static_cast<long long>(value)) :
-      snprintf(buf, BUF_SIZE<I>, "%llu", static_cast<unsigned long long>(value))
-    ;
-    DBUG_ASSERT(len > 0);
-    my_b_write(file, reinterpret_cast<const uchar *>(buf), len);
-  }
-};
-
-template<typename I>
-bool Info_file::Int_value<I>::load_from(IO_CACHE *file)
-{ return Int_IO_CACHE::from_chars(file, value); }
-template<typename I>
-void Info_file::Int_value<I>::save_to(IO_CACHE *file)
-{ return Int_IO_CACHE::to_chars(file, value); }
-
-template<auto &mariadbd_option, typename I>
-bool Master_info_file::Optional_int_value<mariadbd_option, I>::load_from(IO_CACHE *file)
-{ return Int_IO_CACHE::from_chars<I>(file, this); }
-template<auto &mariadbd_option, typename I>
-void Master_info_file::Optional_int_value<mariadbd_option, I>::save_to(IO_CACHE *file)
-{ return Int_IO_CACHE::to_chars(file, operator I()); }
-
-
-template<size_t size>
-bool Info_file::String_value<size>::load_from(IO_CACHE *file)
+template<typename T> void Info_file::Value<T>::save_to(IO_CACHE *file)
 {
-  size_t length= my_b_gets(file, buf, size);
-  if (!length) // EOF
+  char buf[MAX_CHARS10];
+  /*TODO:
+    * my_b_printf() needs updates and so doesn't
+      support `long long`s at the moment.
+    * We can avoid format parsing by expanding
+      int10_to_str() if not supporting std::to_chars().
+  */
+  int len= std::numeric_limits<T>::is_signed ?
+    snprintf(buf, sizeof(buf), "%lld",
+     static_cast<long long>(operator T())) :
+    snprintf(buf, sizeof(buf), "%llu",
+     static_cast<unsigned long long>(operator T()));
+  DBUG_ASSERT(len > 0);
+  my_b_write(file, reinterpret_cast<const uchar *>(buf), len);
+}
+
+/// @name Explicit template instantiations
+///@{
+template struct Info_file::Value<uint32_t>;
+template struct Info_file::Value<uint64_t>;
+///@}
+
+
+bool Info_file::String_value::load_from(IO_CACHE *file)
+{
+  size_t strlen= my_b_gets(file, str, length);
+  if (!strlen) // EOF
     return true;
+  Value<const char *>::operator=(str); // replace @ref std::nullopt
   /// If we stopped on a newline, kill it.
-  char &last_char= buf[length-1];
+  char &last_char= str[strlen-1];
   if (last_char == '\n')
   {
     last_char= '\0';
@@ -136,26 +120,23 @@ bool Info_file::String_value<size>::load_from(IO_CACHE *file)
   }
   /*
     Consume the lost line break,
-    or error if the line overflows the @ref buf.
+    or error if the line overflows the @ref str.
   */
   return my_b_get(file) != '\n';
 }
 
-template<size_t size>
-void Info_file::String_value<size>::save_to(IO_CACHE *file)
+template<> void Info_file::Value<const char *>::save_to(IO_CACHE *file)
 {
-  const char *buf= *this;
-  my_b_write(file, reinterpret_cast<const uchar *>(buf), strlen(buf));
+  const char *str= *this;
+  my_b_write(file, reinterpret_cast<const uchar *>(str), strlen(str));
 }
 
-template<const char *&mariadbd_option>
-Master_info_file::Optional_path_value<mariadbd_option> &
-Master_info_file::Optional_path_value<mariadbd_option>::operator=(const char *other)
+Info_file::String_value &Info_file::String_value::operator=(const char *other)
 {
   if (other)
   {
-    buf[1]= false; // not default
-    String_value<>::operator=(other);
+    strmake(str, other, length-1);
+    Value<const char *>::operator=(str); // replace @ref std::nullopt
   }
   else
     set_default();
@@ -163,41 +144,47 @@ Master_info_file::Optional_path_value<mariadbd_option>::operator=(const char *ot
 }
 
 
-template<bool &mariadbd_option>
-bool Master_info_file::Optional_bool_value<mariadbd_option>::load_from(IO_CACHE *file)
+/// @return `true` if the line is `0` or `1`, `false` otherwise or on error
+template<> bool Info_file::Value<bool>::load_from(IO_CACHE *file)
 {
   /** Only three chars are required:
     * One digit
       (When base prefixes are not recognized in integer parsing,
       anything with a leading `0` stops parsing
       after converting the `0` to zero anyway.)
-    * the terminating `\n\0` as in IntegerLike::from_chars(IO_CACHE *, I &)
+    * the terminating `\n\0` that my_b_gets() includes
   */
   char buf[3];
   if (my_b_gets(file, buf, 3) && buf[1] == '\n')
     switch (buf[0]) {
     case '0':
-      value= trilean::NO;
+      (*this)= false;
       return false;
     case '1':
-      value= trilean::YES;
+      (*this)= true;
       return false;
     }
   return true;
 }
 
-template<bool &mariadbd_option>
-void Master_info_file::Optional_bool_value<mariadbd_option>::save_to(IO_CACHE *file)
+template<> void Info_file::Value<bool>::save_to(IO_CACHE *file)
 { my_b_write_byte(file, operator bool() ? '1' : '0'); }
 
 
-/// @pre @ref array is initialized
-bool Master_info_file::ID_array_value::load_from(IO_CACHE *file)
+template<> bool Info_file::Value<DYNAMIC_ARRAY *>::load_from(IO_CACHE *file)
 {
   long count;
   size_t i;
   /// +1 for the terminating delimiter
-  char buf[Int_IO_CACHE::BUF_SIZE<uint32_t> + 1];
+  char buf[Value<uint32_t>::MAX_CHARS10 + 1];
+  DBUG_ASSERT(!is_default());
+  if (is_default())
+    return true;
+
+  /*TODO:
+    merge this procedure into my_b_gets();
+    same for the copy in the `while` loop below
+  */
   for (i= 0; i < sizeof(buf); ++i)
   {
     int c= my_b_get(file);
@@ -207,9 +194,10 @@ bool Master_info_file::ID_array_value::load_from(IO_CACHE *file)
     if (c == /* End of Line */ '\n' || c == /* End of Count */ ' ')
       break;
   }
+
   char *end= str2int(buf, 10, 1, INT32_MAX, &count);
   // Reserve enough elements ahead of time.
-  if (!end || allocate_dynamic(&array, count))
+  if (!end || allocate_dynamic(*optional, count))
     return true;
   while (count--)
   {
@@ -220,6 +208,7 @@ bool Master_info_file::ID_array_value::load_from(IO_CACHE *file)
     */
     if (*end != ' ')
       return true;
+
     for (i= 0; i < sizeof(buf); ++i)
     {
       /*
@@ -233,13 +222,14 @@ bool Master_info_file::ID_array_value::load_from(IO_CACHE *file)
       if (c == /* End of Count */ ' ' || c == /* End of Line */ '\n')
         break;
     }
+
     end= str2int(buf, 10, 1, INT32_MAX, &value);
     if (!end)
       return true;
     ulong id= value;
-    bool oom= insert_dynamic(&array, (uchar *)&id);
+    bool oom= insert_dynamic(*optional, (uchar *)&id);
     /*
-      This should not error because enough
+      This should not err because enough
       memory was already allocate_dynamic()-ed.
     */
     DBUG_ASSERT(!oom);
@@ -249,79 +239,74 @@ bool Master_info_file::ID_array_value::load_from(IO_CACHE *file)
   // Check that the last number ended with a `\n`, not ` ` or anything else.
   if (*end != '\n')
     return true;
-  sort_dynamic(&array, change_master_id_cmp); // to be safe
+  sort_dynamic(*optional, change_master_id_cmp); // to be safe
   return false;
 }
 
 /// Store the total number of elements followed by the individual elements.
-void Master_info_file::ID_array_value::save_to(IO_CACHE *file)
+template<> void Info_file::Value<DYNAMIC_ARRAY *>::save_to(IO_CACHE *file)
 {
-  Int_IO_CACHE::to_chars(file, array.elements);
-  for (size_t i= 0; i < array.elements; ++i)
+  DYNAMIC_ARRAY *array= *this;
+  Value<ulong> writer= static_cast<ulong>(array->elements);
+  writer.save_to(file);
+  for (size_t i= 0; i < array->elements; ++i)
   {
     ulong id;
-    get_dynamic(&array, &id, i);
+    get_dynamic(array, &id, i);
+    writer= std::move(id);
     my_b_write_byte(file, ' ');
-    Int_IO_CACHE::to_chars(file, id);
+    writer.save_to(file);
   }
 }
 
 
-decltype(Master_info_file::master_use_gtid)::operator enum_master_use_gtid()
+Master_info_file::Use_gtid_value::operator enum_master_use_gtid()
 {
-  if (is_default())
-  {
-    auto default_use_gtid=
-      static_cast<enum_master_use_gtid>(::master_use_gtid);
-    return default_use_gtid >= enum_master_use_gtid::DEFAULT ? (
-      gtid_supported ?
-        enum_master_use_gtid::SLAVE_POS : enum_master_use_gtid::NO
-    ) : default_use_gtid;
-  }
-  return mode;
+  enum_master_use_gtid mode=
+    Value<enum_master_use_gtid>::operator enum_master_use_gtid();
+  return mode == enum_master_use_gtid::AUTO ? (gtid_supported ?
+    enum_master_use_gtid::SLAVE_POS : enum_master_use_gtid::NO
+  ) : mode;
 }
+
 /** @return
   `true` if the line is a @ref enum_master_use_gtid,
   `false` otherwise or on error
 */
-bool decltype(Master_info_file::master_use_gtid)::load_from(IO_CACHE *file)
+template<>
+bool Info_file::Value<enum_master_use_gtid>::load_from(IO_CACHE *file)
 {
   /**
     Only 3 chars are required for the enum,
-    similar to @ref Optional_bool_value::load_from()
+    similar to Value<bool>::load_from().
   */
   char buf[3];
   if (!my_b_gets(file, buf, 3) ||
       buf[1] != '\n' ||
       buf[0] > /* SLAVE_POS */ '2' || buf[0] < /* NO */ '0')
     return true;
-  operator=(static_cast<enum_master_use_gtid>(buf[0] - '0'));
+  (*this)= static_cast<enum_master_use_gtid>(buf[0] - '0');
   return false;
 }
-void decltype(Master_info_file::master_use_gtid)::save_to(IO_CACHE *file)
+
+template<> void Info_file::Value<enum_master_use_gtid>::save_to(IO_CACHE *file)
 {
   my_b_write_byte(file, static_cast<uchar>(
     '0' + static_cast<unsigned char>(operator enum_master_use_gtid())));
 }
 
 
-Master_info_file::Heartbeat_period_value::operator uint32_t()
+Uint32_3 Master_info_file::Heartbeat_period_value::get_default()
 {
-  return is_default() ? ::master_heartbeat_period.value_or(
-    MY_MIN(slave_net_timeout*500ULL, std::numeric_limits<uint32_t>::max())
-  ) : *(Optional_value<uint32_t>::optional);
+  if (::master_heartbeat_period.has_value())
+    return *::master_heartbeat_period;
+  uint64_t frequency_2= slave_net_timeout;
+  frequency_2 *= 1000 / 2;
+  return static_cast<uint32_t>(
+    MY_MIN(frequency_2, std::numeric_limits<uint32_t>::max()));
 }
 
-/** Load from a `DECIMAL(10,3)`
-  @param overprecise
-    set to `true` if the decimal has more than 3 decimal digits
-  @return whether the decimal is out of range
-  @post Output arguments are set on success and
-    not changed if the decimal is out of range.
-*/
-uint Master_info_file::Heartbeat_period_value::from_decimal(
-  uint32_t &result, const decimal_t &decimal, bool &overprecise
-)
+Uint32_3::conversion_status Uint32_3::from_decimal(const decimal_t &decimal)
 {
   /// Wrapper to enable only-once static const construction
   struct Decimal_from_str: my_decimal
@@ -340,65 +325,61 @@ uint Master_info_file::Heartbeat_period_value::from_decimal(
     implemented by printing into a string and parsing that char array,
     which is an even larger overhead than `my_decimal` multiplication.
   */
-  static const auto MAX_PERIOD= Decimal_from_str(STRING_WITH_LEN(MAX)),
-                    THOUSAND  = Decimal_from_str(STRING_WITH_LEN("1000"));
-  [[maybe_unused]] ulonglong decimal_out;
+  static const auto
+    MAX_PERIOD= Decimal_from_str(STRING_WITH_LEN(Uint32_3::MAX_STR)),
+    THOUSAND  = Decimal_from_str(STRING_WITH_LEN("1000"));
+
+  ulonglong decimal_out;
   if (decimal.sign || decimal_cmp(&MAX_PERIOD, &decimal) < 0)
-    return true; // ER_SLAVE_HEARTBEAT_VALUE_OUT_OF_RANGE
-  overprecise= decimal.frac > 3;
+    return FAILED;
+  bool overprecise= decimal.frac > 3;
   // decomposed from my_decimal2int() to reduce a bit of computations
-  auto product= my_decimal();
+  my_decimal product;
   bool unexpected_error=
     decimal_mul(&decimal, &THOUSAND, &product) ||
     (decimal2ulonglong(&product, &decimal_out, HALF_UP) > E_DEC_TRUNCATED);
   DBUG_ASSERT(!unexpected_error);
   if (unexpected_error)
-    return true;
-  result= static_cast<uint32_t>(decimal_out);
-  return false;
+    return FAILED;
+  (*this)= static_cast<uint32_t>(decimal_out);
+  return overprecise ? ROUNDED : OK;
 }
 
-/** Load from a '\0'-terminated string
-  @param expected_end This function also checks that the exclusive end
-    of the decimal *(which may be `str_end` itself)* is this delimiter.
-  @return from_decimal(), or `true` on unexpected contents
-  @post Output arguments are set on success and not changed on error.
-*/
-uint Master_info_file::Heartbeat_period_value::from_chars(
-  std::optional<uint32_t> &self, const char *str,
-  const char *str_end, bool &overprecise, char expected_end
-)
+Uint32_3::conversion_status
+Uint32_3::from_chars(const std::string_view &str, char delimiter)
 {
-  uint32_t result;
-  auto decimal= my_decimal();
-  if (str2my_decimal(
-      E_DEC_ERROR, str, &decimal, const_cast<char **>(&str_end)
-    ) || *str_end != expected_end ||
-    from_decimal(result, decimal, overprecise))
-    return true;
-  self.emplace(result);
-  return false;
+  my_decimal decimal;
+  const char *str_end= &(str.data()[str.size()]);
+  return (str2my_decimal(
+    E_DEC_ERROR, str.data(), &decimal, const_cast<char **>(&str_end)
+  ) || *str_end != delimiter) ? FAILED : from_decimal(decimal);
 }
-bool Master_info_file::Heartbeat_period_value::load_from(IO_CACHE *file)
+
+template<> bool Info_file::Value<Uint32_3>::load_from(IO_CACHE *file)
 {
+  Uint32_3 decimal;
   /**
-    Number of chars Optional_int_value::load_from() uses plus
-    1 for the decimal point; truncate the excess precision,
+    +3 for the decimal point and the
+    terminating `\n\0` that my_b_gets() includes.
+    Having more precision than `DECIMAL(10,3)` is considered a mistake here,
+    so we only need to verify the '\n'; no need to leave room for extra digits,
     which there should not be unless the file is edited externally.
   */
-  char buf[Int_IO_CACHE::BUF_SIZE<uint32_t> + 3];
-  bool overprecise;
+  char buf[Value<uint32_t>::MAX_CHARS10 + 3];
   size_t length= my_b_gets(file, buf, sizeof(buf));
-  return !length ||
-    from_chars(optional, buf, &(buf[length]), overprecise) || overprecise;
+  if (!length || decimal.from_chars({buf, length}, '\n'))
+    return true;
+  (*this)= std::move(decimal);
+  return false;
 }
 
 /**
   This method is engineered (that is, hard-coded) to take
   full advantage of the non-negative `DECIMAL(10,3)` format.
 */
-void Master_info_file::Heartbeat_period_value::save_to(IO_CACHE *file) {
-  auto[integer_part, decimal_part]= div(operator uint32_t(), 1000);
+template<> void Info_file::Value<Uint32_3>::save_to(IO_CACHE *file)
+{
+  auto[integer_part, decimal_part]= div(operator Uint32_3(), 1000);
   my_b_printf(file, "%u.%03u", integer_part, decimal_part);
 }
 
@@ -480,15 +461,9 @@ Master_info_file::Master_info_file(
   DYNAMIC_ARRAY &ignore_server_ids,
   DYNAMIC_ARRAY &do_domain_ids, DYNAMIC_ARRAY &ignore_domain_ids
 ):
-  ignore_server_ids(ignore_server_ids),
-  do_domain_ids(do_domain_ids), ignore_domain_ids(ignore_domain_ids)
-{
-  for (std::unordered_map<std::string_view,
-          const Mem_fn>::const_iterator it= MASTER_VALUE_MAP.begin();
-        it != MASTER_VALUE_MAP.end(); ++it)
-    if (it->second)
-      it->second(this).set_default();
-}
+  ignore_server_ids(&ignore_server_ids),
+  do_domain_ids(&do_domain_ids), ignore_domain_ids(&ignore_domain_ids)
+{}
 
 
 bool
@@ -499,7 +474,7 @@ Info_file::load_from_file(const Mem_fn *values, size_t size, size_t default_line
     The first row is temporarily stored in the first value. If it is a line
     count and not a log name (new format), the second row will overwrite it.
   */
-  auto &line1= dynamic_cast<String_value<> &>(values[0](this));
+  auto &line1= dynamic_cast<Char_array_value<> &>(values[0](this));
   if (line1.load_from(&file))
     return true;
   char *end= str2int(line1.buf, 10, 0, INT32_MAX, &val);
@@ -598,7 +573,7 @@ bool Master_info_file::load_from_file()
           */
           else if (seen.insert(key).second)
           {
-            Persistent &value= kv->second(this);
+            Value_interface &value= kv->second(this);
             if (found_equal ? value.load_from(&file) : value.set_default())
               return true;
           }
@@ -629,7 +604,7 @@ void Info_file::save_to_file(const Mem_fn *values, size_t size, size_t total_lin
     But these garbage don't matter thanks to the number
     of effective lines in the first line of the file.
   */
-  Int_IO_CACHE::to_chars(&file, total_line_count);
+  Value<size_t>(total_line_count).save_to(&file);
   my_b_write_byte(&file, '\n');
   for (size_t i= 0; i < size; ++i)
   {
@@ -660,7 +635,7 @@ void Master_info_file::save_to_file()
   {
     if (it->second)
     {
-      Persistent &value= it->second(this);
+      Value_interface &value= it->second(this);
       my_b_write(&file,
                   reinterpret_cast<const uchar *>(it->first.data()), it->first.size());
       if (!value.is_default())

@@ -124,6 +124,7 @@ SET(SQL_EMBEDDED_SOURCES emb_qcache.cc libmysqld.c lib_sql.cc
            ../sql/opt_index_cond_pushdown.cc
            ../sql/opt_subselect.cc
            ../sql/create_options.cc
+           ../sql/rpl_info_file.cc
            ../sql/rpl_utility.cc
            ../sql/rpl_utility_server.cc
            ../sql/rpl_reporting.cc
