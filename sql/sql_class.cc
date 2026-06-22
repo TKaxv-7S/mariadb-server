@@ -6749,8 +6749,17 @@ start_new_trans::start_new_trans(THD *thd)
   server_status= thd->server_status;
   m_transaction_psi= thd->m_transaction_psi;
   thd->m_transaction_psi= 0;
-  wsrep_on= thd->variables.wsrep_on;
-  thd->disable_wsrep();
+  /* Sub-transactions opened via start_new_trans are read-only system
+     accesses (statistics, HELP). They must not append wsrep
+     certification keys or otherwise participate in cluster
+     replication. Use the per-table ignore flag rather than toggling
+     thd->variables.wsrep_on, which would create THD/trx wsrep state
+     divergence (trx->is_wsrep() snapshot vs current wsrep_on) and
+     trigger set_binlog_bit() cascades that leave BYPASS / cleared
+     OPTION_BIN_LOG behind when the carve-out path restores wsrep.
+     Same idiom is used in ha_commit_trans for TR_table::update. */
+  wsrep_ignore_table= thd->wsrep_ignore_table;
+  thd->wsrep_ignore_table= true;
   thd->server_status&= ~(SERVER_STATUS_IN_TRANS |
                          SERVER_STATUS_IN_TRANS_READONLY);
   thd->server_status|= SERVER_STATUS_AUTOCOMMIT;
@@ -6770,8 +6779,7 @@ void start_new_trans::restore_old_transaction()
   if (org_thd->m_transaction_psi)
     MYSQL_COMMIT_TRANSACTION(org_thd->m_transaction_psi);
   org_thd->m_transaction_psi= m_transaction_psi;
-  if (wsrep_on)
-    org_thd->enable_wsrep();
+  org_thd->wsrep_ignore_table= wsrep_ignore_table;
   unhide_rgi_slave(org_thd->rgi_slave);
   org_thd= 0;
 }

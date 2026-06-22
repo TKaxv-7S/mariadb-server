@@ -4073,13 +4073,20 @@ public:
   {
 #ifdef WITH_WSREP
     DBUG_ASSERT(WSREP_PROVIDER_EXISTS_ && WSREP_ON_);
+    /* Only mutate ACTIVE_WSREP when wsrep_on actually transitions
+       0 -> 1. A redundant call (wsrep already on) would still flip
+       set_binlog_bit() branches, but ACTIVE_WSREP must remain stable
+       to honour the savepos assertion in binlog_trans_log_savepos. */
+    const bool transition= !variables.wsrep_on;
     variables.wsrep_on= 1;
-    if (binlog_state & BINLOG_STATE_WSREP)
+    if (transition && (binlog_state & BINLOG_STATE_WSREP))
       binlog_state|= BINLOG_STATE_ACTIVE_WSREP;
     /* Re-evaluate set_binlog_bit(): the Galera carve-out in
        set_binlog_bit() suppresses USER_DISABLED/BYPASS bits when
        WSREP(this) is true, so toggling wsrep_on flips which branch
-       applies and binlog_state must be resynced to match. */
+       applies and binlog_state must be resynced to match. Always
+       call (even on redundant entry) so any prior direct-write of
+       variables.wsrep_on gets re-synced into binlog_state. */
     set_binlog_bit();
 #endif
   }
@@ -4087,8 +4094,18 @@ public:
   inline void disable_wsrep()
   {
 #ifdef WITH_WSREP
+    /* Only clear ACTIVE_WSREP on actual 1 -> 0 transition. A nested
+       call with wsrep already off (e.g. via wsrep_off RAII whose
+       outer scope already disabled) must not re-clear ACTIVE_WSREP:
+       the RAII captures m_wsrep_on=false in that case and won't
+       call enable_wsrep() to restore — clearing the bit here leaves
+       it off permanently and trips the savepos assertion in
+       binlog_trans_log_savepos. Race seen under galera.MDEV-29293's
+       KILL/BF-abort path. We still call set_binlog_bit() below so
+       direct variables.wsrep_on writes get re-synced. */
+    const bool transition= variables.wsrep_on;
     variables.wsrep_on= 0;
-    if (!(binlog_state & BINLOG_STATE_OPEN))
+    if (transition && !(binlog_state & BINLOG_STATE_OPEN))
       binlog_state= binlog_state & ~BINLOG_STATE_ACTIVE_WSREP;
     /* See enable_wsrep(). */
     set_binlog_bit();
@@ -6634,7 +6651,7 @@ class start_new_trans
   THD *org_thd;
   uint in_sub_stmt;
   uint server_status;
-  my_bool wsrep_on;
+  my_bool wsrep_ignore_table;
 
 public:
   start_new_trans(THD *thd);

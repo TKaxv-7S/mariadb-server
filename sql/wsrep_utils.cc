@@ -516,7 +516,15 @@ thd::thd (my_bool ini, bool system_thread)
     ptr->variables.option_bits |=  OPTION_LOG_OFF; // disable general log
     ptr->variables.sql_log_bin = 0;
     ptr->variables.wsrep_on = false;
+    /* This is an internal THD used by SST and similar paths to execute
+       SQL like CREATE USER / GRANT that are inherently DDL. DDL must
+       be binlogged as STMT, never ROW. Without this override the THD
+       would inherit variables.binlog_format from the global default
+       (ROW under galera), and DDL execution would assert in mysql_grant
+       (sql_acl.cc:8127: !is_current_stmt_binlog_format_row()). */
+    ptr->variables.binlog_format = BINLOG_FORMAT_STMT;
     ptr->set_binlog_bit();
+    ptr->set_current_stmt_binlog_format_unspec();
     ptr->security_context()->skip_grants();
 
     if (system_thread)
