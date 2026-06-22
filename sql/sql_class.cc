@@ -1407,7 +1407,6 @@ void THD::init()
   tx_read_only= variables.tx_read_only;
   update_charset();             // plugin_thd_var() changed character sets
   reset_current_stmt_binlog_format_row();
-  reset_binlog_local_stmt_filter();
   binlog_state= binlog_state & BINLOG_STATE_ACTIVE_FLAGS;
   /* local_memory_used was setup in THD::THD() */
   set_status_var_init(clear_for_new_connection);
@@ -6927,7 +6926,13 @@ int THD::decide_logging_format(TABLE_LIST *tables)
                                         BINLOG_STATE_WSREP_DISABLED |
                                         BINLOG_STATE_SUBSTMT_DISABLED |
                                         BINLOG_STATE_SLAVE_DISABLED)));
-    DBUG_ASSERT((bool) (binlog_state & BINLOG_STATE_BYPASS) ==
+    /* Same Galera carve-out: under wsrep + sql_log_bin=0 we set
+       USER_DISABLED as a marker but intentionally leave BYPASS off
+       (cache writes must continue for wsrep extraction). The BYPASS
+       ⟺ any-DISABLED-bit invariant therefore doesn't hold for wsrep
+       THDs and is relaxed. */
+    DBUG_ASSERT(WSREP(this) ||
+                (bool) (binlog_state & BINLOG_STATE_BYPASS) ==
                 (bool) (binlog_state & (BINLOG_STATE_TMP_DISABLED |
                                         BINLOG_STATE_USER_DISABLED |
                                         BINLOG_STATE_WSREP_DISABLED |
@@ -7015,8 +7020,19 @@ int THD::decide_logging_format(TABLE_LIST *tables)
   }
 #endif /* WITH_WSREP */
 
+  /* Enter the row-logging prep block when:
+       - wsrep is emulating binlog (no real binlog, but cache needed
+         for galera writeset extraction), OR
+       - binlog is open and not user-disabled (normal path), OR
+       - under the wsrep+sql_log_bin=0 carve-out: wsrep needs the
+         cache even though USER_DISABLED is set, since the writeset
+         is extracted from the cache and the file flush is suppressed
+         downstream. binlog_ready_with_wsrep() under wsrep_on=1 ignores
+         USER_DISABLED in its mask, so it correctly returns true here. */
   if (WSREP_EMULATE_BINLOG_NNULL(this) ||
-      (binlog_ready_no_wsrep() && !(binlog_state & BINLOG_STATE_FILTER)))
+      (binlog_ready_no_wsrep() && !(binlog_state & BINLOG_STATE_FILTER)) ||
+      (WSREP_NNULL(this) && binlog_ready_with_wsrep() &&
+       !(binlog_state & BINLOG_STATE_FILTER)))
   {
     if (is_bulk_op())
     {

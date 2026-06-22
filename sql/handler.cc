@@ -7713,6 +7713,14 @@ static int binlog_log_row_to_binlog(TABLE* table,
   DBUG_RETURN(error ? HA_ERR_RBR_LOGGING_FAILED : 0);
 }
 
+static inline bool engine_is_spider_or_mroonga(const TABLE *table)
+{
+  if (!table || !table->s || !table->s->db_plugin)
+    return false;
+  LEX_CSTRING name= plugin_name(table->s->db_plugin)[0];
+  return (name.length == 6 && !memcmp(name.str, "SPIDER",  6)) ||
+    (name.length == 7 && !memcmp(name.str, "Mroonga", 7));
+}
 
 int handler::binlog_log_row(const uchar *before_record,
                             const uchar *after_record,
@@ -7725,9 +7733,22 @@ int handler::binlog_log_row(const uchar *before_record,
     The check for binlog_state is needed for mroonga and spider
     Can be deleted if mroonga/spider would instead mark their internal
     tables with can_do_row_logging == 0) or would reset the row_logging
-    for their write calls
+    for their write calls.
+
+    row_logging is the primary gate: it is set by prepare_for_row_logging()
+    only for tables that should produce row events (e.g. excludes CSV-backed
+    log tables, sequences, etc.). The secondary DISABLED-bits check is
+    relaxed for the Galera carve-out: under WSREP with USER_DISABLED
+    (SET SQL_LOG_BIN=OFF) we still populate the binlog cache so wsrep can
+    extract the writeset; the actual file write is suppressed downstream
+    in MYSQL_BIN_LOG::write_transaction_or_stmt by checking the same bit.
   */
-  if (row_logging && !(table->in_use->binlog_state & BINLOG_STATE_DISABLED))
+  if (row_logging &&
+      (!(table->in_use->binlog_state & BINLOG_STATE_DISABLED) ||
+       (WSREP_NNULL(table->in_use) &&
+        (table->in_use->binlog_state & BINLOG_STATE_USER_DISABLED))) &&
+      !(engine_is_spider_or_mroonga(table) &&
+        (table->in_use->binlog_state & BINLOG_STATE_DISABLED)))
   {
     error= binlog_log_row_to_binlog(table, before_record, after_record,
                                     log_func, row_logging_has_trans);

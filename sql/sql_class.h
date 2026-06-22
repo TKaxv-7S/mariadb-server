@@ -3961,10 +3961,30 @@ public:
       if ((binlog_state & BINLOG_STATE_DISABLED) == BINLOG_STATE_BYPASS)
         binlog_state= binlog_state & ~BINLOG_STATE_BYPASS;
     }
-    else if (!WSREP(this))      // sql_log_bin has no effect on Galera
+    else if (!WSREP(this))
     {
+      /* Non-wsrep: full disable. OPTION_BIN_LOG off, BYPASS paired
+         with USER_DISABLED — invariant !OPTION_BIN_LOG ⟺ BYPASS. */
       variables.option_bits &= ~OPTION_BIN_LOG;
       binlog_state|= BINLOG_STATE_BYPASS | BINLOG_STATE_USER_DISABLED;
+    }
+    else
+    {
+      /* WSREP carve-out: the user said don't log to file, but the
+         binlog cache must still be populated so wsrep can extract
+         the writeset for cluster replication. Force the consistent
+         wsrep-carve-out state — OPTION_BIN_LOG on, BYPASS off, only
+         USER_DISABLED as the marker — even if a prior disable scope
+         (e.g. start_new_trans -> disable_wsrep) had cleared
+         OPTION_BIN_LOG and set BYPASS via the non-wsrep arm.
+         Downstream code (MYSQL_BIN_LOG::write_transaction_or_stmt
+         and the row-event gate in handler::binlog_log_row) uses
+         USER_DISABLED to suppress the file flush while letting
+         cache writes through. */
+      variables.option_bits|= OPTION_BIN_LOG;
+      binlog_state= (enum_binlog_state)
+                    ((binlog_state & ~BINLOG_STATE_BYPASS) |
+                     BINLOG_STATE_USER_DISABLED);
     }
   }
 

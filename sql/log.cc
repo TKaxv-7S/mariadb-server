@@ -6845,7 +6845,8 @@ bool THD::binlog_write_table_maps()
         if (table->file->prepare_for_row_logging())
           restore= 1;
       }
-      if (table->file->row_logging)
+      
+      if (table->file->row_logging || (WSREP_NNULL(this) && binlog_state & BINLOG_STATE_USER_DISABLED) )
       {
         DBUG_ASSERT(!table->s->global_tmp_table());
         if (mysql_bin_log.write_table_map(this, table))
@@ -9639,7 +9640,15 @@ int MYSQL_BIN_LOG::write_transaction_or_stmt(group_commit_entry *entry,
   bool has_xid= entry->end_event->get_type_code() == XID_EVENT;
 
   DBUG_ENTER("MYSQL_BIN_LOG::write_transaction_or_stmt");
-  if (IF_WSREP(!entry->thd->binlog_ready(),0))
+  /* Galera carve-out: under SET SQL_LOG_BIN=OFF the binlog cache was
+     still populated (so wsrep could extract the writeset upstream)
+     and wsrep_run_commit_hook has already fired in the group-commit
+     queueing path. Now skip the per-entry cache → file copy so the
+     binlog file does not record statements the user asked not to log.
+     The cache itself will be discarded by the surrounding reset(). */
+  if (IF_WSREP(!entry->thd->binlog_ready() ||
+               (entry->thd->binlog_state & BINLOG_STATE_USER_DISABLED),
+               0))
   {
     DBUG_RETURN(0);
   }
