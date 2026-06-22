@@ -1012,6 +1012,10 @@ public:
   {
     return NULL;
   }
+  virtual const sp_package *get_package() const
+  {
+    return NULL;
+  }
 
   virtual void init_psi_share();
 
@@ -1178,12 +1182,14 @@ public:
   bool m_is_cloning_routine;
 
 private:
-  sp_package(MEM_ROOT *mem_root, LEX *top_level_lex, const sp_name *name,
+  sp_package(MEM_ROOT *mem_root, LEX *top_level_lex,
+               sp_package *parent, const sp_name *name,
              const Sp_handler *sph, sql_mode_t sql_mode,
              const Sql_path &sql_path);
   ~sp_package();
 public:
-  static sp_package *create(LEX *top_level_lex, const sp_name *name,
+  static sp_package *create(LEX *top_level_lex, sp_package *parent,
+                            const sp_name *name,
                             const Sp_handler *sph, sql_mode_t sql_mode,
                             const Sql_path &sql_path, MEM_ROOT *sp_mem_root);
 
@@ -1198,6 +1204,7 @@ public:
            m_routine_implementations.push_back(lex, &main_mem_root);
   }
   sp_package *get_package() override { return this; }
+  const sp_package *get_package() const override { return this; }
   void init_psi_share() override;
   bool is_invoked() const override
   {

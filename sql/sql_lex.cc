@@ -4098,7 +4098,8 @@ void LEX::cleanup_lex_after_parse_error(THD *thd)
   {
     sp_package *pkg;
     thd->lex->sphead->restore_thd_mem_root(thd);
-    if ((pkg= thd->lex->sphead->m_parent))
+    if ((pkg= thd->lex->sphead->m_parent) &&
+        !thd->lex->sphead->get_package())
     {
       /*
         If a syntax error happened inside a package routine definition,
@@ -6944,7 +6945,7 @@ const sp_type_def *LEX::find_type_def(const Lex_ident_sys_st &name) const
   const sp_type_def *def= spcont->find_type_def(name, false);
   if (def)
     return def;
-  if (sphead->m_parent)
+  if (sphead->m_parent) // TODO
   {
     // Find a package body type definition
     return sphead->m_parent->find_type_def(name);
@@ -6981,6 +6982,12 @@ LEX::find_variable(const LEX_CSTRING *name,
   {
     *ctx= pkg->get_parse_context()->child_context(0);
     *rh= &sp_rcontext_handler_package_body;
+    return spv;
+  }
+  if (pkg && pkg->m_parent && (spv= pkg->m_parent->find_package_variable(name)))
+  {
+    *ctx= pkg->m_parent->get_parse_context()->child_context(0);
+    *rh= &sp_rcontext_handler_package_spec;
     return spv;
   }
   *ctx= NULL;
@@ -10633,7 +10640,7 @@ sp_package *LEX::create_package_start(THD *thd,
                                       DDL_options_st options,
                                       const st_sp_chistics &chistics)
 {
-  sp_package *pkg;
+  sp_package *pkg, *spec= nullptr;
 
   if (unlikely(sphead))
   {
@@ -10659,10 +10666,10 @@ sp_package *LEX::create_package_start(THD *thd,
            CALL db.pkg.p; -- p is a known (public or private) package routine
            CALL db.p;     -- p is not a known package routine
     */
-    sp_head *spec;
+    sp_head *spec2;
     int ret= sp_handler_package_spec.
-               sp_cache_routine_reentrant(thd, name_arg, &spec);
-    if (unlikely(!spec))
+               sp_cache_routine_reentrant(thd, name_arg, &spec2);
+    if (unlikely(!spec2 || !(spec= dynamic_cast<sp_package*>(spec2))))
     {
       if (!ret)
         my_error(ER_SP_DOES_NOT_EXIST, MYF(0),
@@ -10670,7 +10677,7 @@ sp_package *LEX::create_package_start(THD *thd,
       return 0;
     }
   }
-  if (unlikely(!(pkg= sp_package::create(this, name_arg, sph,
+  if (unlikely(!(pkg= sp_package::create(this, spec, name_arg, sph,
                                          thd->variables.sql_mode,
                                          thd->variables.path,
                                          sp_mem_root_ptr))))

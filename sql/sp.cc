@@ -2107,7 +2107,7 @@ Sp_handler::sp_clone_and_link_routine(THD *thd,
   Database_qualified_name lname(name->m_db, name->m_name);
 #ifndef DBUG_OFF
   uint parent_subroutine_count=
-    !sp->m_parent ? 0 :
+    (!sp->m_parent || sp->get_package()) ? 0 :
      sp->m_parent->m_routine_declarations.elements +
      sp->m_parent->m_routine_implementations.elements;
 #endif
@@ -2153,7 +2153,7 @@ Sp_handler::sp_clone_and_link_routine(THD *thd,
     retstr.get_value(&returns);
   }
 
-  if (sp->m_parent)
+  if (sp->m_parent && !sp->get_package())
   {
     /*
       If we're cloning a recursively called package routine,
@@ -2192,7 +2192,7 @@ Sp_handler::sp_clone_and_link_routine(THD *thd,
                       sp->m_created, sp->m_modified,
                       sp->m_parent,
                       sp->get_creation_ctx());
-  if (sp->m_parent)
+  if (sp->m_parent && !sp->get_package())
     sp->m_parent->m_is_cloning_routine= false;
 
   if (rc == SP_OK)
@@ -2205,7 +2205,7 @@ Sp_handler::sp_clone_and_link_routine(THD *thd,
       The cloned subroutine instances get linked below to the first instance,
       they must have no direct links from the parent package.
     */
-    DBUG_ASSERT(!sp->m_parent ||
+    DBUG_ASSERT(!sp->m_parent || sp->get_package() ||
                 parent_subroutine_count ==
                 sp->m_parent->m_routine_declarations.elements +
                 sp->m_parent->m_routine_implementations.elements);
@@ -2675,7 +2675,7 @@ bool Sp_handler::
   const Lex_ident_db tmpdb= Lex_ident_db(thd->db);
   if (is_package_public_routine(thd, tmpdb, name->m_db, name->m_name, type()) ||
       // Check if a package routine calls a private routine
-      (caller && caller->m_parent &&
+      (caller && caller->m_parent && !caller->get_package() &&
        is_package_body_routine(thd, caller->m_parent,
                                name->m_db, name->m_name, type())) ||
       // Check if a package initialization sections calls a private routine
@@ -2716,7 +2716,7 @@ bool Sp_handler::
     return false; // A standalone routine is called
   }
 
-  if (caller->m_parent)
+  if (caller->m_parent && !caller->get_package())
   {
     // A package routine calls a non-qualified routine
     int ret= SP_OK;

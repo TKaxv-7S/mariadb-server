@@ -529,6 +529,7 @@ inline const Sp_handler *Sp_handler::handler(enum_sql_command cmd)
   case SQLCOM_DROP_PACKAGE:
   case SQLCOM_SHOW_CREATE_PACKAGE:
   case SQLCOM_SHOW_STATUS_PACKAGE:
+  case SQLCOM_SHOW_PACKAGE_CODE:
     return &sp_handler_package_spec;
   case SQLCOM_CREATE_PACKAGE_BODY:
   case SQLCOM_DROP_PACKAGE_BODY:

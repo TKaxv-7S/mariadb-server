@@ -141,6 +141,32 @@ public:
 };
 
 
+class Sp_rcontext_handler_package_spec final :public Sp_rcontext_handler
+{
+public:
+  const LEX_CSTRING *get_name_prefix() const override;
+  const sp_variable *get_pvariable(const sp_pcontext *pctx,
+                                   uint offset) const override;
+  sp_rcontext *get_rcontext(sp_rcontext *ctx) const override;
+  Item_field *get_variable(THD *thd, uint offset) const override;
+  sp_cursor *get_cursor(THD *thd, uint offset) const override
+  {
+    /*
+      There are no package body wide static cursors yet:
+      MDEV-36053 Syntax error on a CURSOR..IS declaration in PACKAGE BODY
+    */
+    DBUG_ASSERT(0);
+    return nullptr;
+  }
+  sp_cursor *get_cursor_by_ref(THD *thd, const sp_rcontext_addr &ref,
+                               bool for_open) const override
+  {
+    DBUG_ASSERT(0); // References to static cursors are not supported
+    return nullptr;
+  }
+};
+
+
 class Sp_rcontext_handler_statement final :public Sp_rcontext_handler
 {
 public:
@@ -173,6 +199,10 @@ extern MYSQL_PLUGIN_IMPORT
 
 extern MYSQL_PLUGIN_IMPORT
   Sp_rcontext_handler_package_body sp_rcontext_handler_package_body;
+
+
+extern MYSQL_PLUGIN_IMPORT
+  Sp_rcontext_handler_package_spec sp_rcontext_handler_package_spec;
 
 
 extern MYSQL_PLUGIN_IMPORT

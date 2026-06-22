@@ -49,7 +49,7 @@ END;
 $$
 SET sql_mode=@save_sql_mode;
 show package code test_db.pk;
-ERROR 42000: You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near 'code test_db.pk' at line 1
+Pos	Instruction
 show package body code test_db.pk;
 Pos	Instruction
 0	set pkv@0 1

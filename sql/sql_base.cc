@@ -3937,7 +3937,7 @@ open_and_process_routine(THD *thd, Query_tables_list *prelocking_ctx,
           {
             prelocking_strategy->handle_routine(thd, prelocking_ctx, rt, sp,
                                                 need_prelocking);
-            if (sp->m_parent)
+            if (sp->m_parent && !sp->get_package())
             {
               /*
                 If it's a package routine, we need also to handle the

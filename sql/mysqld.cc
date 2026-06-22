@@ -3661,6 +3661,7 @@ SHOW_VAR com_status_vars[]= {
   {"show_open_tables",     STMT_STATUS(SQLCOM_SHOW_OPEN_TABLES)},
   {"show_package_status",  STMT_STATUS(SQLCOM_SHOW_STATUS_PACKAGE)},
 #ifndef DBUG_OFF
+  {"show_package_code",        STMT_STATUS(SQLCOM_SHOW_PACKAGE_CODE)},
   {"show_package_body_code",   STMT_STATUS(SQLCOM_SHOW_PACKAGE_BODY_CODE)},
 #endif
   {"show_package_body_status", STMT_STATUS(SQLCOM_SHOW_STATUS_PACKAGE_BODY)},

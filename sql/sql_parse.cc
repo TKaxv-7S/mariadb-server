@@ -680,6 +680,7 @@ void init_update_queries(void)
   sql_command_flags[SQLCOM_SHOW_STATUS_FUNC]= CF_STATUS_COMMAND | CF_REEXECUTION_FRAGILE;
   sql_command_flags[SQLCOM_SHOW_PROC_CODE]=   CF_STATUS_COMMAND;
   sql_command_flags[SQLCOM_SHOW_FUNC_CODE]=   CF_STATUS_COMMAND;
+  sql_command_flags[SQLCOM_SHOW_PACKAGE_CODE]= CF_STATUS_COMMAND;
   sql_command_flags[SQLCOM_SHOW_PACKAGE_BODY_CODE]= CF_STATUS_COMMAND;
   sql_command_flags[SQLCOM_SHOW_CREATE_EVENT]= CF_STATUS_COMMAND;
   sql_command_flags[SQLCOM_SHOW_PROFILES]=    CF_STATUS_COMMAND;
@@ -5895,6 +5896,7 @@ mysql_execute_command(THD *thd, bool is_called_from_prepared_stmt)
   case SQLCOM_GET_DIAGNOSTICS:
   case SQLCOM_SHOW_PROC_CODE:
   case SQLCOM_SHOW_FUNC_CODE:
+  case SQLCOM_SHOW_PACKAGE_CODE:
   case SQLCOM_SHOW_PACKAGE_BODY_CODE:
   case SQLCOM_CALL:
   case SQLCOM_REVOKE:

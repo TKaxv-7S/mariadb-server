@@ -66,7 +66,6 @@ $$
 DELIMITER ;$$
 
 SET sql_mode=@save_sql_mode;
---error ER_PARSE_ERROR
 show package code test_db.pk;
 show package body code test_db.pk;
 

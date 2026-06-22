@@ -615,7 +615,8 @@ sp_head::sp_head(MEM_ROOT *mem_root_arg, sp_package *parent,
 }
 
 
-sp_package *sp_package::create(LEX *top_level_lex, const sp_name *name,
+sp_package *sp_package::create(LEX *top_level_lex, sp_package *parent,
+                               const sp_name *name,
                                const Sp_handler *sph, sql_mode_t sql_mode,
                                const Sql_path &sql_path, MEM_ROOT *sp_mem_root)
 {
@@ -627,7 +628,7 @@ sp_package *sp_package::create(LEX *top_level_lex, const sp_name *name,
     sp_mem_root= &own_root;
   }
   sp_package *sp;
-  if (!(sp= new (sp_mem_root) sp_package(sp_mem_root, top_level_lex,
+  if (!(sp= new (sp_mem_root) sp_package(sp_mem_root, top_level_lex, parent,
                                          name, sph, sql_mode, sql_path)))
     free_root(sp_mem_root, MYF(0));
 
@@ -637,11 +638,12 @@ sp_package *sp_package::create(LEX *top_level_lex, const sp_name *name,
 
 sp_package::sp_package(MEM_ROOT *mem_root_arg,
                        LEX *top_level_lex,
+                       sp_package *parent,
                        const sp_name *name,
                        const Sp_handler *sph,
                        sql_mode_t sql_mode,
                        const Sql_path &sql_path)
- :sp_head(mem_root_arg, NULL, sph, DEFAULT_AGGREGATE, sql_mode, sql_path),
+ :sp_head(mem_root_arg, parent, sph, DEFAULT_AGGREGATE, sql_mode, sql_path),
   m_current_routine(NULL),
   m_top_level_lex(top_level_lex),
   m_rcontext(NULL),
@@ -854,7 +856,7 @@ void
 sp_head::set_body_start(THD *thd, const char *cpp_body_start)
 {
   m_cpp_body_begin= cpp_body_start;
-  if (!m_parent)
+  if (!m_parent || get_package())
     thd->m_parser_state->m_lip.body_utf8_start(thd, cpp_body_start);
 }
 
@@ -885,7 +887,7 @@ sp_head::set_stmt_end(THD *thd, const char *cpp_body_end)
 
   lip->body_utf8_append(cpp_body_end);
 
-  if (!m_parent)
+  if (!m_parent || get_package())
     m_body_utf8= thd->strmake_lex_cstring_trim_whitespace(lip->body_utf8());
 
   /*
@@ -1138,7 +1140,7 @@ sp_head::execute(THD *thd, bool merge_da_on_success)
 
   DBUG_ASSERT(!(m_flags & IS_INVOKED));
   m_flags|= IS_INVOKED;
-  if (m_parent)
+  if (m_parent && !get_package())
     m_parent->m_invoked_subroutine_count++;
   m_first_instance->m_first_free_instance= m_next_cached_sp;
   if (m_next_cached_sp)
@@ -1579,7 +1581,7 @@ sp_head::execute(THD *thd, bool merge_da_on_success)
 #endif
 
   m_flags&= ~IS_INVOKED;
-  if (m_parent)
+  if (m_parent && !get_package())
     m_parent->m_invoked_subroutine_count--;
   DBUG_PRINT("info",
              ("first free for %p --: %p->%p, level: %lu, flags %x",
@@ -1668,7 +1670,8 @@ set_routine_security_ctx(THD *thd, sp_head *sp, Security_context **save_ctx)
 
 bool sp_head::check_execute_access(THD *thd) const
 {
-  return m_parent ? m_parent->check_execute_access(thd) :
+  return m_parent && !get_package() ?
+                    m_parent->check_execute_access(thd) :
                     check_routine_access(thd, EXECUTE_ACL,
                                          &m_db, &m_name,
                                          m_handler, false);
@@ -1951,8 +1954,14 @@ sp_head::execute_function(THD *thd, Item **argp, uint argcount,
   DBUG_ENTER("sp_head::execute_function");
   DBUG_PRINT("info", ("function %s", m_name.str));
 
-  if (m_parent && m_parent->instantiate_if_needed(thd))
-    DBUG_RETURN(true);
+  if (m_parent)
+  {
+    if (m_parent->m_parent &&
+        m_parent->m_parent->instantiate_if_needed(thd))
+      DBUG_RETURN(true);
+    if (m_parent->instantiate_if_needed(thd))
+      DBUG_RETURN(true);
+  }
 
   /*
     Check that the function is called with all specified arguments.
@@ -2214,8 +2223,14 @@ sp_head::execute_procedure(THD *thd, List<Item> *args)
   DBUG_ENTER("sp_head::execute_procedure");
   DBUG_PRINT("info", ("procedure %s", m_name.str));
 
-  if (m_parent && m_parent->instantiate_if_needed(thd))
-    DBUG_RETURN(true);
+  if (m_parent)
+  {
+    if (m_parent->m_parent &&
+        m_parent->m_parent->instantiate_if_needed(thd))
+      DBUG_RETURN(true);
+    if (m_parent->instantiate_if_needed(thd))
+      DBUG_RETURN(true);
+  }
 
   if (args->elements < (params - default_params) ||
       args->elements > params)
@@ -4285,7 +4300,8 @@ sp_head::check_standalone_routine_end_name(const sp_name *end_name) const
 
 ulong sp_head::sp_cache_version() const
 {
-  return m_parent ? m_parent->sp_cache_version() : m_sp_cache_version;
+  return m_parent && !get_package() ? m_parent->sp_cache_version() :
+                                      m_sp_cache_version;
 }
 
 

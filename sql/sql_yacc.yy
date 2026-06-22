@@ -15167,6 +15167,18 @@ show_param:
             if (Lex->show_routine_code_start(thd, SQLCOM_SHOW_FUNC_CODE, $3))
               MYSQL_YYABORT;
           }
+        | PACKAGE_MARIADB_SYM CODE_SYM sp_name
+          {
+            if (Lex->show_routine_code_start(thd, SQLCOM_SHOW_PACKAGE_CODE,
+                                             $3))
+              MYSQL_YYABORT;
+          }
+        | PACKAGE_ORACLE_SYM CODE_SYM sp_name
+          {
+            if (Lex->show_routine_code_start(thd, SQLCOM_SHOW_PACKAGE_CODE,
+                                             $3))
+              MYSQL_YYABORT;
+          }
         | PACKAGE_MARIADB_SYM BODY_MARIADB_SYM CODE_SYM sp_name
           {
             if (Lex->show_routine_code_start(thd, SQLCOM_SHOW_PACKAGE_BODY_CODE,
@@ -20474,6 +20486,7 @@ package_specification_element:
           package_specification_routine
 %ifdef ORACLE
         | sp_decl_type ';'
+        | sp_decl_variable_list ';'
 %endif
         ;
 

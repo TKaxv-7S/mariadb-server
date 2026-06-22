@@ -30,6 +30,7 @@
 
 Sp_rcontext_handler_local sp_rcontext_handler_local;
 Sp_rcontext_handler_package_body sp_rcontext_handler_package_body;
+Sp_rcontext_handler_package_spec sp_rcontext_handler_package_spec;
 Sp_rcontext_handler_statement sp_rcontext_handler_statement;
 
 
@@ -63,9 +64,22 @@ Sp_rcontext_handler_package_body::get_pvariable(const sp_pcontext *pctx, uint i)
   return nullptr;
 }
 
+const sp_variable *
+Sp_rcontext_handler_package_spec::get_pvariable(const sp_pcontext *pctx, uint i)
+                                                                           const
+{
+  DBUG_ASSERT(0);
+  return nullptr;
+}
+
 sp_rcontext *Sp_rcontext_handler_package_body::get_rcontext(sp_rcontext *ctx) const
 {
   return ctx->m_sp->m_parent->m_rcontext;
+}
+
+sp_rcontext *Sp_rcontext_handler_package_spec::get_rcontext(sp_rcontext *ctx) const
+{
+  return ctx->m_sp->m_parent->m_parent->m_rcontext;
 }
 
 const LEX_CSTRING *Sp_rcontext_handler_local::get_name_prefix() const
@@ -78,6 +92,13 @@ const LEX_CSTRING *Sp_rcontext_handler_package_body::get_name_prefix() const
   static const LEX_CSTRING sp_package_body_variable_prefix_clex_str=
                            {STRING_WITH_LEN("PACKAGE_BODY.")};
   return &sp_package_body_variable_prefix_clex_str;
+}
+
+const LEX_CSTRING *Sp_rcontext_handler_package_spec::get_name_prefix() const
+{
+  static const LEX_CSTRING sp_package_spec_variable_prefix_clex_str=
+                           {STRING_WITH_LEN("PACKAGE_SPEC.")};
+  return &sp_package_spec_variable_prefix_clex_str;
 }
 
 const LEX_CSTRING *Sp_rcontext_handler_statement::get_name_prefix() const
@@ -98,6 +119,14 @@ Item_field *Sp_rcontext_handler_package_body::get_variable(THD *thd,
                                                            uint offset) const
 {
   return Sp_rcontext_handler_package_body::get_rcontext(thd->spcont)->
+                                             get_variable(offset);
+}
+
+
+Item_field *Sp_rcontext_handler_package_spec::get_variable(THD *thd,
+                                                           uint offset) const
+{
+  return Sp_rcontext_handler_package_spec::get_rcontext(thd->spcont)->
                                              get_variable(offset);
 }
 
