@@ -24,7 +24,7 @@ struct Relay_log_info_file: Info_file
 {
   /*
     Buffers for the String_value members. Declared before the String_value
-    members so they are valid when passed to those members' constructors.
+    members so their size is known when passing to members' constructors.
   */
   char relay_log_file_buf[FN_REFLEN];
   char read_master_log_file_buf[FN_REFLEN];
@@ -32,7 +32,7 @@ struct Relay_log_info_file: Info_file
   /*
     @@relay_log_info_file values in SHOW SLAVE STATUS order.
   */
-  String_value relay_log_file{"reloay_log_file", relay_log_file_buf,
+  String_value relay_log_file{"relay_log_file", relay_log_file_buf,
     sizeof(relay_log_file_buf)};
   Ulonglong_value relay_log_pos{"relay_log_pos"};
   /* Relay_Master_Log_File (of the event group). */

@@ -2265,7 +2265,7 @@ COMMAND_LINE_ARGUMENT	OPTIONAL
 VARIABLE_NAME	MASTER_USE_GTID
 VARIABLE_SCOPE	GLOBAL
 VARIABLE_TYPE	ENUM
-VARIABLE_COMMENT	The DEFAULT value for the CHANGE MASTER option MASTER_USE_GTID, which specifies which GTID record (or neither) to start replicating from; the auto value is Slave_Pos, or No if the master does not support GTIDs
+VARIABLE_COMMENT	The DEFAULT value for the CHANGE MASTER option MASTER_USE_GTID, which specifies if GTID should be used or not
 NUMERIC_MIN_VALUE	NULL
 NUMERIC_MAX_VALUE	NULL
 NUMERIC_BLOCK_SIZE	NULL

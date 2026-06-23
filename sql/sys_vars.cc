@@ -5799,7 +5799,6 @@ char *master_ssl_ca, *master_ssl_capath, *master_ssl_cert, *master_ssl_cipher;
 char *master_ssl_crl, *master_ssl_crlpath, *master_ssl_key;
 my_bool master_ssl_verify_server_cert;
 ulong master_use_gtid;
-my_bool master_use_gtid_is_auto;
 ulonglong master_retry_count;
 
 
@@ -6148,11 +6147,10 @@ static Sys_var_double Sys_master_heartbeat_period(
 static Sys_var_enum Sys_master_use_gtid(
        "master_use_gtid",
        "The DEFAULT value for the CHANGE MASTER option MASTER_USE_GTID, "
-       "which specifies which GTID record (or neither) to start replicating "
-       "from; the auto value is Slave_Pos, or No if the master does not "
-       "support GTIDs",
+       "which specifies if GTID should be used or not",
        AUTO_SET READ_ONLY GLOBAL_VAR(master_use_gtid),
-       CMD_LINE(REQUIRED_ARG), master_use_gtid_names, DEFAULT(2));
+       CMD_LINE(REQUIRED_ARG), master_use_gtid_names,
+       DEFAULT((int) enum_master_use_gtid::SLAVE_POS));
 
 static Sys_var_ulonglong Sys_master_retry_count(
        "master_retry_count",
@@ -6285,7 +6283,7 @@ static bool update_slave_skip_counter(sys_var *self, THD *thd, Master_info *mi)
              mi->connection_name.str);
     return true;
   }
-  if (mi->using_gtid != Master_info::USE_GTID_NO && mi->using_parallel())
+  if (mi->using_gtid[0] != Master_info::USE_GTID_NO && mi->using_parallel())
   {
     ulong domain_count;
     mysql_mutex_lock(&rpl_global_gtid_slave_state->LOCK_slave_state);

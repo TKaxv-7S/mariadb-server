@@ -704,10 +704,9 @@ The following specify which files/extra groups are read (specified before remain
  (Defaults to on; use --skip-master-ssl-verify-server-cert to disable.)
  --master-use-gtid=name 
  The DEFAULT value for the CHANGE MASTER option
- MASTER_USE_GTID, which specifies which GTID record (or
- neither) to start replicating from; the auto value is
- Slave_Pos, or No if the master does not support GTIDs
- (Automatically configured unless set explicitly)
+ MASTER_USE_GTID, which specifies if GTID should be used
+ or not (Automatically configured unless set explicitly).
+ One of: No, Current_Pos, Slave_Pos
  --master-verify-checksum 
  Force checksum verification of logged events in the
  binary log before sending them to slaves or printing them

@@ -1337,7 +1337,7 @@ int start_slave_threads(THD *thd,
     while one of the threads is running, they are in use and cannot be
     removed.
   */
-  if (mi->using_gtid != Master_info::USE_GTID_NO &&
+  if (mi->using_gtid[0] != Master_info::USE_GTID_NO &&
       !mi->slave_running && !mi->rli.slave_running)
   {
     /*
@@ -1356,7 +1356,7 @@ int start_slave_threads(THD *thd,
     strmake(mi->rli.group_master_log_name, mi->master_log_name,
             sizeof(mi->rli.group_master_log_name)-1);
 
-    error= rpl_load_gtid_state(&mi->gtid_current_pos, mi->using_gtid ==
+    error= rpl_load_gtid_state(&mi->gtid_current_pos, mi->using_gtid[0] ==
                                              Master_info::USE_GTID_CURRENT_POS);
     mi->events_queued_since_last_gtid= 0;
     mi->gtid_reconnect_event_skip_count= 0;
@@ -1649,7 +1649,7 @@ static int get_master_version_and_clock(MYSQL* mysql, Master_info* mi)
   MYSQL_ROW master_row;
   uint full_version= mysql_get_server_version(mysql);
   uint version= full_version/ 10000;
-  uint32_t heartbeat_period= mi->master_heartbeat_period;
+  uint32_t heartbeat_period= mi->master_heartbeat_period.get_value();
   DBUG_ENTER("get_master_version_and_clock");
 
   /*
@@ -2309,15 +2309,18 @@ past_checksum:
 after_set_capability:
 #endif
 
-  if (!(mi->master_supports_gtid= version >= 10))
+  /* Setup gtid usage depending on user values and what master supports */
+  mi->master_use_gtid.reset_to_user_value();
+  if (mi->using_gtid[0] != Master_info::USE_GTID_NO &&
+      version < 10)
   {
     sql_print_information(
         "Slave I/O thread: Falling back to Using_Gtid=No because "
         "master does not support GTIDs");
-    mi->using_gtid= Master_info::USE_GTID_NO;
+    mi->master_use_gtid.disable_gtid();
   }
 
-  if (mi->using_gtid != Master_info::USE_GTID_NO)
+  if (mi->using_gtid[0] != Master_info::USE_GTID_NO)
   {
     /* Request dump to start from slave replication GTID state. */
     int rc;
@@ -3087,7 +3090,8 @@ void store_master_info(THD *thd, Master_info *mi, TABLE *table,
   // Master_Ssl_Crlpath
   store_string_or_null(field++, mi->master_ssl_crlpath);
   // Using_Gtid
-  store_string_or_null(field++, mi->using_gtid_astext(mi->using_gtid));
+  store_string_or_null(field++,
+                       mi->using_gtid_astext(mi->using_gtid[0]));
   // Gtid_IO_Pos
   {
     mi->gtid_current_pos.to_string(&tmp);
@@ -3131,7 +3135,7 @@ void store_master_info(THD *thd, Master_info *mi, TABLE *table,
   (*field++)->store((ulonglong) mi->rli.max_relay_log_size, true);
   (*field++)->store(mi->rli.executed_entries, true);
   (*field++)->store((uint)      mi->received_heartbeats, true);
-  (*field++)->store(mi->master_heartbeat_period / 1000.0);
+  (*field++)->store(mi->master_heartbeat_period.get_value() / 1000.0);
   (*field++)->store(gtid_pos->ptr(), gtid_pos->length(), &my_charset_bin);
 
   /*
@@ -4237,7 +4241,7 @@ static int exec_relay_log_event(THD* thd, Relay_log_info* rli,
       rli->last_seen_gtid= serial_rgi->current_gtid;
       rli->last_trans_retry_count= serial_rgi->trans_retries;
       if (opt_gtid_ignore_duplicates &&
-          rli->mi->using_gtid != Master_info::USE_GTID_NO)
+          rli->mi->using_gtid[0] != Master_info::USE_GTID_NO)
       {
         int res= rpl_global_gtid_slave_state->check_duplicate_gtid
           (&serial_rgi->current_gtid, serial_rgi);
@@ -4442,7 +4446,7 @@ static int try_to_reconnect(THD *thd, MYSQL *mysql, Master_info *mi,
   {
     char buf[256];
     StringBuffer<100> tmp;
-    if (mi->using_gtid != Master_info::USE_GTID_NO)
+    if (mi->using_gtid[0] != Master_info::USE_GTID_NO)
     {
       tmp.append(STRING_WITH_LEN("; GTID position '"));
       mi->gtid_current_pos.append_to_string(&tmp);
@@ -4562,7 +4566,8 @@ pthread_handler_t handle_slave_io(void *arg)
       then will not be able to record the GTIDs we receive. But if using GTID,
       we must give up.
     */
-    if (mi->using_gtid != Master_info::USE_GTID_NO || opt_gtid_strict_mode)
+    if (mi->using_gtid[0] != Master_info::USE_GTID_NO ||
+        opt_gtid_strict_mode)
       goto err;
   }
 
@@ -4580,7 +4585,7 @@ pthread_handler_t handle_slave_io(void *arg)
   // we can get killed during safe_connect
   if (!safe_connect(thd, mysql, mi))
   {
-    if (mi->using_gtid == Master_info::USE_GTID_NO)
+    if (mi->using_gtid[0] == Master_info::USE_GTID_NO)
       sql_print_information("Slave I/O thread: connected to master '%s@%s:%d',"
                             "replication started in log '%s' at position %llu",
                             mi->user, mi->host, mi->port,
@@ -4602,7 +4607,7 @@ pthread_handler_t handle_slave_io(void *arg)
 
 connected:
 
-  if (mi->using_gtid != Master_info::USE_GTID_NO)
+  if (mi->using_gtid[0] != Master_info::USE_GTID_NO)
   {
     /*
       When the IO thread (re)connects to the master using GTID, it will
@@ -4869,7 +4874,7 @@ Stopping slave I/O thread due to out-of-memory error from master");
           mi->semi_sync_reply_enabled= 0;
         }
       }
-      if (mi->using_gtid == Master_info::USE_GTID_NO &&
+      if (mi->using_gtid[0] == Master_info::USE_GTID_NO &&
           /*
             If rpl_semi_sync_slave_delay_master is enabled, we will flush
             master info only when ack is needed. This may lead to at least one
@@ -4922,7 +4927,7 @@ log space");
 err:
   THD_STAGE_INFO(thd, stage_ending_io_thread);
   // print the current replication position
-  if (mi->using_gtid == Master_info::USE_GTID_NO)
+  if (mi->using_gtid[0] == Master_info::USE_GTID_NO)
     sql_print_information("Slave I/O thread exiting, read up to log '%s', "
                           "position %llu, master %s:%d", IO_RPL_LOG_NAME, mi->master_log_pos,
                            mi->host, mi->port);
@@ -4955,7 +4960,7 @@ err:
     mi->mysql=0;
   }
   write_ignored_events_info_to_relay_log(thd, mi);
-  if (mi->using_gtid != Master_info::USE_GTID_NO)
+  if (mi->using_gtid[0] != Master_info::USE_GTID_NO)
     flush_master_info(mi, TRUE, TRUE);
   THD_STAGE_INFO(thd, stage_waiting_for_slave_mutex_on_exit);
   thd->add_status_to_global();
@@ -5116,7 +5121,7 @@ slave_output_error_info(rpl_group_info *rgi, THD *thd)
   if (unlikely(udf_error))
   {
     StringBuffer<100> tmp;
-    if (rli->mi->using_gtid != Master_info::USE_GTID_NO)
+    if (rli->mi->using_gtid[0] != Master_info::USE_GTID_NO)
     {
       tmp.append(STRING_WITH_LEN("; GTID position '"));
       rpl_append_gtid_state(&tmp, false);
@@ -5131,7 +5136,7 @@ slave_output_error_info(rpl_group_info *rgi, THD *thd)
   else
   {
     StringBuffer<100> tmp;
-    if (rli->mi->using_gtid != Master_info::USE_GTID_NO)
+    if (rli->mi->using_gtid[0] != Master_info::USE_GTID_NO)
     {
       tmp.append(STRING_WITH_LEN("; GTID position '"));
       rpl_append_gtid_state(&tmp, false);
@@ -5301,7 +5306,7 @@ pthread_handler_t handle_slave_sql(void *arg)
   serial_rgi->gtid_sub_id= 0;
   serial_rgi->gtid_pending= false;
   rli->last_seen_gtid= serial_rgi->current_gtid;
-  if (mi->using_gtid != Master_info::USE_GTID_NO && mi->using_parallel() &&
+  if (mi->using_gtid[0] != Master_info::USE_GTID_NO && mi->using_parallel() &&
       rli->restart_gtid_pos.count() > 0)
   {
     /*
@@ -5368,11 +5373,12 @@ pthread_handler_t handle_slave_sql(void *arg)
   if (global_system_variables.log_warnings)
   {
     StringBuffer<100> tmp;
-    if (mi->using_gtid != Master_info::USE_GTID_NO)
+    if (mi->using_gtid[0] != Master_info::USE_GTID_NO)
     {
       tmp.append(STRING_WITH_LEN("; GTID position '"));
       rpl_append_gtid_state(&tmp,
-                            mi->using_gtid==Master_info::USE_GTID_CURRENT_POS);
+                            mi->using_gtid[0] ==
+                            Master_info::USE_GTID_CURRENT_POS);
       tmp.append(STRING_WITH_LEN("'"));
     }
     sql_print_information("Slave SQL thread initialized, starting replication "
@@ -5405,7 +5411,7 @@ pthread_handler_t handle_slave_sql(void *arg)
       then will not be able to record the GTIDs we receive. But if using GTID,
       we must give up.
     */
-    if (mi->using_gtid != Master_info::USE_GTID_NO || opt_gtid_strict_mode)
+    if (mi->using_gtid[0] != Master_info::USE_GTID_NO || opt_gtid_strict_mode)
       goto err;
   }
   /* Re-load the set of mysql.gtid_slave_posXXX tables available. */
@@ -5441,7 +5447,7 @@ pthread_handler_t handle_slave_sql(void *arg)
     strmake_buf(saved_master_log_name, rli->group_master_log_name);
     saved_log_pos= rli->group_relay_log_pos;
     saved_master_log_pos= rli->group_master_log_pos;
-    if (mi->using_gtid != Master_info::USE_GTID_NO)
+    if (mi->using_gtid[0] != Master_info::USE_GTID_NO)
     {
       saved_skip_gtid_pos.append(STRING_WITH_LEN(", GTID '"));
       rpl_append_gtid_state(&saved_skip_gtid_pos, false);
@@ -5484,7 +5490,7 @@ pthread_handler_t handle_slave_sql(void *arg)
     if (saved_skip && rli->slave_skip_counter == 0)
     {
       StringBuffer<100> tmp;
-      if (mi->using_gtid != Master_info::USE_GTID_NO)
+      if (mi->using_gtid[0] != Master_info::USE_GTID_NO)
       {
         tmp.append(STRING_WITH_LEN(", GTID '"));
         rpl_append_gtid_state(&tmp, false);
@@ -5562,7 +5568,7 @@ pthread_handler_t handle_slave_sql(void *arg)
   /* Thread stopped. Print the current replication position to the log */
   {
     StringBuffer<100> tmp;
-    if (mi->using_gtid != Master_info::USE_GTID_NO)
+    if (mi->using_gtid[0] != Master_info::USE_GTID_NO)
     {
       tmp.append(STRING_WITH_LEN("; GTID position '"));
       rpl_append_gtid_state(&tmp, false);
@@ -5596,7 +5602,7 @@ pthread_handler_t handle_slave_sql(void *arg)
   thd->catalog= 0;
   thd->reset_query();
   thd->reset_db(&null_clex_str);
-  if (rli->mi->using_gtid != Master_info::USE_GTID_NO)
+  if (rli->mi->using_gtid[0] != Master_info::USE_GTID_NO)
   {
     ulong domain_count;
     my_bool save_log_all_errors= thd->log_all_errors;
@@ -6288,7 +6294,7 @@ static int queue_event(Master_info* mi, const uchar *buf, ulong event_len)
       goto err;
     }
     got_gtid_event= true;
-    if (mi->using_gtid == Master_info::USE_GTID_NO)
+    if (mi->using_gtid[0] == Master_info::USE_GTID_NO)
       goto default_action;
     if (unlikely(mi->gtid_reconnect_event_skip_count))
     {
@@ -6381,7 +6387,7 @@ static int queue_event(Master_info* mi, const uchar *buf, ulong event_len)
               mi->gtid_current_pos.find(mi->last_queued_gtid.domain_id),);
 
       // Slave gtid state must not have updated yet to the last received gtid.
-      DBUG_ASSERT((mi->using_gtid == Master_info::USE_GTID_NO ||
+      DBUG_ASSERT((mi->using_gtid[0] == Master_info::USE_GTID_NO ||
                    !opt_gtid_strict_mode) ||
                   (!gtid_in_slave_state ||
                    !(*gtid_in_slave_state == mi->last_queued_gtid)));
@@ -6450,7 +6456,7 @@ dbug_gtid_accept:
     mi->do_accept_own_server_id=
       (s_id == global_system_variables.server_id &&
        repl_semisync_slave.get_slave_enabled() && opt_gtid_strict_mode &&
-       mi->using_gtid != Master_info::USE_GTID_NO &&
+       mi->using_gtid[0] != Master_info::USE_GTID_NO &&
         !mysql_bin_log.check_strict_gtid_sequence(event_gtid.domain_id,
                                                   event_gtid.server_id,
                                                   event_gtid.seq_no,
@@ -6587,7 +6593,7 @@ dbug_gtid_accept:
                       }
                     };);
 
-    if (mi->using_gtid != Master_info::USE_GTID_NO)
+    if (mi->using_gtid[0] != Master_info::USE_GTID_NO)
     {
       if (likely(mi->gtid_event_seen))
       {
@@ -6841,7 +6847,7 @@ dbug_gtid_accept:
   mysql_mutex_unlock(log_lock);
 
   if (likely(!error) &&
-      mi->using_gtid != Master_info::USE_GTID_NO &&
+      mi->using_gtid[0] != Master_info::USE_GTID_NO &&
       mi->events_queued_since_last_gtid > 0 &&
       ( (mi->last_queued_gtid_standalone &&
          (LOG_EVENT_IS_QUERY((Log_event_type)(uchar)

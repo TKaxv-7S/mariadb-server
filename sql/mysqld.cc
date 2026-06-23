@@ -4218,7 +4218,6 @@ static int init_common_variables()
     dynamically (so SET @@global.slave_net_timeout takes effect at runtime).
   */
   master_heartbeat_period_is_auto= IS_SYSVAR_AUTOSIZE(&master_heartbeat_period);
-  master_use_gtid_is_auto= IS_SYSVAR_AUTOSIZE(&master_use_gtid);
 #endif
 
   /* connections and databases needs lots of files */
@@ -7355,7 +7354,7 @@ static int show_heartbeat_period(THD *thd, SHOW_VAR *var, void *buff,
                       Sql_condition::WARN_LEVEL_NOTE))
   {
     snprintf(static_cast<char*>(buff), SHOW_VAR_FUNC_BUFF_SIZE, "%.3lf",
-            mi->master_heartbeat_period/1000.0);
+             mi->master_heartbeat_period.get_value()/1000.0);
     mi->release();
     var->type= SHOW_CHAR;
     var->value= buff;

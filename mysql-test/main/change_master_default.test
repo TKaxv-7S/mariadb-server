@@ -137,7 +137,6 @@ FROM information_schema.slave_status ORDER BY connection_name;
 
 --query_vertical CALL show_defaultable_fields()
 
-
 --echo # Clean-up
 
 DROP PROCEDURE show_defaultable_fields;

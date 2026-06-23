@@ -233,6 +233,8 @@ void init_connection_config(Master_info* mi)
   mi->master_id= 0;
   mi->prev_master_id= 0;
   mi->received_heartbeats= 0;
+  mi->master_use_gtid.set_default();
+  mi->master_heartbeat_period.set_default();
   DBUG_VOID_RETURN;
 }
 
@@ -242,8 +244,6 @@ void init_master_log_pos(Master_info* mi)
   DBUG_ENTER("init_master_log_pos");
   mi->master_log_name[0] = 0;
   mi->master_log_pos = BIN_LOG_HEADER_SIZE;             // skip magic number
-  mi->master_use_gtid.set_default();
-  mi->master_heartbeat_period.set_default();
   mi->gtid_current_pos.reset();
   mi->events_queued_since_last_gtid= 0;
   mi->gtid_reconnect_event_skip_count= 0;
@@ -814,8 +814,8 @@ bool Master_info_index::init_all_master_info()
     char buf_master_info_file[FN_REFLEN];
     char buf_relay_log_info_file[FN_REFLEN];
 
-    connection_name.str=    sign;
-    connection_name.length= strlen(sign);
+    connection_name.str=    sign.buf;
+    connection_name.length= strlen(sign.buf);
     if (!(mi= new Master_info(&connection_name, relay_log_recovery)) ||
         mi->error())
     {

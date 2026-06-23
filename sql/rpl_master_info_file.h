@@ -48,7 +48,6 @@ enum struct enum_master_use_gtid { NO, CURRENT_POS, SLAVE_POS, DEFAULT };
 /* CLI/typelib names for non-DEFAULT values. Defined in sys_vars.cc. */
 extern const char *master_use_gtid_names[];
 
-
 /*
   Defaults for the master_* options. Defined as Sys_var_* in sql/sys_vars.cc.
 */
@@ -72,8 +71,6 @@ extern char *master_ssl_key;
 extern char *master_ssl_cipher;
 extern my_bool master_ssl_verify_server_cert;
 extern ulong master_use_gtid;
-/* Snapshot of IS_SYSVAR_AUTOSIZE(&master_use_gtid) set at startup. */
-extern my_bool master_use_gtid_is_auto;
 extern ulonglong master_retry_count;
 
 
@@ -187,8 +184,8 @@ struct Master_info_file: Info_file
 
   /*
     Heartbeat period value: a non-negative decimal seconds value stored
-    internally as unsigned integer milliseconds. The DEFAULT is dynamic
-    (see operator uint32()): slave_net_timeout / 2 when the user did not
+    internally as unsigned integer milliseconds. The DEFAULT is dynamic,
+    (see get_value()) : slave_net_timeout / 2 when the user did not
     set master_heartbeat_period, otherwise ::master_heartbeat_period
     (seconds, multiplied by 1000 here). Parsed from the file with
     my_strtod(); the maximum on-disk value is UINT_MAX32 milliseconds
@@ -201,7 +198,7 @@ struct Master_info_file: Info_file
     static constexpr char MAX[]= "4294967.295";
 
     uint32 value;       // milliseconds
-    operator uint32()
+    uint32 get_value()
     {
       if (has_value)
         return value;
@@ -219,7 +216,7 @@ struct Master_info_file: Info_file
     { value= new_value; has_value= true; }
     bool set_default() override
     {
-      /* Default is computed dynamically in operator uint32(). */
+      /* Default is computed dynamically in get_value() */
       has_value= false;
       return false;
     }
@@ -237,46 +234,54 @@ struct Master_info_file: Info_file
 
 
   /*
-    Singleton class for Master_info_file::master_use_gtid:
-    an enum_master_use_gtid value whose DEFAULT is resolved from
+    Singleton class for Master_info_file::master_use_gtid: an
+    enum_master_use_gtid value whose DEFAULT is resolved from
     ::master_use_gtid, which in turn falls back to SLAVE_POS or NO
-    depending on the per-connection gtid_supported. The fallback is a
-    runtime decision (depends on a value set after the slave connects),
-    so this class cannot pre-resolve the default at set_default() time
-    like the others; operator enum_master_use_gtid() checks has_value.
+    depending on the per-connection.
+    The intial value is set according the default.
+    On connection to master, the state is set to NO if the master
+    does not support GTID
+    The current state is stored in Master_use_gtid_value::current_mode
   */
   struct Master_use_gtid_value: Value
   {
     Master_use_gtid_value() : Value("using_gtid") {}
-    enum_master_use_gtid mode;
-    /*
-      Normally SLAVE_POS, but falls back to NO if the master does not
-      support GTIDs. This caches the check so future RESET SLAVE commands
-      don't revert to SLAVE_POS.
-    */
-    bool gtid_supported= true;
-    operator enum_master_use_gtid();
-    operator bool()
-    { return operator enum_master_use_gtid() != enum_master_use_gtid::NO; }
-    void operator=(enum_master_use_gtid new_mode)
+    enum_master_use_gtid active_mode, user_mode;
+    enum_master_use_gtid get_default_value()
+    {
+      return (enum_master_use_gtid) ::master_use_gtid;
+    }
+    bool supported()
+    { return active_mode != enum_master_use_gtid::NO; }
+    void set_user_value(enum_master_use_gtid new_mode)
     {
       /*
-        DEFAULT is a sentinel meaning "use the global / gtid_supported";
-        route through set_default() so has_value stays false and
-        operator enum_master_use_gtid() resolves it dynamically. Storing
-        mode=DEFAULT with has_value=true would make save_to() write '3',
-        which is not a valid on-disk using_gtid value.
+        DEFAULT is a sentinel meaning "use the global / route through
+        set_default() so has_value is set to false and get_value()
+        resolves it dynamically.
       */
       if (new_mode == enum_master_use_gtid::DEFAULT)
         set_default();
       else
       {
-        mode= new_mode;
+        active_mode= user_mode= new_mode;
         has_value= true;
       }
     }
     bool set_default() override
-    { mode= enum_master_use_gtid::DEFAULT; has_value= false; return false; }
+    {
+      active_mode= user_mode= get_default_value();
+      has_value= false;
+      return false;
+    }
+    void reset_to_user_value()
+    {
+      active_mode= user_mode;
+    }
+    void disable_gtid()
+    {
+      active_mode= enum_master_use_gtid::NO;
+    }
     bool load_from(IO_CACHE *file) override;
     void save_to(IO_CACHE *file) override;
   };
@@ -287,26 +292,24 @@ struct Master_info_file: Info_file
     members so they are valid when passed to those members' constructors
     (C++ initializes data members in declaration order).
   */
-  char master_host_buf[HOSTNAME_LENGTH * SYSTEM_CHARSET_MBMAXLEN + 1];
-  char master_user_buf[USERNAME_LENGTH + 1];
-  char master_password_buf[MAX_PASSWORD_LENGTH * SYSTEM_CHARSET_MBMAXLEN + 1];
-  char master_log_file_buf[FN_REFLEN];
+  char master_log_name[FN_REFLEN+6]; /* Room for multi- */
+  char host[HOSTNAME_LENGTH*SYSTEM_CHARSET_MBMAXLEN+1];
+  char user[USERNAME_LENGTH+1];
+  char password[MAX_PASSWORD_LENGTH*SYSTEM_CHARSET_MBMAXLEN+1];
 
   /*
     Values stored in master.info, in SHOW SLAVE STATUS order where
     applicable.
   */
-  String_value master_host{"master_host", master_host_buf,
-    sizeof(master_host_buf)};
-  String_value master_user{"master_user", master_user_buf,
-    sizeof(master_user_buf)};
-  String_value master_password{"master_password", master_password_buf,
-    sizeof(master_password_buf)};
+  String_value master_host{"master_host", host, sizeof(host)};
+  String_value master_user{"master_user", user, sizeof(user)};
+  String_value master_password{"master_password", password, sizeof(password)};
+
   Uint_value master_port{"master_port"};
   Uint_value_with_default master_connect_retry{"connect_retry",
     &::master_connect_retry};
-  String_value master_log_file{"master_log_file", master_log_file_buf,
-                               sizeof(master_log_file_buf)};
+  String_value master_log_file{"master_log_file", master_log_name,
+                               sizeof(master_log_name)};
   Ulonglong_value master_log_pos{"master_log_pos"};
   Bool_value_with_default master_ssl{"ssl", &::master_ssl};
   Path_value master_ssl_ca{"ssl_ca", &::master_ssl_ca};

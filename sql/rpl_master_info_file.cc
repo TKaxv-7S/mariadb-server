@@ -30,7 +30,7 @@ const char *master_use_gtid_names[]=
 bool Master_info_file::Uint_value_with_default::load_from(IO_CACHE *file)
 {
   ulonglong tmp;
-  if (Int_IO_CACHE::uint_from_chars(file, UINT_MAX32, &tmp))
+  if (uint_from_chars(file, UINT_MAX32, &tmp))
   {
     set_default();
     return true;
@@ -43,7 +43,7 @@ bool Master_info_file::Uint_value_with_default::load_from(IO_CACHE *file)
 
 void Master_info_file::Uint_value_with_default::save_to(IO_CACHE *file)
 {
-  Int_IO_CACHE::uint_to_chars(file, value);
+  uint_to_chars(file, value);
 }
 
 
@@ -51,7 +51,7 @@ void Master_info_file::Uint_value_with_default::save_to(IO_CACHE *file)
 
 bool Master_info_file::Ulonglong_value_with_default::load_from(IO_CACHE *file)
 {
-  if (Int_IO_CACHE::uint_from_chars(file, ULONGLONG_MAX, &value))
+  if (uint_from_chars(file, ULONGLONG_MAX, &value))
   {
     set_default();
     return true;
@@ -63,7 +63,7 @@ bool Master_info_file::Ulonglong_value_with_default::load_from(IO_CACHE *file)
 
 void Master_info_file::Ulonglong_value_with_default::save_to(IO_CACHE *file)
 {
-  Int_IO_CACHE::uint_to_chars(file, value);
+  uint_to_chars(file, value);
 }
 
 
@@ -151,9 +151,11 @@ bool Master_info_file::ID_array_value::load_from(IO_CACHE *file)
 {
   long count;
   size_t i;
-  /* +1 for the terminating delimiter. */
-  char buf[INT_BUFFER_SIZE + 1];
-  for (i= 0; i < sizeof(buf); ++i)
+  /* +1 is to store the newline */
+  char buf[INT_BUFFER_SIZE+1];
+  buf[INT_BUFFER_SIZE]= 0;
+
+  for (i= 0; i < sizeof(buf)-1; ++i)
   {
     int chr= my_b_get(file);
     if (chr == my_b_EOF)
@@ -168,13 +170,15 @@ bool Master_info_file::ID_array_value::load_from(IO_CACHE *file)
   while (count--)
   {
     long parsed;
+    ulong id;
+    bool oom;
     /*
       Check that the previous number ended with a ' ', not '\n' or
       anything else.
     */
     if (*end != ' ')
       return true;
-    for (i= 0; i < sizeof(buf); ++i)
+    for (i= 0; i < sizeof(buf)-1; ++i)
     {
       int chr= my_b_get(file);
       if (chr == my_b_EOF)
@@ -186,8 +190,8 @@ bool Master_info_file::ID_array_value::load_from(IO_CACHE *file)
     end= str2int(buf, 10, 1, INT32_MAX, &parsed);
     if (!end)
       return true;
-    ulong id= parsed;
-    bool oom= insert_dynamic(array, (uchar *) &id);
+    id= parsed;
+    oom= insert_dynamic(array, (uchar *) &id);
     DBUG_ASSERT(!oom);
     if (oom)
       return true;
@@ -202,13 +206,13 @@ bool Master_info_file::ID_array_value::load_from(IO_CACHE *file)
 
 void Master_info_file::ID_array_value::save_to(IO_CACHE *file)
 {
-  Int_IO_CACHE::uint_to_chars(file, array->elements);
+  uint_to_chars(file, array->elements);
   for (size_t i= 0; i < array->elements; ++i)
   {
     ulong id;
     get_dynamic(array, (uchar *) &id, i);
     my_b_write_byte(file, ' ');
-    Int_IO_CACHE::uint_to_chars(file, id);
+    uint_to_chars(file, id);
   }
 }
 
@@ -280,12 +284,11 @@ bool Master_info_file::Heartbeat_period_value::load_from(IO_CACHE *file)
 void Master_info_file::Heartbeat_period_value::save_to(IO_CACHE *file)
 {
   /*
-    Use operator uint32() to get the resolved value. The plain `value`
-    field is only valid when has_value is true; in the default state it
-    is uninitialized (the default is computed dynamically from the global
-    plus slave_net_timeout). Format as seconds.milliseconds.
+    Get the use set value or the default value which is calculated
+    based on other values. The value is in milliseconds.
+    Output format as seconds.milliseconds.
   */
-  uint32 ms= operator uint32();
+  uint32 ms= get_value();
   uint32 whole= ms / 1000;
   uint32 frac=  ms % 1000;
   my_b_printf(file, "%u.%03u", whole, frac);
@@ -293,18 +296,6 @@ void Master_info_file::Heartbeat_period_value::save_to(IO_CACHE *file)
 
 
 /* ===== Master_use_gtid_value ===== */
-
-Master_info_file::Master_use_gtid_value::operator enum_master_use_gtid()
-{
-  if (has_value)
-    return mode;
-  /* Default: resolve from the global, with runtime gtid_supported fallback. */
-  if (::master_use_gtid_is_auto)
-    return gtid_supported ? enum_master_use_gtid::SLAVE_POS
-                          : enum_master_use_gtid::NO;
-  return (enum_master_use_gtid) ::master_use_gtid;
-}
-
 
 bool Master_info_file::Master_use_gtid_value::load_from(IO_CACHE *file)
 {
@@ -317,7 +308,7 @@ bool Master_info_file::Master_use_gtid_value::load_from(IO_CACHE *file)
     set_default();
     return true;
   }
-  mode= (enum_master_use_gtid) (buf[0] - '0');
+  active_mode= user_mode= (enum_master_use_gtid) (buf[0] - '0');
   has_value= true;
   return false;
 }
@@ -325,7 +316,7 @@ bool Master_info_file::Master_use_gtid_value::load_from(IO_CACHE *file)
 
 void Master_info_file::Master_use_gtid_value::save_to(IO_CACHE *file)
 {
-  enum_master_use_gtid effective= operator enum_master_use_gtid();
+  enum_master_use_gtid effective= user_mode;
   my_b_write_byte(file, (uchar) ('0' + (unsigned char) effective));
 }
 
@@ -334,8 +325,8 @@ void Master_info_file::Master_use_gtid_value::save_to(IO_CACHE *file)
 
 /*
   Populated at first instance construction from value_map[]->variable_name
-  (plus END_MARKER and the trailing NullS). The +2 is for END_MARKER and
-  NullS at the end of the array.
+  (plus END_MARKER and the trailing NullS). The +1 is for END_MARKER
+  (NULL pointer) at the end of the array.
 */
 const char *Master_info_file::value_map_keys[
   array_elements(((Master_info_file *) nullptr)->value_map) + 1];
@@ -348,7 +339,7 @@ Master_info_file::Master_info_file(DYNAMIC_ARRAY *ignore_server_ids,
                                    DYNAMIC_ARRAY *ignore_domain_ids):
   ignore_server_ids("ignore_server_ids", ignore_server_ids),
   do_domain_ids("do_domain_ids", do_domain_ids),
-  ignore_domain_ids("ignore_doman_ids", ignore_domain_ids)
+  ignore_domain_ids("ignore_domain_ids", ignore_domain_ids)
 {
   /*
     Populate the static value_map_keys[] and value_map_typelib from

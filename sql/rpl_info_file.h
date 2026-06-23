@@ -22,21 +22,13 @@
 
 
 /*
-  Helpers for reading and writing unsigned integers to and from IO_CACHE.
-  Bodies are in rpl_info_file.cc.
+  Read one '\n'-terminated decimal unsigned integer from file.
+  Returns false on success, true on EOF / parse error / out of range.
 */
-namespace Int_IO_CACHE
-{
-  /*
-    Read one '\n'-terminated decimal unsigned integer from file.
-    Returns false on success, true on EOF / parse error / out of range.
-  */
-  bool uint_from_chars(IO_CACHE *file, ulonglong max_value, ulonglong *result);
+bool uint_from_chars(IO_CACHE *file, ulonglong max_value, ulonglong *result);
 
-  /* Write an unsigned integer as decimal digits (no '\n'). */
-  void uint_to_chars(IO_CACHE *file, ulonglong value);
-}
-
+/* Write an unsigned integer as decimal digits (no '\n'). */
+void uint_to_chars(IO_CACHE *file, ulonglong value);
 
 /*
   Common superclass of Master_info_file and Relay_log_info_file. Provides
@@ -91,8 +83,8 @@ struct Info_file
     */
     virtual bool load_from(IO_CACHE *file)= 0;
     /*
-      Write the effective value to the IO without a '\n'. (The caller
-      separately determines how to represent the default state.)
+      Write the value to the file without a '\n'.
+      This is only called in the case is_default() is false.
     */
     virtual void save_to(IO_CACHE *file)= 0;
   };
@@ -102,8 +94,6 @@ struct Info_file
   {
     Uint_value(const char *name): Value(name) {}
     uint value;
-    operator uint() { return value; }
-    void operator=(uint new_value) { value= new_value; has_value= true; }
     bool load_from(IO_CACHE *file) override;
     void save_to(IO_CACHE *file) override;
   };
@@ -113,8 +103,6 @@ struct Info_file
   {
     Ulonglong_value(const char *name): Value(name) {}
     ulonglong value;
-    operator ulonglong() { return value; }
-    void operator=(ulonglong new_value) { value= new_value; has_value= true; }
     bool load_from(IO_CACHE *file) override;
     void save_to(IO_CACHE *file) override;
   };
@@ -129,9 +117,6 @@ struct Info_file
     size_t buf_size;
     String_value(const char *name, char *buf, size_t size):
       Value(name), buf(buf), buf_size(size) {}
-    virtual operator const char *() { return buf; }
-    /* @param other non-nullptr '\0'-terminated string */
-    void operator=(const char *other);
     bool load_from(IO_CACHE *file) override;
     void save_to(IO_CACHE *file) override;
   };
