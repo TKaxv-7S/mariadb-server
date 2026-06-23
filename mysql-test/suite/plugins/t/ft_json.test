@@ -1,0 +1,47 @@
+if (!$FT_JSON_SO) {
+  --skip ft_json plugin is not built
+}
+
+--echo #
+--echo # ft_json: fulltext parser for JSON documents
+--echo #
+
+INSTALL SONAME 'ft_json';
+
+CREATE TABLE t (j TEXT, FULLTEXT KEY ft (j) WITH PARSER ft_json) ENGINE=MyISAM;
+
+--echo # flat key=value pairs
+INSERT INTO t VALUES ('{"a":1,"b":"qwe","c":{"d":"ef"}}');
+SELECT * FROM t WHERE MATCH(j) AGAINST ('a=1' IN BOOLEAN MODE);
+SELECT * FROM t WHERE MATCH(j) AGAINST ('b=qwe' IN BOOLEAN MODE);
+SELECT * FROM t WHERE MATCH(j) AGAINST ('c.d=ef' IN BOOLEAN MODE);
+SELECT * FROM t WHERE MATCH(j) AGAINST ('a=2' IN BOOLEAN MODE);
+
+--echo # boolean operators
+SELECT * FROM t WHERE MATCH(j) AGAINST ('+a=1 +c.d=ef' IN BOOLEAN MODE);
+SELECT * FROM t WHERE MATCH(j) AGAINST ('+a=1 +b=wrong' IN BOOLEAN MODE);
+
+--echo # boolean and null values
+INSERT INTO t VALUES ('{"active":true,"deleted":false,"x":null}');
+SELECT * FROM t WHERE MATCH(j) AGAINST ('active=true' IN BOOLEAN MODE);
+SELECT * FROM t WHERE MATCH(j) AGAINST ('deleted=false' IN BOOLEAN MODE);
+SELECT * FROM t WHERE MATCH(j) AGAINST ('x=null' IN BOOLEAN MODE);
+
+--echo # array elements use numeric indices
+INSERT INTO t VALUES ('{"tags":["foo","bar"]}');
+SELECT * FROM t WHERE MATCH(j) AGAINST ('tags.0=foo' IN BOOLEAN MODE);
+SELECT * FROM t WHERE MATCH(j) AGAINST ('tags.1=bar' IN BOOLEAN MODE);
+SELECT * FROM t WHERE MATCH(j) AGAINST ('tags.2=foo' IN BOOLEAN MODE);
+
+--echo # deeply nested
+INSERT INTO t VALUES ('{"a":{"b":{"c":{"d":"deep"}}}}');
+SELECT * FROM t WHERE MATCH(j) AGAINST ('a.b.c.d=deep' IN BOOLEAN MODE);
+
+--echo # wildcard path prefix: AGAINST('a.b.c*') finds all docs that have any
+--echo # path starting with a.b.c (both a.b.c=val and a.b.c.d=deep match)
+INSERT INTO t VALUES ('{"a":{"b":{"c":"val"}}}');
+SELECT * FROM t WHERE MATCH(j) AGAINST ('a.b.c*' IN BOOLEAN MODE);
+
+DROP TABLE t;
+
+UNINSTALL PLUGIN ft_json;

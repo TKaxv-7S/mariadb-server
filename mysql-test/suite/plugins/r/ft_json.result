@@ -1,0 +1,59 @@
+#
+# ft_json: fulltext parser for JSON documents
+#
+INSTALL SONAME 'ft_json';
+CREATE TABLE t (j TEXT, FULLTEXT KEY ft (j) WITH PARSER ft_json) ENGINE=MyISAM;
+# flat key=value pairs
+INSERT INTO t VALUES ('{"a":1,"b":"qwe","c":{"d":"ef"}}');
+SELECT * FROM t WHERE MATCH(j) AGAINST ('a=1' IN BOOLEAN MODE);
+j
+{"a":1,"b":"qwe","c":{"d":"ef"}}
+SELECT * FROM t WHERE MATCH(j) AGAINST ('b=qwe' IN BOOLEAN MODE);
+j
+{"a":1,"b":"qwe","c":{"d":"ef"}}
+SELECT * FROM t WHERE MATCH(j) AGAINST ('c.d=ef' IN BOOLEAN MODE);
+j
+{"a":1,"b":"qwe","c":{"d":"ef"}}
+SELECT * FROM t WHERE MATCH(j) AGAINST ('a=2' IN BOOLEAN MODE);
+j
+# boolean operators
+SELECT * FROM t WHERE MATCH(j) AGAINST ('+a=1 +c.d=ef' IN BOOLEAN MODE);
+j
+{"a":1,"b":"qwe","c":{"d":"ef"}}
+SELECT * FROM t WHERE MATCH(j) AGAINST ('+a=1 +b=wrong' IN BOOLEAN MODE);
+j
+# boolean and null values
+INSERT INTO t VALUES ('{"active":true,"deleted":false,"x":null}');
+SELECT * FROM t WHERE MATCH(j) AGAINST ('active=true' IN BOOLEAN MODE);
+j
+{"active":true,"deleted":false,"x":null}
+SELECT * FROM t WHERE MATCH(j) AGAINST ('deleted=false' IN BOOLEAN MODE);
+j
+{"active":true,"deleted":false,"x":null}
+SELECT * FROM t WHERE MATCH(j) AGAINST ('x=null' IN BOOLEAN MODE);
+j
+{"active":true,"deleted":false,"x":null}
+# array elements use numeric indices
+INSERT INTO t VALUES ('{"tags":["foo","bar"]}');
+SELECT * FROM t WHERE MATCH(j) AGAINST ('tags.0=foo' IN BOOLEAN MODE);
+j
+{"tags":["foo","bar"]}
+SELECT * FROM t WHERE MATCH(j) AGAINST ('tags.1=bar' IN BOOLEAN MODE);
+j
+{"tags":["foo","bar"]}
+SELECT * FROM t WHERE MATCH(j) AGAINST ('tags.2=foo' IN BOOLEAN MODE);
+j
+# deeply nested
+INSERT INTO t VALUES ('{"a":{"b":{"c":{"d":"deep"}}}}');
+SELECT * FROM t WHERE MATCH(j) AGAINST ('a.b.c.d=deep' IN BOOLEAN MODE);
+j
+{"a":{"b":{"c":{"d":"deep"}}}}
+# wildcard path prefix: AGAINST('a.b.c*') finds all docs that have any
+# path starting with a.b.c (both a.b.c=val and a.b.c.d=deep match)
+INSERT INTO t VALUES ('{"a":{"b":{"c":"val"}}}');
+SELECT * FROM t WHERE MATCH(j) AGAINST ('a.b.c*' IN BOOLEAN MODE);
+j
+{"a":{"b":{"c":{"d":"deep"}}}}
+{"a":{"b":{"c":"val"}}}
+DROP TABLE t;
+UNINSTALL PLUGIN ft_json;
