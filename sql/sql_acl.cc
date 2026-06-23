@@ -3469,6 +3469,10 @@ static bool acl_load(THD *thd, const Grant_tables& tables)
 
     user.access= user_table.get_access();
 
+    /* set user_table_has_denies for later loading in load_grant() */
+    if (!user_table_has_denies && user_table.has_denies())
+      user_table_has_denies= true;
+
     user.sort= get_magic_sort("hu", user.host.hostname, user.user.str);
     user.hostname_length= safe_strlen(user.host.hostname);
 
@@ -3537,9 +3541,6 @@ static bool acl_load(THD *thd, const Grant_tables& tables)
 
       user.default_rolename.str= user_table.get_default_role(&acl_memroot);
       user.default_rolename.length= safe_strlen(user.default_rolename.str);
-      /* set user_table_has_denies for later loading in load_grant() */
-      if (!user_table_has_denies && user_table.has_denies())
-        user_table_has_denies= true;
     }
     push_new_user(user);
   }

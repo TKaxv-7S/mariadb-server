@@ -106,3 +106,38 @@ FLUSH PRIVILEGES;
 --source include/search_pattern_in_file.inc
 
 DROP USER u@localhost;
+
+--echo #
+--echo # MDEV-40131 DENY not reloaded, granted to a ROLEs exclusively
+--echo #
+CREATE DATABASE d1;
+CREATE TABLE d1.t1 (a INT);
+INSERT INTO d1.t1 VALUES (1);
+CREATE ROLE r;
+GRANT SELECT ON d1.* TO r;
+DENY SELECT ON d1.t1 TO r;
+CREATE USER u@localhost;
+GRANT r TO u@localhost;
+SET DEFAULT ROLE r FOR u@localhost;
+
+--echo # BEFORE reload: role DENY correctly enforced
+connect (p, localhost, u,, d1);
+--error ER_TABLEACCESS_DENIED_ERROR
+SELECT * FROM d1.t1;
+connection default;
+disconnect p;
+
+FLUSH PRIVILEGES;
+
+--echo # role DENY must survive the reload
+SHOW GRANTS FOR r;
+
+--echo # AFTER reload: role DENY must still be enforced
+connect (p, localhost, u,, d1);
+--error ER_TABLEACCESS_DENIED_ERROR
+SELECT * FROM d1.t1;
+connection default;
+disconnect p;
+DROP ROLE r;
+DROP DATABASE d1;
+DROP USER u@localhost;
