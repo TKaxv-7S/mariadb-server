@@ -721,6 +721,12 @@ static void wsrep_init_thd_variables(THD *thd)
 {
   /* No Galera replication */
   thd->disable_wsrep();
+  /* Allow modifications in a transaction read-only context.
+     MDEV-38073: SST joiner / wsrep schema init must be able to
+     CREATE TABLE mysql.wsrep_cluster etc. even when global
+     read_only=ON. Restored after MDEV-38865 rebase dropped it. */
+  thd->tx_read_only= false;
+  thd->variables.tx_read_only= false;
   /* No binlogging.
      set_binlog_bit() (with sql_log_bin=0 and wsrep disabled above)
      clears OPTION_BIN_LOG and sets BINLOG_STATE_BYPASS |
