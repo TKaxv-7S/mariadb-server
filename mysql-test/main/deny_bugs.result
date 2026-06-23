@@ -112,3 +112,37 @@ FOUND 1 /Malformed DENY entry in mysql.global_priv at array position 0 for 'u'@'
 FOUND 1 /Malformed DENY entry in mysql.global_priv at array position 1 for 'u'@'localhost' ignored/ in mysqld.1.err
 FOUND 1 /Malformed DENY entry in mysql.global_priv at array position 2 for 'u'@'localhost' ignored/ in mysqld.1.err
 DROP USER u@localhost;
+#
+# MDEV-40131 DENY not reloaded, granted to a ROLEs exclusively
+#
+CREATE DATABASE d1;
+CREATE TABLE d1.t1 (a INT);
+INSERT INTO d1.t1 VALUES (1);
+CREATE ROLE r;
+GRANT SELECT ON d1.* TO r;
+DENY SELECT ON d1.t1 TO r;
+CREATE USER u@localhost;
+GRANT r TO u@localhost;
+SET DEFAULT ROLE r FOR u@localhost;
+# BEFORE reload: role DENY correctly enforced
+connect  p, localhost, u,, d1;
+SELECT * FROM d1.t1;
+ERROR 42000: SELECT command denied to user 'u'@'localhost' for table `d1`.`t1`
+connection default;
+disconnect p;
+FLUSH PRIVILEGES;
+# role DENY must survive the reload
+SHOW GRANTS FOR r;
+Grants for r
+GRANT USAGE ON *.* TO `r`
+GRANT SELECT ON `d1`.* TO `r`
+DENY SELECT ON `d1`.`t1` TO `r`
+# AFTER reload: role DENY must still be enforced
+connect  p, localhost, u,, d1;
+SELECT * FROM d1.t1;
+ERROR 42000: SELECT command denied to user 'u'@'localhost' for table `d1`.`t1`
+connection default;
+disconnect p;
+DROP ROLE r;
+DROP DATABASE d1;
+DROP USER u@localhost;
