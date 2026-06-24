@@ -15,7 +15,7 @@ To use the new binlog, configure the server with the following two options:
 1. `log_bin`
 2. `binlog_storage_engine=innodb`
 
-Note that the `log_bin` option must be specified like that, without any argument; the option is not an on-off-switch.
+The `log_bin` option must be specified without any argument value.
 
 Optionally, the directory in which to store binlog files can be specified with `binlog_directory=<DIR>`. By default, the data directory is used.
 
