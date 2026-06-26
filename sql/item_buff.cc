@@ -101,7 +101,9 @@ bool Cached_item_str::cmp(void)
 
 int Cached_item_str::cmp_read_only()
 {
-  String *res= item->val_str(&tmp_value);
+  String *res;
+  if ((res=item->val_str(&tmp_value)))
+    res->length(MY_MIN(res->length(), value_max_length));
 
   if (null_value)
   {
