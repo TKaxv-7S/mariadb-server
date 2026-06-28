@@ -30,7 +30,6 @@ extern "C" {
 #include <my_pthread.h>
 #include <thr_lock.h>
 
-#include "my_compare.h"
 #include "my_tree.h"
 
 	/* defines used by heap-functions */
@@ -109,6 +108,7 @@ typedef struct st_heap_block
 } HP_BLOCK;
 
 struct st_heap_info;			/* For reference */
+typedef struct st_HA_KEYSEG HA_KEYSEG;
 
 typedef struct st_hp_keydef		/* Key definition with open */
 {
