@@ -1420,8 +1420,9 @@ public:
     if (!is_valid_temporal())
       return NULL;
     str->set_charset(&my_charset_numeric);
-    if (!str->alloc(MAX_DATE_STRING_REP_LENGTH))
-      str->length(my_TIME_to_str(this, const_cast<char*>(str->ptr()), dec));
+    if (str->alloc(MAX_DATE_STRING_REP_LENGTH))
+      return NULL;
+    str->length(my_TIME_to_str(this, const_cast<char*>(str->ptr()), dec));
     return str;
   }
   const MYSQL_TIME *get_mysql_time() const
