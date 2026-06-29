@@ -7924,7 +7924,17 @@ bool LEX::sp_open_cursor_for_stmt(THD *thd, const LEX_CSTRING *name,
   */
   return_type_def= dynamic_cast<const sp_type_def_ref*>(spv[0].field_def.
                                                get_attr_const_generic_ptr(0));
-  if (return_type_def && stmt->prepared_stmt.code())
+  row_def_list=
+    return_type_def && return_type_def->def().is_row() ?
+    return_type_def->def().row_field_definitions() : nullptr;
+  /*
+    We allow OPEN c FOR 'dynamic sql' for:
+    - SYS_REFCURSOR
+    - REF CURSOR (weak, without the RETURN clause)
+    Otherwise we have a strong cursor with RETURN.
+    This is not supported. Let's return an error:
+  */
+  if (row_def_list && stmt->prepared_stmt.code())
   {
     my_error(ER_WRONG_USAGE, MYF(0), name->str, "OPEN..FOR <dynamic string>");
     goto error;
@@ -7937,9 +7947,6 @@ bool LEX::sp_open_cursor_for_stmt(THD *thd, const LEX_CSTRING *name,
     A more thorough test (field-by-field assignability) is done
     later, after the cursor has been opened.
   */
-  row_def_list=
-    return_type_def && return_type_def->def().is_row() ?
-    return_type_def->def().row_field_definitions() : nullptr;
   if (!stmt->first_select_lex()->with_wild && row_def_list &&
       row_def_list->elements != stmt->first_select_lex()->item_list.elements)
   {
