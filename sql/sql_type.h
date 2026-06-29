@@ -1391,6 +1391,7 @@ public:
     else
       make_from_decimal(thd, warn, nr, mode);
   }
+  Temporal_hybrid(THD *thd, my_timespec_t time);
   // End of constructors
 
   bool copy_valid_value_to_mysql_time(MYSQL_TIME *ltime) const
