@@ -1,0 +1,29 @@
+create user supervisor;
+create role r_admin;
+create role r_limit_mod;
+create role r_limit_view;
+grant r_limit_mod to r_admin with admin option;
+grant r_limit_view to r_admin with admin option;
+grant r_limit_view to r_limit_mod;
+create or replace function g1(p int) returns int return p+1;
+grant execute on function g1 to r_limit_mod;
+grant r_admin to supervisor with admin option;
+set default role r_admin for supervisor;
+connect con, localhost, supervisor;
+select g1(1);
+g1(1)
+2
+disconnect con;
+connection default;
+flush privileges;
+connect con, localhost, supervisor;
+select g1(2);
+g1(2)
+3
+disconnect con;
+connection default;
+drop function g1;
+drop role r_limit_view;
+drop role r_limit_mod;
+drop role r_admin;
+drop user supervisor;
