@@ -1986,3 +1986,10 @@ select XMLISVALID(@xml, @schema);
 XMLISVALID(@xml, @schema)
 1
 # End of 11.8 tests
+SELECT XMLISVALID('<a b="x"/>',
+'<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:element name="a">
+  <xs:complexType><xs:attribute name="b" type="xs:string"/></xs:complexType></xs:element></xs:schema>');
+XMLISVALID('<a b="x"/>',
+'<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:element name="a">
+  <xs:complexType><xs:attribute name="b" type="xs:string"/></xs:complexType></xs:element></xs:schema>')
+1
