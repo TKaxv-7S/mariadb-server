@@ -2155,3 +2155,12 @@ SELECT SIGN(-'00');
 SELECT SIGN(-' 0 ');
 
 --echo # End of 13 tests
+
+--echo #
+--echo # MDEV-38061 Assertion `args[0]->decimal_precision() < 22' in
+--echo #            Item_func_round::fix_arg_hex_hybrid
+--echo #
+
+SELECT ROUND(NAME_CONST('x', 0x0123456789ABCDEF0123456789ABCDEF0123456789AB));
+
+--echo # End of 10.11 tests

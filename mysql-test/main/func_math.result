@@ -3982,3 +3982,11 @@ SIGN(-' 0 ')
 Warnings:
 Note	1292	Truncated incorrect DOUBLE value: ' 0 '
 # End of 13 tests
+#
+# MDEV-38061 Assertion `args[0]->decimal_precision() < 22' in
+#            Item_func_round::fix_arg_hex_hybrid
+#
+SELECT ROUND(NAME_CONST('x', 0x0123456789ABCDEF0123456789ABCDEF0123456789AB));
+ROUND(NAME_CONST('x', 0x0123456789ABCDEF0123456789ABCDEF0123456789AB))
+14839080548208970155
+# End of 10.11 tests
