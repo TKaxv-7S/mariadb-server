@@ -388,6 +388,8 @@ bool partition_info::set_range_interval(THD* thd, Item* ival,
                                         interval_type type,
                                         const char *table_name)
 {
+  if (ival->fix_fields_if_needed_for_scalar(thd, &ival))
+    return true;
   bool error= get_interval_value(thd, ival, type, &interval) ||
     interval.neg || interval.second_part ||
     !(interval.year || interval.month || interval.day || interval.hour ||

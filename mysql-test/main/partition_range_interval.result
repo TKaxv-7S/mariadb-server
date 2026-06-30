@@ -1985,3 +1985,50 @@ ERROR 22003: partition range value is out of range in 'INTERVAL'
 DROP TABLE t1;
 create table NUMTODSINTERVAL(NUMTODSINTERVAL int);
 drop table NUMTODSINTERVAL;
+#
+# MDEV-40088 Assertion `fixed()' failed with INTERVAL (SELECT 1) DAY
+#
+# Existing error should remain the same
+create table t1 (c date) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+(
+PARTITION p0 VALUES LESS THAN ((select '2026-04-20'))
+);
+ERROR HY000: This partition function is not allowed
+create table t1 (c date) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL (SELECT 1) DAY
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+ERROR 42000: INTERVAL does not support subqueries or stored functions
+create table t1 (c date) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL (1 + 2 + 3) DAY
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` date DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`c`) INTERVAL 6 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = InnoDB)
+drop table t1;
+# Existing error should remain the same, even if subqueries are
+# banned for INTERVAL
+create table t1 (c date) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL 1 DAY
+(
+PARTITION p0 VALUES LESS THAN ((select '2026-04-20'))
+);
+ERROR HY000: This partition function is not allowed
+create table t1 (c date) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL "hello" DAY
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+ERROR HY000: Wrong parameters for partitioned `t1`: wrong value for 'INTERVAL'

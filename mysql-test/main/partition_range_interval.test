@@ -715,3 +715,51 @@ DROP TABLE t1;
 
 create table NUMTODSINTERVAL(NUMTODSINTERVAL int);
 drop table NUMTODSINTERVAL;
+
+--echo #
+--echo # MDEV-40088 Assertion `fixed()' failed with INTERVAL (SELECT 1) DAY
+--echo #
+
+--echo # Existing error should remain the same
+--error ER_PARTITION_FUNCTION_IS_NOT_ALLOWED
+create table t1 (c date) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+(
+PARTITION p0 VALUES LESS THAN ((select '2026-04-20'))
+);
+
+--error ER_SUBQUERIES_NOT_SUPPORTED
+create table t1 (c date) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL (SELECT 1) DAY
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+
+create table t1 (c date) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL (1 + 2 + 3) DAY
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+
+show create table t1;
+drop table t1;
+
+--echo # Existing error should remain the same, even if subqueries are
+--echo # banned for INTERVAL
+--error ER_PARTITION_FUNCTION_IS_NOT_ALLOWED
+create table t1 (c date) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL 1 DAY
+(
+PARTITION p0 VALUES LESS THAN ((select '2026-04-20'))
+);
+
+--error ER_PART_WRONG_VALUE
+create table t1 (c date) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL "hello" DAY
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);

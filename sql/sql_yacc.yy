@@ -5204,7 +5204,13 @@ part_column_list:
 
 opt_part_interval:
           /* empty */ {}
-        | INTERVAL_SYM expr interval opt_auto
+        | { Lex->clause_that_disallows_subselect= "INTERVAL"; }
+          opt_part_interval2
+          { Lex->clause_that_disallows_subselect= NULL; }
+        ;
+
+opt_part_interval2:
+          INTERVAL_SYM expr interval opt_auto
           {
             partition_info *part_info= Lex->part_info;
             const char *table_name=
