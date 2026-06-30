@@ -250,15 +250,15 @@ protected:
     (Re)load the MySQL line-based section from the @ref file
     @param value_list
       List of wrapped member pointers to values. The first element must be a
-      file name @ref String_value to be unambiguous with the line count line.
+      file name @ref String_value to be unambiguous with the line-count line.
     @param default_line_count
       We cannot simply read lines until EOF as all versions
       of MySQL/MariaDB may generate more lines than needed.
       Therefore, starting with MySQL/MariaDB 4.1.x for @ref Master_info_file and
-      5.6.x for @ref Relay_log_info_file, the first line of the file is number
-      of one-line-per-value lines in the file, including this line count itself.
+      5.6.x/10.0.x for @ref Relay_log_info_file, the first line of the file is
+      the number of one-line-per-value lines in the file.
       This parameter specifies the number of effective lines before those
-      versions (i.e., not counting the line count line if it was to have one),
+      versions (i.e., not counting the line-count line if it was to have one),
       where the first line is a filename with extension
       (either contains a `.` or is entirely empty) rather than an integer.
     @return `false` if the file has parsed successfully or `true` if error
@@ -273,13 +273,13 @@ protected:
     @param total_line_count
       The number of lines to describe the file as on the first line of the file.
       If this is larger than `value_list.size()`, suffix the file with empty
-      lines until the line count (including the line count line) is this many.
-      This reservation provides compatibility with MySQL,
-      who has added more old-style lines while MariaDB innovated.
+      lines until the line count (*excluding* the line-count line) is this many.
+      This reservation provides compatibility
+      with older versions of MySQL and MariaDB.
   */
   template<size_t size> void save_to_file(
     const Mem_fn (&value_list)[size],
-    size_t total_line_count= size + /* line count line */ 1
+    size_t total_line_count= size
   ) { return save_to_file(value_list, size, total_line_count); }
 
 private:
@@ -336,7 +336,7 @@ private:
 
   void save_to_file(const Mem_fn *values, size_t size, size_t total_line_count)
   {
-    DBUG_ASSERT(total_line_count > size);
+    DBUG_ASSERT(total_line_count >= size);
     my_b_seek(&file, 0);
     /*
       If the new contents take less space than the previous file contents,
@@ -353,12 +353,8 @@ private:
         pm(this).save_to(&file);
       my_b_write_byte(&file, '\n');
     }
-    /*
-      Pad additional reserved lines:
-      (1 for the line count line + line count) inclusive -> max line inclusive
-       = line count exclusive <- max line inclusive
-    */
-    for (; total_line_count > size; --total_line_count)
+    // Pad additional reserved lines
+    for (; size < total_line_count; ++size)
       my_b_write_byte(&file, '\n');
   }
 
