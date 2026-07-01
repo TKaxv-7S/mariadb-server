@@ -870,6 +870,47 @@ p14	RANGE COLUMNS	`c`	'2026-05-04'	1
 p15	RANGE COLUMNS	`c`	'2026-05-05'	1
 p16	RANGE COLUMNS	`c`	'2026-05-06'	1
 drop table t1;
+# LOAD DATA INFILE ... REPLACE
+set timestamp= unix_timestamp('2026-05-02 00:00:00');
+create table t1 (c date key, d int) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL 1 Day
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+insert into t1 values ('2026-05-02', 1);
+set timestamp= unix_timestamp('2026-05-06 00:00:00');
+load data infile 'load.data' replace into table t1 FIELDS TERMINATED BY ',';
+select * from t1;
+c	d
+2026-05-02	3
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` date NOT NULL,
+  `d` int(11) DEFAULT NULL,
+  PRIMARY KEY (`c`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`c`) INTERVAL 1 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = InnoDB,
+ PARTITION `p1` VALUES LESS THAN ('2026-04-21') ENGINE = InnoDB,
+ PARTITION `p2` VALUES LESS THAN ('2026-04-22') ENGINE = InnoDB,
+ PARTITION `p3` VALUES LESS THAN ('2026-04-23') ENGINE = InnoDB,
+ PARTITION `p4` VALUES LESS THAN ('2026-04-24') ENGINE = InnoDB,
+ PARTITION `p5` VALUES LESS THAN ('2026-04-25') ENGINE = InnoDB,
+ PARTITION `p6` VALUES LESS THAN ('2026-04-26') ENGINE = InnoDB,
+ PARTITION `p7` VALUES LESS THAN ('2026-04-27') ENGINE = InnoDB,
+ PARTITION `p8` VALUES LESS THAN ('2026-04-28') ENGINE = InnoDB,
+ PARTITION `p9` VALUES LESS THAN ('2026-04-29') ENGINE = InnoDB,
+ PARTITION `p10` VALUES LESS THAN ('2026-04-30') ENGINE = InnoDB,
+ PARTITION `p11` VALUES LESS THAN ('2026-05-01') ENGINE = InnoDB,
+ PARTITION `p12` VALUES LESS THAN ('2026-05-02') ENGINE = InnoDB,
+ PARTITION `p13` VALUES LESS THAN ('2026-05-03') ENGINE = InnoDB,
+ PARTITION `p14` VALUES LESS THAN ('2026-05-04') ENGINE = InnoDB,
+ PARTITION `p15` VALUES LESS THAN ('2026-05-05') ENGINE = InnoDB,
+ PARTITION `p16` VALUES LESS THAN ('2026-05-06') ENGINE = InnoDB,
+ PARTITION `p17` VALUES LESS THAN ('2026-05-07') ENGINE = InnoDB)
+drop table t1;
 # LOAD DATA INFILE failure for future dates
 create table t1 (c date) engine=innodb
 PARTITION BY RANGE COLUMNS (c)
@@ -1403,6 +1444,48 @@ c	d
 2026-04-28	740094
 2026-04-29	740095
 drop table t1;
+# INSERT .. ON DUPLICATE KEY UPDATE (ODKU)
+set timestamp= unix_timestamp('2026-05-02 00:00:00');
+create table t1 (c date key, d int) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL 1 Day
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+insert into t1 values ('2026-05-02', 1);
+set timestamp= unix_timestamp('2026-05-06 00:00:00');
+insert into t1 values ('2026-05-02', 2)
+on duplicate key update c = date_add(c, interval 4 day);
+select * from t1;
+c	d
+2026-05-06	1
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` date NOT NULL,
+  `d` int(11) DEFAULT NULL,
+  PRIMARY KEY (`c`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`c`) INTERVAL 1 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = InnoDB,
+ PARTITION `p1` VALUES LESS THAN ('2026-04-21') ENGINE = InnoDB,
+ PARTITION `p2` VALUES LESS THAN ('2026-04-22') ENGINE = InnoDB,
+ PARTITION `p3` VALUES LESS THAN ('2026-04-23') ENGINE = InnoDB,
+ PARTITION `p4` VALUES LESS THAN ('2026-04-24') ENGINE = InnoDB,
+ PARTITION `p5` VALUES LESS THAN ('2026-04-25') ENGINE = InnoDB,
+ PARTITION `p6` VALUES LESS THAN ('2026-04-26') ENGINE = InnoDB,
+ PARTITION `p7` VALUES LESS THAN ('2026-04-27') ENGINE = InnoDB,
+ PARTITION `p8` VALUES LESS THAN ('2026-04-28') ENGINE = InnoDB,
+ PARTITION `p9` VALUES LESS THAN ('2026-04-29') ENGINE = InnoDB,
+ PARTITION `p10` VALUES LESS THAN ('2026-04-30') ENGINE = InnoDB,
+ PARTITION `p11` VALUES LESS THAN ('2026-05-01') ENGINE = InnoDB,
+ PARTITION `p12` VALUES LESS THAN ('2026-05-02') ENGINE = InnoDB,
+ PARTITION `p13` VALUES LESS THAN ('2026-05-03') ENGINE = InnoDB,
+ PARTITION `p14` VALUES LESS THAN ('2026-05-04') ENGINE = InnoDB,
+ PARTITION `p15` VALUES LESS THAN ('2026-05-05') ENGINE = InnoDB,
+ PARTITION `p16` VALUES LESS THAN ('2026-05-06') ENGINE = InnoDB,
+ PARTITION `p17` VALUES LESS THAN ('2026-05-07') ENGINE = InnoDB)
+drop table t1;
 # multi-table update
 select to_days('2026-04-10') = 740081;
 to_days('2026-04-10') = 740081
@@ -1440,7 +1523,10 @@ INTERVAL 3 DAY
 (
 PARTITION p0 VALUES LESS THAN ('2026-04-25')
 );
-update t1, t2 set t1.c = date_add(t1.c, interval 10 day) where t1.c = t2.c;
+update t1, t2
+set t1.c = date_add(t1.c, interval 10 day),
+t2.c = date_add(t2.c, interval 10 day)
+where t1.c = t2.c;
 select * from t1;
 c	d
 2026-04-10	740081
@@ -1456,16 +1542,16 @@ c	d
 2026-04-30	740091
 select * from t2;
 c	d
-2026-04-15	740086
-2026-04-16	740087
-2026-04-17	740088
-2026-04-18	740089
-2026-04-19	740090
-2026-04-20	740091
 2026-04-21	740092
 2026-04-22	740093
 2026-04-23	740094
 2026-04-24	740095
+2026-04-25	740086
+2026-04-26	740087
+2026-04-27	740088
+2026-04-28	740089
+2026-04-29	740090
+2026-04-30	740091
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
@@ -1985,6 +2071,438 @@ ERROR 22003: partition range value is out of range in 'INTERVAL'
 DROP TABLE t1;
 create table NUMTODSINTERVAL(NUMTODSINTERVAL int);
 drop table NUMTODSINTERVAL;
+#
+# MDEV-40048 Prelocking with range interval auto partitioning
+#
+# Trigger / PRELOCK_ROUTINE
+create table t1 (c date)
+partition by range columns (c) interval 1 day
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+create table t2 (x int);
+create trigger tr after delete on t2 for each row
+insert into t1 values (now());
+insert into t2 values (2),(3);
+delete from t2;
+select * from t1;
+c
+2026-05-02
+2026-05-02
+drop table t1, t2;
+# Trigger + LOCK TABLES + SP / PS
+set timestamp= unix_timestamp('2026-04-25 00:00:00');
+create table t1 (c date)
+partition by range columns (c) interval 1 day
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+insert into t1 values ('2026-04-25');
+create table t2 (x int);
+insert into t2 values (1),(2),(3),(4),(5),(6);
+create trigger tr after delete on t2 for each row
+insert into t1 values (now());
+create procedure sp() delete from t2 where x < 4;
+prepare ps from 'delete from t2 where x > 3';
+lock tables t1 write, t2 write;
+set timestamp= unix_timestamp('2026-05-02 00:00:00');
+call sp;
+call sp;
+set timestamp= unix_timestamp('2026-05-06 00:00:00');
+execute ps;
+execute ps;
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` date DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`c`) INTERVAL 1 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = MyISAM,
+ PARTITION `p1` VALUES LESS THAN ('2026-04-21') ENGINE = MyISAM,
+ PARTITION `p2` VALUES LESS THAN ('2026-04-22') ENGINE = MyISAM,
+ PARTITION `p3` VALUES LESS THAN ('2026-04-23') ENGINE = MyISAM,
+ PARTITION `p4` VALUES LESS THAN ('2026-04-24') ENGINE = MyISAM,
+ PARTITION `p5` VALUES LESS THAN ('2026-04-25') ENGINE = MyISAM,
+ PARTITION `p6` VALUES LESS THAN ('2026-04-26') ENGINE = MyISAM,
+ PARTITION `p7` VALUES LESS THAN ('2026-04-27') ENGINE = MyISAM,
+ PARTITION `p8` VALUES LESS THAN ('2026-04-28') ENGINE = MyISAM,
+ PARTITION `p9` VALUES LESS THAN ('2026-04-29') ENGINE = MyISAM,
+ PARTITION `p10` VALUES LESS THAN ('2026-04-30') ENGINE = MyISAM,
+ PARTITION `p11` VALUES LESS THAN ('2026-05-01') ENGINE = MyISAM,
+ PARTITION `p12` VALUES LESS THAN ('2026-05-02') ENGINE = MyISAM,
+ PARTITION `p13` VALUES LESS THAN ('2026-05-03') ENGINE = MyISAM,
+ PARTITION `p14` VALUES LESS THAN ('2026-05-04') ENGINE = MyISAM,
+ PARTITION `p15` VALUES LESS THAN ('2026-05-05') ENGINE = MyISAM,
+ PARTITION `p16` VALUES LESS THAN ('2026-05-06') ENGINE = MyISAM,
+ PARTITION `p17` VALUES LESS THAN ('2026-05-07') ENGINE = MyISAM)
+unlock tables;
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` date DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`c`) INTERVAL 1 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = MyISAM,
+ PARTITION `p1` VALUES LESS THAN ('2026-04-21') ENGINE = MyISAM,
+ PARTITION `p2` VALUES LESS THAN ('2026-04-22') ENGINE = MyISAM,
+ PARTITION `p3` VALUES LESS THAN ('2026-04-23') ENGINE = MyISAM,
+ PARTITION `p4` VALUES LESS THAN ('2026-04-24') ENGINE = MyISAM,
+ PARTITION `p5` VALUES LESS THAN ('2026-04-25') ENGINE = MyISAM,
+ PARTITION `p6` VALUES LESS THAN ('2026-04-26') ENGINE = MyISAM,
+ PARTITION `p7` VALUES LESS THAN ('2026-04-27') ENGINE = MyISAM,
+ PARTITION `p8` VALUES LESS THAN ('2026-04-28') ENGINE = MyISAM,
+ PARTITION `p9` VALUES LESS THAN ('2026-04-29') ENGINE = MyISAM,
+ PARTITION `p10` VALUES LESS THAN ('2026-04-30') ENGINE = MyISAM,
+ PARTITION `p11` VALUES LESS THAN ('2026-05-01') ENGINE = MyISAM,
+ PARTITION `p12` VALUES LESS THAN ('2026-05-02') ENGINE = MyISAM,
+ PARTITION `p13` VALUES LESS THAN ('2026-05-03') ENGINE = MyISAM,
+ PARTITION `p14` VALUES LESS THAN ('2026-05-04') ENGINE = MyISAM,
+ PARTITION `p15` VALUES LESS THAN ('2026-05-05') ENGINE = MyISAM,
+ PARTITION `p16` VALUES LESS THAN ('2026-05-06') ENGINE = MyISAM,
+ PARTITION `p17` VALUES LESS THAN ('2026-05-07') ENGINE = MyISAM)
+select * from t1;
+c
+2026-04-25
+2026-05-02
+2026-05-02
+2026-05-02
+2026-05-06
+2026-05-06
+2026-05-06
+drop table t1, t2;
+drop prepare ps;
+drop procedure sp;
+# Auto-create failed error
+set timestamp= unix_timestamp('2026-05-02 00:00:00');
+create table t1 (c date) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL 1 Day
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+call mtr.add_suppression("Error number .*(File exists|file operation)");
+call mtr.add_suppression("InnoDB: The file '.*test/t1#P#p1\\.ibd' already exists");
+insert into t1 values ('2026-04-22');
+ERROR HY000: Got error 184 "Tablespace already exists" from storage engine InnoDB
+show warnings;
+Level	Code	Message
+Error	1030	Got error 184 "Tablespace already exists" from storage engine InnoDB
+Warning	4268	Range partition table %s.%s: adding INTERVAL partition(s) failed
+drop table t1;
+# LOCK TABLE
+create table t1 (c date) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL 1 Day
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+lock tables t1 write;
+insert into t1 values ('2026-04-25');
+set timestamp= unix_timestamp('2026-05-06 00:00:00');
+update t1 set c= date_add(c, interval 10 day);
+unlock tables;
+select * from t1;
+c
+2026-05-05
+drop table t1;
+# LOCK TABLES + VIEW
+set timestamp= unix_timestamp('2026-04-25 00:00:00');
+create table t1 (c date) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL 1 Day
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+create view v1 as select * from t1;
+insert into t1 values ('2026-04-22');
+set timestamp= unix_timestamp('2026-05-02 00:00:00');
+update v1 set c= date_add(c, interval 10 day);
+select * from t1;
+c
+2026-05-02
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` date DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`c`) INTERVAL 1 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = InnoDB,
+ PARTITION `p1` VALUES LESS THAN ('2026-04-21') ENGINE = InnoDB,
+ PARTITION `p2` VALUES LESS THAN ('2026-04-22') ENGINE = InnoDB,
+ PARTITION `p3` VALUES LESS THAN ('2026-04-23') ENGINE = InnoDB,
+ PARTITION `p4` VALUES LESS THAN ('2026-04-24') ENGINE = InnoDB,
+ PARTITION `p5` VALUES LESS THAN ('2026-04-25') ENGINE = InnoDB,
+ PARTITION `p6` VALUES LESS THAN ('2026-04-26') ENGINE = InnoDB,
+ PARTITION `p7` VALUES LESS THAN ('2026-04-27') ENGINE = InnoDB,
+ PARTITION `p8` VALUES LESS THAN ('2026-04-28') ENGINE = InnoDB,
+ PARTITION `p9` VALUES LESS THAN ('2026-04-29') ENGINE = InnoDB,
+ PARTITION `p10` VALUES LESS THAN ('2026-04-30') ENGINE = InnoDB,
+ PARTITION `p11` VALUES LESS THAN ('2026-05-01') ENGINE = InnoDB,
+ PARTITION `p12` VALUES LESS THAN ('2026-05-02') ENGINE = InnoDB,
+ PARTITION `p13` VALUES LESS THAN ('2026-05-03') ENGINE = InnoDB)
+set timestamp= unix_timestamp('2026-05-06 00:00:00');
+lock tables v1 write;
+update v1 set c= date_add(c, interval 3 day);
+select * from t1;
+c
+2026-05-05
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` date DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`c`) INTERVAL 1 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = InnoDB,
+ PARTITION `p1` VALUES LESS THAN ('2026-04-21') ENGINE = InnoDB,
+ PARTITION `p2` VALUES LESS THAN ('2026-04-22') ENGINE = InnoDB,
+ PARTITION `p3` VALUES LESS THAN ('2026-04-23') ENGINE = InnoDB,
+ PARTITION `p4` VALUES LESS THAN ('2026-04-24') ENGINE = InnoDB,
+ PARTITION `p5` VALUES LESS THAN ('2026-04-25') ENGINE = InnoDB,
+ PARTITION `p6` VALUES LESS THAN ('2026-04-26') ENGINE = InnoDB,
+ PARTITION `p7` VALUES LESS THAN ('2026-04-27') ENGINE = InnoDB,
+ PARTITION `p8` VALUES LESS THAN ('2026-04-28') ENGINE = InnoDB,
+ PARTITION `p9` VALUES LESS THAN ('2026-04-29') ENGINE = InnoDB,
+ PARTITION `p10` VALUES LESS THAN ('2026-04-30') ENGINE = InnoDB,
+ PARTITION `p11` VALUES LESS THAN ('2026-05-01') ENGINE = InnoDB,
+ PARTITION `p12` VALUES LESS THAN ('2026-05-02') ENGINE = InnoDB,
+ PARTITION `p13` VALUES LESS THAN ('2026-05-03') ENGINE = InnoDB,
+ PARTITION `p14` VALUES LESS THAN ('2026-05-04') ENGINE = InnoDB,
+ PARTITION `p15` VALUES LESS THAN ('2026-05-05') ENGINE = InnoDB,
+ PARTITION `p16` VALUES LESS THAN ('2026-05-06') ENGINE = InnoDB,
+ PARTITION `p17` VALUES LESS THAN ('2026-05-07') ENGINE = InnoDB)
+unlock tables;
+drop view v1;
+drop tables t1;
+# LOCK TABLES + PS / SP
+set timestamp= unix_timestamp('2026-04-25 00:00:00');
+create table t1 (c date) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL 1 Day
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+insert into t1 values ('2026-04-25');
+set timestamp= unix_timestamp('2026-04-28 01:00:00');
+execute immediate 'update t1 set c = date_add(c, interval 3 day)';
+select * from t1;
+c
+2026-04-28
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` date DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`c`) INTERVAL 1 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = InnoDB,
+ PARTITION `p1` VALUES LESS THAN ('2026-04-21') ENGINE = InnoDB,
+ PARTITION `p2` VALUES LESS THAN ('2026-04-22') ENGINE = InnoDB,
+ PARTITION `p3` VALUES LESS THAN ('2026-04-23') ENGINE = InnoDB,
+ PARTITION `p4` VALUES LESS THAN ('2026-04-24') ENGINE = InnoDB,
+ PARTITION `p5` VALUES LESS THAN ('2026-04-25') ENGINE = InnoDB,
+ PARTITION `p6` VALUES LESS THAN ('2026-04-26') ENGINE = InnoDB,
+ PARTITION `p7` VALUES LESS THAN ('2026-04-27') ENGINE = InnoDB,
+ PARTITION `p8` VALUES LESS THAN ('2026-04-28') ENGINE = InnoDB,
+ PARTITION `p9` VALUES LESS THAN ('2026-04-29') ENGINE = InnoDB)
+prepare s from 'update t1 set c= date_add(c, interval 2 day)';
+set timestamp= unix_timestamp('2026-04-30 02:00:00');
+execute s;
+set timestamp= unix_timestamp('2026-05-02 02:00:00');
+execute s;
+select * from t1;
+c
+2026-05-02
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` date DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`c`) INTERVAL 1 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = InnoDB,
+ PARTITION `p1` VALUES LESS THAN ('2026-04-21') ENGINE = InnoDB,
+ PARTITION `p2` VALUES LESS THAN ('2026-04-22') ENGINE = InnoDB,
+ PARTITION `p3` VALUES LESS THAN ('2026-04-23') ENGINE = InnoDB,
+ PARTITION `p4` VALUES LESS THAN ('2026-04-24') ENGINE = InnoDB,
+ PARTITION `p5` VALUES LESS THAN ('2026-04-25') ENGINE = InnoDB,
+ PARTITION `p6` VALUES LESS THAN ('2026-04-26') ENGINE = InnoDB,
+ PARTITION `p7` VALUES LESS THAN ('2026-04-27') ENGINE = InnoDB,
+ PARTITION `p8` VALUES LESS THAN ('2026-04-28') ENGINE = InnoDB,
+ PARTITION `p9` VALUES LESS THAN ('2026-04-29') ENGINE = InnoDB,
+ PARTITION `p10` VALUES LESS THAN ('2026-04-30') ENGINE = InnoDB,
+ PARTITION `p11` VALUES LESS THAN ('2026-05-01') ENGINE = InnoDB,
+ PARTITION `p12` VALUES LESS THAN ('2026-05-02') ENGINE = InnoDB,
+ PARTITION `p13` VALUES LESS THAN ('2026-05-03') ENGINE = InnoDB)
+set timestamp= unix_timestamp('2026-05-06 03:00:00');
+lock tables t1 write;
+execute s;
+execute s;
+select * from t1;
+c
+2026-05-06
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` date DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`c`) INTERVAL 1 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = InnoDB,
+ PARTITION `p1` VALUES LESS THAN ('2026-04-21') ENGINE = InnoDB,
+ PARTITION `p2` VALUES LESS THAN ('2026-04-22') ENGINE = InnoDB,
+ PARTITION `p3` VALUES LESS THAN ('2026-04-23') ENGINE = InnoDB,
+ PARTITION `p4` VALUES LESS THAN ('2026-04-24') ENGINE = InnoDB,
+ PARTITION `p5` VALUES LESS THAN ('2026-04-25') ENGINE = InnoDB,
+ PARTITION `p6` VALUES LESS THAN ('2026-04-26') ENGINE = InnoDB,
+ PARTITION `p7` VALUES LESS THAN ('2026-04-27') ENGINE = InnoDB,
+ PARTITION `p8` VALUES LESS THAN ('2026-04-28') ENGINE = InnoDB,
+ PARTITION `p9` VALUES LESS THAN ('2026-04-29') ENGINE = InnoDB,
+ PARTITION `p10` VALUES LESS THAN ('2026-04-30') ENGINE = InnoDB,
+ PARTITION `p11` VALUES LESS THAN ('2026-05-01') ENGINE = InnoDB,
+ PARTITION `p12` VALUES LESS THAN ('2026-05-02') ENGINE = InnoDB,
+ PARTITION `p13` VALUES LESS THAN ('2026-05-03') ENGINE = InnoDB,
+ PARTITION `p14` VALUES LESS THAN ('2026-05-04') ENGINE = InnoDB,
+ PARTITION `p15` VALUES LESS THAN ('2026-05-05') ENGINE = InnoDB,
+ PARTITION `p16` VALUES LESS THAN ('2026-05-06') ENGINE = InnoDB,
+ PARTITION `p17` VALUES LESS THAN ('2026-05-07') ENGINE = InnoDB)
+unlock tables;
+drop prepare s;
+create procedure sp() update t1 set c= date_add(c, interval 1 day);
+set timestamp= unix_timestamp('2026-05-08 04:00:00');
+call sp;
+call sp;
+select * from t1;
+c
+2026-05-08
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` date DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`c`) INTERVAL 1 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = InnoDB,
+ PARTITION `p1` VALUES LESS THAN ('2026-04-21') ENGINE = InnoDB,
+ PARTITION `p2` VALUES LESS THAN ('2026-04-22') ENGINE = InnoDB,
+ PARTITION `p3` VALUES LESS THAN ('2026-04-23') ENGINE = InnoDB,
+ PARTITION `p4` VALUES LESS THAN ('2026-04-24') ENGINE = InnoDB,
+ PARTITION `p5` VALUES LESS THAN ('2026-04-25') ENGINE = InnoDB,
+ PARTITION `p6` VALUES LESS THAN ('2026-04-26') ENGINE = InnoDB,
+ PARTITION `p7` VALUES LESS THAN ('2026-04-27') ENGINE = InnoDB,
+ PARTITION `p8` VALUES LESS THAN ('2026-04-28') ENGINE = InnoDB,
+ PARTITION `p9` VALUES LESS THAN ('2026-04-29') ENGINE = InnoDB,
+ PARTITION `p10` VALUES LESS THAN ('2026-04-30') ENGINE = InnoDB,
+ PARTITION `p11` VALUES LESS THAN ('2026-05-01') ENGINE = InnoDB,
+ PARTITION `p12` VALUES LESS THAN ('2026-05-02') ENGINE = InnoDB,
+ PARTITION `p13` VALUES LESS THAN ('2026-05-03') ENGINE = InnoDB,
+ PARTITION `p14` VALUES LESS THAN ('2026-05-04') ENGINE = InnoDB,
+ PARTITION `p15` VALUES LESS THAN ('2026-05-05') ENGINE = InnoDB,
+ PARTITION `p16` VALUES LESS THAN ('2026-05-06') ENGINE = InnoDB,
+ PARTITION `p17` VALUES LESS THAN ('2026-05-07') ENGINE = InnoDB,
+ PARTITION `p18` VALUES LESS THAN ('2026-05-08') ENGINE = InnoDB,
+ PARTITION `p19` VALUES LESS THAN ('2026-05-09') ENGINE = InnoDB)
+set timestamp= unix_timestamp('2026-05-09 05:00:00');
+lock tables t1 write;
+call sp;
+set timestamp= unix_timestamp('2026-05-10 05:00:00');
+call sp;
+select * from t1;
+c
+2026-05-10
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` date DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`c`) INTERVAL 1 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = InnoDB,
+ PARTITION `p1` VALUES LESS THAN ('2026-04-21') ENGINE = InnoDB,
+ PARTITION `p2` VALUES LESS THAN ('2026-04-22') ENGINE = InnoDB,
+ PARTITION `p3` VALUES LESS THAN ('2026-04-23') ENGINE = InnoDB,
+ PARTITION `p4` VALUES LESS THAN ('2026-04-24') ENGINE = InnoDB,
+ PARTITION `p5` VALUES LESS THAN ('2026-04-25') ENGINE = InnoDB,
+ PARTITION `p6` VALUES LESS THAN ('2026-04-26') ENGINE = InnoDB,
+ PARTITION `p7` VALUES LESS THAN ('2026-04-27') ENGINE = InnoDB,
+ PARTITION `p8` VALUES LESS THAN ('2026-04-28') ENGINE = InnoDB,
+ PARTITION `p9` VALUES LESS THAN ('2026-04-29') ENGINE = InnoDB,
+ PARTITION `p10` VALUES LESS THAN ('2026-04-30') ENGINE = InnoDB,
+ PARTITION `p11` VALUES LESS THAN ('2026-05-01') ENGINE = InnoDB,
+ PARTITION `p12` VALUES LESS THAN ('2026-05-02') ENGINE = InnoDB,
+ PARTITION `p13` VALUES LESS THAN ('2026-05-03') ENGINE = InnoDB,
+ PARTITION `p14` VALUES LESS THAN ('2026-05-04') ENGINE = InnoDB,
+ PARTITION `p15` VALUES LESS THAN ('2026-05-05') ENGINE = InnoDB,
+ PARTITION `p16` VALUES LESS THAN ('2026-05-06') ENGINE = InnoDB,
+ PARTITION `p17` VALUES LESS THAN ('2026-05-07') ENGINE = InnoDB,
+ PARTITION `p18` VALUES LESS THAN ('2026-05-08') ENGINE = InnoDB,
+ PARTITION `p19` VALUES LESS THAN ('2026-05-09') ENGINE = InnoDB,
+ PARTITION `p20` VALUES LESS THAN ('2026-05-10') ENGINE = InnoDB,
+ PARTITION `p21` VALUES LESS THAN ('2026-05-11') ENGINE = InnoDB)
+unlock tables;
+drop procedure sp;
+drop table t1;
+# create function
+set timestamp= unix_timestamp('2026-04-25 00:00:00');
+create table t1 (c date, d int) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL 1 Day
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+create table t2 (c int key, d int);
+insert into t2 values (42, 24);
+create function f(n int) returns int
+begin
+insert into t1 values(now(), 123);
+return (select d from t2 where c=n);
+end|
+select * from t2 where d = f(42);
+c	d
+42	24
+select * from t1;
+c	d
+2026-04-25	123
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` date DEFAULT NULL,
+  `d` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`c`) INTERVAL 1 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = InnoDB,
+ PARTITION `p1` VALUES LESS THAN ('2026-04-21') ENGINE = InnoDB,
+ PARTITION `p2` VALUES LESS THAN ('2026-04-22') ENGINE = InnoDB,
+ PARTITION `p3` VALUES LESS THAN ('2026-04-23') ENGINE = InnoDB,
+ PARTITION `p4` VALUES LESS THAN ('2026-04-24') ENGINE = InnoDB,
+ PARTITION `p5` VALUES LESS THAN ('2026-04-25') ENGINE = InnoDB,
+ PARTITION `p6` VALUES LESS THAN ('2026-04-26') ENGINE = InnoDB)
+DROP TABLE t1, t2;
+drop function f;
+# update one table while reading an auto-partitioned table
+set timestamp= unix_timestamp('2026-04-20 00:00:00');
+create table t1 (c date);
+insert into t1 values ('2026-04-20');
+create table t2 (d date)
+PARTITION BY RANGE COLUMNS (d)
+INTERVAL 1 Day
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+insert into t2 select c from t1;
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `d` date DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`d`) INTERVAL 1 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = MyISAM,
+ PARTITION `p1` VALUES LESS THAN ('2026-04-21') ENGINE = MyISAM)
+set timestamp= unix_timestamp('2026-04-25 00:00:00');
+update t1 set c = date_add(c, interval 1 day) where c = (select max(d) from t2);
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `d` date DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
+ PARTITION BY RANGE  COLUMNS(`d`) INTERVAL 1 DAY
+(PARTITION `p0` VALUES LESS THAN ('2026-04-20') ENGINE = MyISAM,
+ PARTITION `p1` VALUES LESS THAN ('2026-04-21') ENGINE = MyISAM)
+DROP TABLE t1, t2;
 #
 # MDEV-40088 Assertion `fixed()' failed with INTERVAL (SELECT 1) DAY
 #

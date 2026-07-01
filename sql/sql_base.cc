@@ -2086,8 +2086,9 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)
       DBUG_PRINT("info",("Using locked table"));
 #ifdef WITH_PARTITION_STORAGE_ENGINE
       part_names_error= set_partitions_as_used(table_list, table);
-      if (!part_names_error
-          && table->vers_switch_partition(thd, table_list, ot_ctx))
+      if (!part_names_error &&
+          (table->vers_switch_partition(thd, table_list, ot_ctx) ||
+           table->range_interval_check_partition(thd, table_list, ot_ctx)))
         DBUG_RETURN(true);
 #endif
       goto reset;
@@ -3582,7 +3583,8 @@ Open_table_context::recover_from_failed_open()
       else
       {
         DBUG_ASSERT(!result);
-        DBUG_ASSERT(m_action == OT_ADD_HISTORY_PARTITION);
+        DBUG_ASSERT(m_action == OT_ADD_HISTORY_PARTITION ||
+                    m_action == OT_ADD_RANGE_INTERVAL_PARTITION);
       }
       /*
          We are now under MDL_EXCLUSIVE mode. Other threads have no table share
