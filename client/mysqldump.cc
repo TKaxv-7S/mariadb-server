@@ -5254,8 +5254,16 @@ static int dump_all_servers()
     char buff[20+FN_REFLEN];
     my_snprintf(buff, sizeof(buff), "show create server %s", row[0]);
     if (mysql_query_with_error_report(mysql, &serverres, buff))
+    {
+      mysql_free_result(tableres);
       return 1;
-    row= mysql_fetch_row(serverres);
+    }
+    if (!(row= mysql_fetch_row(serverres)) || mysql_num_fields(serverres) < 2)
+    {
+      mysql_free_result(serverres);
+      mysql_free_result(tableres);
+      return 1;
+    }
     row[1]+= 14;                /* strlen("CREATE SERVER ") == 14 */
     fprintf(md_result_file, "CREATE %sSERVER %s%s\n",
             opt_replace_into ? "/*M!100103 OR REPLACE */ ": "",
