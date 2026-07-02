@@ -5952,6 +5952,9 @@ void TABLE::init(THD *thd, TABLE_LIST *tl)
 
   if (thd->lex->need_correct_ident())
     alias_name_used= !s->table_name.streq(tl->alias);
+  else
+    alias_name_used= FALSE;
+
   /* Fix alias if table name changes. */
   if (!alias.alloced_length() || strcmp(alias.c_ptr(), tl->alias.str))
     alias.copy(tl->alias.str, tl->alias.length, alias.charset());
