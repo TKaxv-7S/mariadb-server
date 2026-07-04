@@ -90,13 +90,14 @@ jobs:
       - name: Uninstall MSI
         run: |
           $msi = (Get-ChildItem bld\mariadb-*.msi).FullName
-          $p = Start-Process msiexec -ArgumentList "/x `"$msi`" /qn /norestart /l*v uninstall.log" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "msiexec /x failed with $($p.ExitCode)" }
+          # Same uninstall command as buildbot's msi-uninstall.ps1 uses
+          $p = Start-Process msiexec -ArgumentList "/i `"$msi`" REMOVE=ALL /qn /norestart /l*v uninstall.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec REMOVE=ALL failed with $($p.ExitCode)" }
           if (Get-Service $env:MSI_SERVICENAME -ErrorAction SilentlyContinue) { throw "Service still exists after uninstall" }
           if (Test-Path "$env:MSI_INSTALLDIR\data") { throw "Datadir not removed on uninstall" }
 
       - name: Upload MSI logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: msi-logs
