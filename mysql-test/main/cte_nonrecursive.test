@@ -2026,3 +2026,17 @@ drop table t,s;
 eval $q1;
 
 --echo # End of 10.4 tests
+
+--echo #
+--echo # MDEV-37499 Crash in check_grant() on SHOW STATUS with a WHERE
+--echo # clause containing a subquery that uses a CTE
+--echo #
+
+create table t1 (a int);
+show status where 1 in (with c as (select 1) select * from t1);
+show status where variable_name in (with c as (select 'x') select * from c);
+--error ER_NO_SUCH_TABLE
+show status where 1 in (with c as (select 1) select * from t2);
+drop table t1;
+
+--echo # End of 10.11 tests

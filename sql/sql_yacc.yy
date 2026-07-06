@@ -13688,6 +13688,8 @@ show:
           {
             Select->parsing_place= NO_MATTER;
             Lex->pop_select(); //main select
+            if (Lex->check_cte_dependencies_and_resolve_references())
+              MYSQL_YYABORT;
           }
         ;
 

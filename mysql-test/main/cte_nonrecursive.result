@@ -2678,3 +2678,16 @@ cte as (select t1.a as t1a, t2.a as t2a from t as t1, t as t2 where t1.a=t2.a)
 select * from cte;
 ERROR 42S02: Table 'test.t' doesn't exist
 # End of 10.4 tests
+#
+# MDEV-37499 Crash in check_grant() on SHOW STATUS with a WHERE
+# clause containing a subquery that uses a CTE
+#
+create table t1 (a int);
+show status where 1 in (with c as (select 1) select * from t1);
+Variable_name	Value
+show status where variable_name in (with c as (select 'x') select * from c);
+Variable_name	Value
+show status where 1 in (with c as (select 1) select * from t2);
+ERROR 42S02: Table 'test.t2' doesn't exist
+drop table t1;
+# End of 10.11 tests
