@@ -7930,10 +7930,25 @@ SEL_TREE *Item_func_between::get_func_mm_tree(RANGE_OPT_PARAM *param,
   }
   else
   {
+    /*
+      "c NOT BETWEEN f1 AND f2" contributes the disjunct (f1 > c OR c > f2),
+      so the bound f1 uses GT and f2 uses LT.
+
+      When this bound had to be widened (m_negated_bound_superset, set by
+      get_mm_tree() for an order-compatible numeric type mismatch) we use the
+      non-strict operators GE/LE instead.  The range tree for NOT BETWEEN is
+      only ever used as a superset filter - the range access method rechecks
+      the predicate for every fetched row - so a non-strict bound stays a
+      valid superset even when args[0] has to be converted to a
+      different/narrower bound-field type.  See can_build_superset_range_const().
+    */
+    Item_func::Functype gt_op= m_negated_bound_superset ? Item_func::GE_FUNC
+                                                        : Item_func::GT_FUNC;
+    Item_func::Functype lt_op= m_negated_bound_superset ? Item_func::LE_FUNC
+                                                        : Item_func::LT_FUNC;
     tree= get_mm_parts(param, field,
                        (negated ?
-                        (value == (Item*)1 ? Item_func::GT_FUNC :
-                                             Item_func::LT_FUNC):
+                        (value == (Item*)1 ? gt_op : lt_op):
                         (value == (Item*)1 ? Item_func::LE_FUNC :
                                              Item_func::GE_FUNC)),
                        args[0]);
@@ -8637,6 +8652,40 @@ Item_func_between::can_optimize_range_const(Item_field *field_item) const
 }
 
 
+static inline bool is_numeric_cmp_type(const Type_handler *th)
+{
+  const Item_result r= th->cmp_type();
+  return r == INT_RESULT || r == REAL_RESULT || r == DECIMAL_RESULT;
+}
+
+
+/*
+  can_optimize_range_const() failed for a bound of a NOT BETWEEN predicate,
+  which means the bound field would be compared using a different type than
+  the BETWEEN itself.  For NOT BETWEEN we cannot simply drop the bound (that
+  would turn the OR-tree into a subset of the matching rows), but we may be
+  able to build a valid *superset* range instead.
+
+  That is safe precisely when the mismatch stays within order-compatible
+  numeric types (INT/REAL/DECIMAL): numeric conversions preserve ordering,
+  so the non-strict bound produced by get_func_mm_tree() is guaranteed to be
+  a superset (or to degrade to a full table scan), and the range access
+  method rechecks the predicate for every fetched row.
+
+  When a string or temporal comparison is involved the ordering is not
+  preserved (e.g. MDEV-36235, a numeric comparison over a string key), so no
+  safe superset range exists and the whole tree must be abandoned.
+*/
+bool
+Item_func_between::can_build_superset_range_const(const Item_field *field_item)
+                                                  const
+{
+  return is_numeric_cmp_type(field_item->type_handler_for_comparison()) &&
+         is_numeric_cmp_type(args[0]->type_handler_for_comparison()) &&
+         is_numeric_cmp_type(m_comparator.type_handler());
+}
+
+
 SEL_TREE *
 Item_func_between::get_mm_tree(RANGE_OPT_PARAM *param, Item **cond_ptr)
 {
@@ -8662,29 +8711,44 @@ Item_func_between::get_mm_tree(RANGE_OPT_PARAM *param, Item **cond_ptr)
     if (arguments()[i]->real_item()->type() == Item::FIELD_ITEM)
     {
       Item_field *field_item= (Item_field*) (arguments()[i]->real_item());
+      bool build_superset= false;
       if (!can_optimize_range_const(field_item))
       {
+        if (!negated)
+        {
+          /*
+            For BETWEEN, dropping a conjunct is fine because the
+            remaining tree is a superset of matching rows and the WHERE
+            clause will filter any extra rows out.
+          */
+          continue;
+        }
+
         /*
           For NOT BETWEEN the resulting tree is the OR of one tree per
-          NOT BETWEEN argument.  Skipping a disjunct here is wrong
-          because the remaining tree wouldn't scan all rows that satisfy
-          the NOT BETWEEN.  So bail here to avoid building a bad range.
+          NOT BETWEEN argument, so a disjunct cannot simply be skipped:
+          the remaining tree wouldn't scan all rows that satisfy the NOT
+          BETWEEN.
+
+          When the type mismatch stays within order-compatible numeric
+          types we can still build a valid superset range for this bound
+          (see can_build_superset_range_const()).  We ask
+          get_func_mm_tree() to use non-strict bounds for it so that the
+          resulting tree is a superset and the recheck of the predicate
+          filters the extra rows out.  Otherwise no safe superset range
+          exists, so abandon the whole tree to avoid building a bad range.
         */
-        if (negated)
+        if (!can_build_superset_range_const(field_item))
         {
           tree= nullptr;
           break;
         }
-
-        /*
-          For BETWEEN, dropping a conjunct is fine because the
-          remaining tree is a superset of matching rows and the WHERE
-          clause will filter any extra rows out.
-         */
-        continue;
+        build_superset= true;
       }
+      m_negated_bound_superset= build_superset;
       SEL_TREE *tmp= get_full_func_mm_tree(param, field_item,
                                            (Item*)(intptr) i);
+      m_negated_bound_superset= false;
       if (negated)
       {
         tree= !tree ? tmp : tree_or(param, tree, tmp);

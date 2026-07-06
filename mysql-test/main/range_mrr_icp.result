@@ -3763,6 +3763,13 @@ INSERT INTO `t1` VALUES
 SELECT COUNT(*) FROM t1 WHERE NOT (1 BETWEEN t1.float_key AND t1.int_key);
 COUNT(*)
 3
+set @osw_tmp= @@optimizer_switch;
+set optimizer_switch='index_merge=on,index_merge_sort_union=on';
+EXPLAIN
+SELECT COUNT(*) FROM t1 WHERE NOT (1 BETWEEN t1.float_key AND t1.int_key);
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	SIMPLE	t1	index_merge	float_key,int_key	float_key,int_key	5,5	NULL	3	Using sort_union(float_key,int_key); Using where
+set optimizer_switch= @osw_tmp;
 DROP TABLE t1;
 #
 # End of 10.11 tests

@@ -1058,6 +1058,20 @@ class Item_func_between :public Item_func_opt_neg
                              of the BETWEEN operator.
    */
   bool can_optimize_range_const(Item_field *field_item) const;
+  /*
+    True when, despite can_optimize_range_const() failing for a bound
+    field of a NOT BETWEEN predicate, we can still build a valid superset
+    range for that bound (see Item_func_between::get_mm_tree()).
+  */
+  bool can_build_superset_range_const(const Item_field *field_item) const;
+  /*
+    Transient flag used only during range analysis: while set,
+    get_func_mm_tree() builds the current NOT BETWEEN bound with the
+    non-strict operators (>=, <=) so that the resulting range is a valid
+    superset.  Set by get_mm_tree() around the bound whose type does not
+    match the BETWEEN comparison type.
+  */
+  bool m_negated_bound_superset= false;
 
 protected:
   SEL_TREE *get_func_mm_tree(RANGE_OPT_PARAM *param,

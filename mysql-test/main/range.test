@@ -2577,6 +2577,12 @@ INSERT INTO `t1` VALUES
 
 SELECT COUNT(*) FROM t1 WHERE NOT (1 BETWEEN t1.float_key AND t1.int_key);
 
+set @osw_tmp= @@optimizer_switch;
+set optimizer_switch='index_merge=on,index_merge_sort_union=on';
+EXPLAIN
+SELECT COUNT(*) FROM t1 WHERE NOT (1 BETWEEN t1.float_key AND t1.int_key);
+set optimizer_switch= @osw_tmp;
+
 DROP TABLE t1;
 
 --echo #
