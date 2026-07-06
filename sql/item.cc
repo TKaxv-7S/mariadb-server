@@ -3383,6 +3383,19 @@ void Item_field::set_field(Field *field_par)
   if (field->table->s->tmp_table == SYSTEM_TMP_TABLE ||
       field->table->s->tmp_table == INTERNAL_TMP_TABLE)
     set_refers_to_temp_table();
+
+  field->ptr_old= field_par->table->record[1] +
+                  field_par->offset(field->table->record[0]);
+  if (field_par->null_ptr)
+  {
+    field->null_ptr_old= field_par->table->record[1] +
+                         (field_par->null_ptr -
+                          field_par->table->record[0]);
+  }
+  else
+  {
+    field->null_ptr_old = nullptr;
+  }
 }
 
 
@@ -7230,6 +7243,14 @@ void Item_field::make_send_field(THD *thd, Send_field *tmp_field)
     tmp_field->db_name= db_name;
 }
 
+void Item_old_field::make_send_field(THD *thd, Send_field *tmp_field)
+{
+  if (field)
+    Item_field::make_send_field(thd, tmp_field);
+  else
+    expr->make_send_field(thd, tmp_field);
+}
+
 
 /**
   Save a field value in another field
@@ -8055,55 +8076,27 @@ bool Item_field::send(Protocol *protocol, st_value *buffer)
 
 bool Item_old_field::send(Protocol *protocol, st_value *buffer)
 {
-  bool result;
-
-  change_field_ptr();
-  result= Item_field::send(protocol, buffer);
-  change_field_ptr();
+  bool result= false;
+  if (field)
+  {
+    (void) change_field_ptr(0);
+    result= Item_field::send(protocol, buffer);
+    (void) change_field_ptr(0);
+  }
+  else
+  {
+    expr->walk(&Item::change_field_ptr, 0, 0);
+    result= expr->send(protocol, buffer);
+    expr->walk(&Item::change_field_ptr, 0, 0);
+  }
 
   return result;
 }
 
-void Item_old_field::change_field_ptr()
+bool Item_field::change_field_ptr(void *arg)
 {
   std::swap(field->ptr_old, field->ptr);
   std::swap(field->null_ptr, field->null_ptr_old);
-}
-
-
-bool Item_old_field::fix_fields(THD *thd, Item **reference)
-{
-  if (Item_field::fix_fields(thd, reference))
-    return true;
-  /*
-    Store the pointer to where old values are store before update.
-  */
-  if (field)
-  {
-    field->ptr_old= field->table->record[1] +
-                  field->offset(field->table->record[0]);
-    if (field->null_ptr)
-    {
-      field->null_ptr_old =
-        field->table->record[1] +
-        (field->null_ptr - field->table->record[0]);
-    }
-    else
-    {
-      field->null_ptr_old = nullptr;
-    }
-  }
-  else
-  {
-    /*
-      Field is NULL in case of view. But we need the information to field
-      to return its old value. Hence get the field from the reference item
-      and proceed.
-    */
-    field= ((Item_old_field*)((*reference)->real_item()))->field;
-    field->ptr_old= field->table->record[1] + field->offset(field->table->record[0]);
-  }
-
   return false;
 }
 

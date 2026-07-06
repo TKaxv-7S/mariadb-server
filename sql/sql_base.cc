@@ -6399,12 +6399,14 @@ find_field_in_view(THD *thd, TABLE_LIST *table_list,
           (*ref)->is_old_value_reference)
       {
         Item *real = item->real_item();
+        Item_old_field *old= nullptr;
+
         if (real->type() == Item::FIELD_ITEM)
-        {
-          Item_old_field *old =
-               new (thd->mem_root) Item_old_field(thd, (Item_field*) real);
-          item = old;
-        }
+          old= new (thd->mem_root) Item_old_field(thd, (Item_field*) real);
+        else
+          old= new (thd->mem_root) Item_old_field(thd, real);
+
+        item = old;
       }
 
       /*
@@ -6825,15 +6827,17 @@ find_field_in_table_ref(THD *thd, TABLE_LIST *table_list,
         {
           if (!ref)
             DBUG_RETURN(fld);
+
           Item *it= (*ref)->real_item();
+
           if (it->type() == Item::FIELD_ITEM)
             field_to_set= ((Item_field*)it)->field;
           else
           {
             if (thd->column_usage == MARK_COLUMNS_READ)
-              it->walk(&Item::register_field_in_read_map, 0, 0);
+              it->get_correct_item()->walk(&Item::register_field_in_read_map, 0, 0);
             else
-              it->walk(&Item::register_field_in_write_map, 0, 0);
+              it->get_correct_item()->walk(&Item::register_field_in_write_map, 0, 0);
           }
         }
         else
@@ -8334,10 +8338,10 @@ bool setup_fields(THD *thd, Ref_ptr_array ref_pointer_array,
       item->split_sum_func(thd, ref_pointer_array, *sum_func_list,
                            SPLIT_SUM_SELECT);
     }
-    lex->current_select->select_list_tables|= item->used_tables();
-    lex->used_tables|= item->used_tables();
+    lex->current_select->select_list_tables|= item->get_correct_item()->used_tables();
+    lex->used_tables|= item->get_correct_item()->used_tables();
     lex->current_select->cur_pos_in_select_list++;
-    lex->current_select->rownum_in_field_list |= item->with_rownum_func();
+    lex->current_select->rownum_in_field_list |= item->get_correct_item()->with_rownum_func();
   }
   lex->current_select->is_item_list_lookup= save_is_item_list_lookup;
   lex->current_select->cur_pos_in_select_list= UNDEF_POS;

@@ -1079,14 +1079,12 @@ update_begin:
           error= table->file->ha_update_row(table->record[1],
                                             table->record[0]);
         }
-
         if (likely(!error) && thd->lex->has_returning() &&
             returning_result->send_data(thd->lex->returning()->returning_list) < 0)
         {
           error= 1;
           break;
         }
-
         record_was_same= error == HA_ERR_RECORD_IS_THE_SAME;
         if (unlikely(record_was_same))
         {
