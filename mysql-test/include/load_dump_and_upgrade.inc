@@ -33,6 +33,18 @@
 --echo # Loading dump of $old_version mysql schema
 --exec $MYSQL mysql < $MYSQLTEST_VARDIR/std_data/mysql_database_$old_version.dump
 
+# MDEV-39343: pretend mysql_upgrade has already run for the current version.
+# It must still fix the system tables restored from the older dump.
+--let DDIR= `select @@datadir`
+perl;
+  my $ver= $ENV{'MYSQL_SERVER_VERSION'} or die "MYSQL_SERVER_VERSION not set";
+  my $dir= $ENV{'DDIR'} or die "DDIR not set";
+  open(FILE, ">$dir/mysql_upgrade_info") or die "Failed to open $dir";
+  binmode FILE;
+  print FILE "$ver\n";
+  close(FILE);
+EOF
+
 --echo # Running mysql_upgrade
 --exec $MYSQL_UPGRADE --verbose > $MYSQL_TMP_DIR/upgrade.log
 
