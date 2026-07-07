@@ -23,7 +23,6 @@
 
 #include <mysql/service_wsrep.h>
 
-#include <algorithm> /* std::sort() */
 #include <string>    /* std::string */
 #include <sstream>   /* std::stringstream */
 /*
@@ -222,38 +221,6 @@ wsrep_server_gtid_t wsrep_get_SE_checkpoint()
   return gtid;
 }
 
-/*
-  Sort order for XIDs. Wsrep XIDs are sorted according to
-  seqno in ascending order. Non-wsrep XIDs are considered
-  equal among themselves and greater than with respect
-  to wsrep XIDs.
- */
-struct Wsrep_xid_cmp
-{
-  bool operator()(const XID& left, const XID& right) const
-  {
-    const bool left_is_wsrep= wsrep_is_wsrep_xid(&left);
-    const bool right_is_wsrep= wsrep_is_wsrep_xid(&right);
-    if (left_is_wsrep && right_is_wsrep)
-    {
-      return (wsrep_xid_seqno(&left) < wsrep_xid_seqno(&right));
-    }
-    else if (left_is_wsrep)
-    {
-      return true;
-    }
-    else
-    {
-      return false;
-    }
-  }
-};
-
-void wsrep_sort_xid_array(XID *array, int len)
-{
-  std::sort(array, array + len, Wsrep_xid_cmp());
-}
-
 std::string wsrep_xid_print(const XID *xid)
 {
   std::stringstream ss;
@@ -265,17 +232,4 @@ std::string wsrep_xid_print(const XID *xid)
   ss << uuid_str << ":" << wsrep_xid_seqno(xid) << " " << gtid.domain_id << "-"
      << gtid.server_id << "-" << gtid.seqno;
   return ss.str();
-}
-
-bool wsrep_is_xid_gtid_undefined(const XID *xid)
-{
-  wsrep_server_gtid_t gtid= {0,0,0};
-
-  if (wsrep_is_wsrep_xid(xid) &&
-      xid->data[WSREP_XID_VERSION_OFFSET] == WSREP_XID_VERSION_3)
-  {
-    memcpy(&gtid, &xid->data[WSREP_XID_RPL_GTID_OFFSET], sizeof(wsrep_server_gtid_t));
-  }
-
-  return (gtid.seqno == 0 && gtid.server_id == 0 && gtid.domain_id == 0);
 }

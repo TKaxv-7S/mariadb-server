@@ -2545,30 +2545,6 @@ static char *xid_to_str(char *buf, const XID &xid)
 }
 #endif
 
-static my_xid wsrep_order_and_check_continuity(XID *list, int len)
-{
-#ifdef WITH_WSREP
-  wsrep_sort_xid_array(list, len);
-  wsrep::gtid cur_position= wsrep_get_SE_checkpoint<wsrep::gtid>();
-  long long cur_seqno= cur_position.seqno().get();
-  for (int i= 0; i < len; ++i)
-  {
-    if (!wsrep_is_wsrep_xid(list + i) ||
-        wsrep_xid_seqno(list + i) != cur_seqno + 1)
-    {
-      WSREP_INFO("Discovered discontinuity in recovered wsrep "
-                 "transaction XIDs. Truncating the recovery list to "
-                 "%d entries", i);
-      break;
-    }
-    ++cur_seqno;
-  }
-  WSREP_INFO("Last wsrep seqno to be recovered %lld", cur_seqno);
-  return (cur_seqno < 0 ? 0 : cur_seqno);
-#else
-  return 0;
-#endif /* WITH_WSREP */
-}
 /**
   recover() step of xa.
 
@@ -2795,30 +2771,6 @@ static my_bool xarecover_handlerton(THD *unused, plugin_ref plugin,
     {
       sql_print_information("Found %d prepared transaction(s) in %s",
                             got, hton_name(hton)->str);
-      /* If wsrep_on=ON, XIDs are first ordered and then the range of
-         recovered XIDs is checked for continuity. All the XIDs which
-         are in continuous range can be safely committed if binlog
-         is off since they have already ordered and certified in the
-         cluster.
-
-         The discontinuity of wsrep XIDs may happen because the GTID
-         is assigned for transaction in wsrep_before_prepare(), but the
-         commit order is entered in wsrep_before_commit(). This means that
-         transactions may run prepare step out of order and may
-         result in gap in wsrep XIDs. This can be the case for example
-         if we have T1 with seqno 1 and T2 with seqno 2 and the server
-         crashes after T2 finishes prepare step but before T1 starts
-         the prepare.
-      */
-      my_xid wsrep_limit __attribute__((unused))= 0;
-
-      /* Note that we could call this for binlog also that
-         will not have WSREP(thd) but global wsrep on might
-         be true.
-      */
-      if (WSREP_ON)
-        wsrep_limit= wsrep_order_and_check_continuity(info->list, got);
-
       for (int i=0; i < got; i ++)
       {
         my_xid x= info->list[i].get_my_xid();
@@ -2838,22 +2790,22 @@ static my_bool xarecover_handlerton(THD *unused, plugin_ref plugin,
           info->found_foreign_xids++;
           continue;
         }
-        if (IF_WSREP(!(wsrep_emulate_bin_log &&
-                       wsrep_is_wsrep_xid(info->list + i) &&
-                       x <= wsrep_limit) && info->dry_run,
-                     info->dry_run))
+        if (info->dry_run)
         {
 #ifdef WITH_WSREP
           /*
-            MDEV-40179: a wsrep transaction still in the prepared state at the
-            final recovery pass (the dry run, commit_list == 0) is past the
-            storage-engine checkpoint and will be re-delivered by IST.
-            After a physical SST (mariabackup) the joiner runs no binlog XA
-            recovery to commit or roll back such transactions, so without this
-            they would abort startup with "Found N prepared transactions!".
-            Roll them back here; the cluster re-applies them from the donor.
+            A wsrep transaction still in the prepared state at the final
+            recovery pass (the dry run, commit_list == 0) was not resolved by
+            an actual binlog scan (there either is no local binlog, as after
+            a physical SST/mariabackup, or none was needed, as with
+            log_bin=OFF). It is therefore never safe to commit it locally:
+            we have no coordinator record proving the rest of the cluster
+            reached the same decision. But it is always safe to roll it back,
+            since this node never committed it either - the cluster will
+            re-deliver it via IST/SST. Roll it back here; without this the
+            server would abort startup with "Found N prepared transactions!".
             Non-wsrep (e.g. user XA) prepared transactions are left untouched
-            and still reported.
+            and still reported, since there is no cluster to re-deliver them.
 
             The guard is WSREP_PROVIDER_EXISTS ("a Galera provider is loaded"):
             a node configured with a provider will rejoin and receive
@@ -2907,11 +2859,7 @@ static my_bool xarecover_handlerton(THD *unused, plugin_ref plugin,
             break;
           }
         }
-        if (IF_WSREP((wsrep_emulate_bin_log &&
-                      wsrep_is_wsrep_xid(info->list + i) &&
-                      !wsrep_is_xid_gtid_undefined(info->list + i) &&
-                      x <= wsrep_limit), false) ||
-            tc_heuristic_recover == TC_HEURISTIC_RECOVER_COMMIT)
+        if (tc_heuristic_recover == TC_HEURISTIC_RECOVER_COMMIT)
         {
           int rc= hton->commit_by_xid(hton, info->list+i);
           if (rc == 0)
@@ -2934,7 +2882,7 @@ static my_bool xarecover_handlerton(THD *unused, plugin_ref plugin,
           }
         }
       }
-      if (got < info->len || info->error)
+      if (got < info->len)
         break;
     }
   }

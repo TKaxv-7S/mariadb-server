@@ -337,7 +337,6 @@ CALL mtr.add_suppression("Table 'mysql\\.gtid_slave_pos' doesn't exist");
 CALL mtr.add_suppression("Native table .* has the wrong structure");
 CALL mtr.add_suppression("WSREP: Did not find domain ID from SST script output");
 CALL mtr.add_suppression("WSREP: Ignoring server id for non bootstrap node");
-CALL mtr.add_suppression("WSREP: Discovered discontinuity in recovered wsrep transaction XIDs");
 --enable_query_log
 
 # Restore original auto_increment_offset values.
