@@ -6627,6 +6627,7 @@ bool Item_field::fix_fields(THD *thd, Item **reference)
 
             if (unlikely(new_field == NULL))
             {
+              DBUG_ASSERT(new_field);
               /* The column to which we link isn't valid. */
               my_error(ER_BAD_FIELD_ERROR, MYF(0), (*res)->name.str,
                        thd_where(thd));

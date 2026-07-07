@@ -7676,7 +7676,7 @@ bool ha_partition::check_parallel_search()
       {
         Field *order_field= ((Item_field *)item)->field;
         DBUG_PRINT("info",("partition order_field: %p", order_field));
-        if (order_field && order_field->table == table_list->table)
+        if (order_field->table == table_list->table)
         {
           Field *part_field= m_part_info->full_part_field_array[0];
           DBUG_PRINT("info",("partition order_field: %p", order_field));
@@ -7719,7 +7719,7 @@ bool ha_partition::check_parallel_search()
       {
         Field *group_field= ((Item_field *)item)->field;
         DBUG_PRINT("info",("partition group_field: %p", group_field));
-        if (group_field && group_field->table == table_list->table)
+        if (group_field->table == table_list->table)
         {
           Field *part_field= m_part_info->full_part_field_array[0];
           DBUG_PRINT("info",("partition group_field: %p", group_field));
