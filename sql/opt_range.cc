@@ -7930,25 +7930,10 @@ SEL_TREE *Item_func_between::get_func_mm_tree(RANGE_OPT_PARAM *param,
   }
   else
   {
-    /*
-      "c NOT BETWEEN f1 AND f2" contributes the disjunct (f1 > c OR c > f2),
-      so the bound f1 uses GT and f2 uses LT.
-
-      When this bound had to be widened (m_negated_bound_superset, set by
-      get_mm_tree() for an order-compatible numeric type mismatch) we use the
-      non-strict operators GE/LE instead.  The range tree for NOT BETWEEN is
-      only ever used as a superset filter - the range access method rechecks
-      the predicate for every fetched row - so a non-strict bound stays a
-      valid superset even when args[0] has to be converted to a
-      different/narrower bound-field type.  See can_build_superset_range_const().
-    */
-    Item_func::Functype gt_op= m_negated_bound_superset ? Item_func::GE_FUNC
-                                                        : Item_func::GT_FUNC;
-    Item_func::Functype lt_op= m_negated_bound_superset ? Item_func::LE_FUNC
-                                                        : Item_func::LT_FUNC;
     tree= get_mm_parts(param, field,
                        (negated ?
-                        (value == (Item*)1 ? gt_op : lt_op):
+                        (value == (Item*)1 ? Item_func::GT_FUNC :
+                                             Item_func::LT_FUNC):
                         (value == (Item*)1 ? Item_func::LE_FUNC :
                                              Item_func::GE_FUNC)),
                        args[0]);
@@ -8711,7 +8696,6 @@ Item_func_between::get_mm_tree(RANGE_OPT_PARAM *param, Item **cond_ptr)
     if (arguments()[i]->real_item()->type() == Item::FIELD_ITEM)
     {
       Item_field *field_item= (Item_field*) (arguments()[i]->real_item());
-      bool build_superset= false;
       if (!can_optimize_range_const(field_item))
       {
         if (!negated)
@@ -8743,12 +8727,9 @@ Item_func_between::get_mm_tree(RANGE_OPT_PARAM *param, Item **cond_ptr)
           tree= nullptr;
           break;
         }
-        build_superset= true;
       }
-      m_negated_bound_superset= build_superset;
       SEL_TREE *tmp= get_full_func_mm_tree(param, field_item,
                                            (Item*)(intptr) i);
-      m_negated_bound_superset= false;
       if (negated)
       {
         tree= !tree ? tmp : tree_or(param, tree, tmp);
