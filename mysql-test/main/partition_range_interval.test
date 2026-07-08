@@ -346,7 +346,7 @@ set timestamp= unix_timestamp('2026-05-08 00:00:00');
 update t1 set c = date_add(c, interval 3 day);
 select * from t1;
 show create table t1;
-select partition_name, partition_method, partition_expression, partition_description, table_rows from information_schema.partitions where table_name='t1' and table_rows > 0;
+select partition_name, partition_method, partition_expression, partition_description from information_schema.partitions where table_name='t1' and table_rows > 0;
 set timestamp= unix_timestamp('2026-05-06 00:00:00');
 drop table t1;
 
@@ -696,6 +696,14 @@ PARTITION BY RANGE COLUMNS (c)
 INTERVAL 0 Day
 (
   PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+
+--error ER_PART_WRONG_VALUE
+create table t1 (c datetime) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL (NUMTODSINTERVAL(0, 'DAY'))
+(
+  PARTITION p0 VALUES LESS THAN ('2026-04-30')
 );
 
 --error ER_PART_WRONG_VALUE

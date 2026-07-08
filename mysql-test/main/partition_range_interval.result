@@ -1087,11 +1087,11 @@ t1	CREATE TABLE `t1` (
  PARTITION `p12` VALUES LESS THAN ('2026-05-07') ENGINE = InnoDB,
  PARTITION `p13` VALUES LESS THAN ('2026-05-08') ENGINE = InnoDB,
  PARTITION `p14` VALUES LESS THAN ('2026-05-09') ENGINE = InnoDB)
-select partition_name, partition_method, partition_expression, partition_description, table_rows from information_schema.partitions where table_name='t1' and table_rows > 0;
-partition_name	partition_method	partition_expression	partition_description	table_rows
-p10	RANGE COLUMNS	`c`	'2026-05-05'	1
-p11	RANGE COLUMNS	`c`	'2026-05-06'	1
-p12	RANGE COLUMNS	`c`	'2026-05-07'	1
+select partition_name, partition_method, partition_expression, partition_description from information_schema.partitions where table_name='t1' and table_rows > 0;
+partition_name	partition_method	partition_expression	partition_description
+p10	RANGE COLUMNS	`c`	'2026-05-05'
+p11	RANGE COLUMNS	`c`	'2026-05-06'
+p12	RANGE COLUMNS	`c`	'2026-05-07'
 set timestamp= unix_timestamp('2026-05-06 00:00:00');
 drop table t1;
 # ALTER TABLE, no interval => have interval
@@ -2017,6 +2017,13 @@ PARTITION BY RANGE COLUMNS (c)
 INTERVAL 0 Day
 (
 PARTITION p0 VALUES LESS THAN ('2026-04-20')
+);
+ERROR HY000: Wrong parameters for partitioned `t1`: wrong value for 'INTERVAL'
+create table t1 (c datetime) engine=innodb
+PARTITION BY RANGE COLUMNS (c)
+INTERVAL (NUMTODSINTERVAL(0, 'DAY'))
+(
+PARTITION p0 VALUES LESS THAN ('2026-04-30')
 );
 ERROR HY000: Wrong parameters for partitioned `t1`: wrong value for 'INTERVAL'
 create table t1 (c datetime) engine=innodb

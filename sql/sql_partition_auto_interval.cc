@@ -212,7 +212,8 @@ bool check_range_interval_constants(THD *thd, partition_info *part_info)
     }
     part_elem_value *range_val= thd->calloc<part_elem_value>(1);
     part_column_list_val *col_val= thd->calloc<part_column_list_val>(1);
-    if (!range_val || !col_val || el->list_val_list.push_back(range_val))
+    if (unlikely(!column_item || !range_val || !col_val ||
+                 el->list_val_list.push_back(range_val)))
       return TRUE;              /* OOM */
     range_val->col_val_array= col_val;
     col_val->item_expression= column_item;
@@ -270,7 +271,7 @@ static int compare_int(const void *a, const void *b)
   partitions. Find the first gap large enough to fit in all the new
   partitions.
 */
-uint range_interval_next_part_no(uint new_parts, 
+uint range_interval_next_part_no(uint new_parts,
                                  List<partition_element>& partitions)
 {
   int *cur, *start, *end;
@@ -278,6 +279,7 @@ uint range_interval_next_part_no(uint new_parts,
   partition_element *el;
   const char *name;
   uint right= new_parts;
+  DBUG_ASSERT(new_parts > 0);
   if(!(start= (int *) my_alloca(sizeof(int) * partitions.elements)))
   {
     /* Out of memory */
@@ -289,7 +291,7 @@ uint range_interval_next_part_no(uint new_parts,
   while ((el= it++))
   {
     name= el->partition_name.str;
-    if (name[0] == 'p')
+    if (name && name[0] == 'p')
     {
       *cur= atoi(name + 1);
       /* Ignore 0 which could be a failed conversion */
@@ -421,7 +423,7 @@ bool partition_info::set_range_interval(int num, LEX_CSTRING &type,
                                         bool is_ds,
                                         const char *table_name)
 {
-  if (num < 0)
+  if (num <= 0)
     goto end;
   if (is_ds)
   {
