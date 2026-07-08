@@ -1565,7 +1565,7 @@ bool mysql_show_create_server(THD *thd, LEX_CSTRING *name)
   buffer.append(STRING_WITH_LEN("CREATE SERVER "));
   append_identifier(thd, &buffer, name);
   buffer.append(STRING_WITH_LEN(" FOREIGN DATA WRAPPER "));
-  buffer.append(server->scheme, strlen(server->scheme));
+  append_unescaped(&buffer, server->scheme, strlen(server->scheme));
   buffer.append(STRING_WITH_LEN(" OPTIONS ("));
   engine_option_value* option= server->option_list;
   bool first= true;
@@ -1573,7 +1573,7 @@ bool mysql_show_create_server(THD *thd, LEX_CSTRING *name)
   {
     if (!first)
       buffer.append(STRING_WITH_LEN(", "));
-    buffer.append(option->name);
+    append_identifier(thd, &buffer, &option->name);
     buffer.append(STRING_WITH_LEN(" "));
     append_unescaped(&buffer, option->value.str, option->value.length);
     first= false;

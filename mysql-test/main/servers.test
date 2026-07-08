@@ -182,3 +182,13 @@ CREATE SERVER s FOREIGN DATA WRAPPER mysql OPTIONS (HOST'',PORT 1844674407370955
 CREATE SERVER s FOREIGN DATA WRAPPER mysql OPTIONS (HOST'',PORT -5);
 
 --echo # End of 10.11 tests
+
+--echo #
+--echo # MDEV-40312 SHOW CREATE SERVER incorrect quoting
+--echo #
+
+create server s1 foreign data wrapper 'my''sql' options (`ho``st` 'va''lue');
+show create server s1;
+drop server s1;
+
+--echo # End of 11.8 tests
