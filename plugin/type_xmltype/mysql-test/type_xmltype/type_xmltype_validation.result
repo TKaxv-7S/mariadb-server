@@ -2034,3 +2034,13 @@ type="xs:string"/></xs:sequence></xs:complexType></xs:element></xs:schema>'
 ) AS v;
 v
 1
+CREATE TABLE t (x XMLTYPE,CHECK (XMLISVALID(x, '<xs:scema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:element name="a"/></xs:schema>')));
+ERROR HY000: Incorrect XML value: 'XML Schema parse error at line 1 pos 88: '</xs:schema>' unexpected ('</xs:scema>' wanted)'
+CREATE TABLE t (x XMLTYPE,CHECK (
+XMLISVALID(x, '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:element name="a"/></xs:schema>')));
+INSERT INTO t VALUES ('<a />');
+INSERT INTO t VALUES ('<a> </a>');
+INSERT INTO t VALUES ('<a>   </a>');
+INSERT INTO t VALUES ('<a>Text</a>');
+ERROR 23000: CONSTRAINT `CONSTRAINT_1` failed for `test`.`t`
+DROP TABLE t;
