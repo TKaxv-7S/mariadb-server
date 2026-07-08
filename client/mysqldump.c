@@ -3660,7 +3660,7 @@ static void dump_trigger_old(FILE *sql_file, MYSQL_RES *show_triggers_rs,
 
   if (opt_drop_trigger)
     fprintf(sql_file, "/*!50032 DROP TRIGGER IF EXISTS %s */;\n",
-    (*show_trigger_row)[0]);
+          quote_name((*show_trigger_row)[0], name_buff, 0));
 
   fprintf(sql_file,
           "DELIMITER ;;\n"
@@ -3717,6 +3717,7 @@ static int dump_trigger(FILE *sql_file, MYSQL_RES *show_create_trigger_rs,
 {
   MYSQL_ROW row;
   char *query_str;
+  char name_buff[NAME_LEN*4+3];
   int db_cl_altered= FALSE;
 
   DBUG_ENTER("dump_trigger");
@@ -3744,7 +3745,7 @@ static int dump_trigger(FILE *sql_file, MYSQL_RES *show_create_trigger_rs,
 
     if (opt_drop_trigger)
       fprintf(sql_file, "/*!50032 DROP TRIGGER IF EXISTS %s */;\n",
-          row[0]);
+          quote_name(row[0],name_buff,0));
 
     query_str= cover_definer_clause(row[2], strlen(row[2]),
                                     C_STRING_WITH_LEN("50017"),
@@ -4846,6 +4847,8 @@ static int dump_all_udfs()
   static const char *udf_types[] = {"STRING", "REAL", "INT", "ROW", "DECIMAL", "TIME" };
   MYSQL_ROW row;
   MYSQL_RES *tableres;
+  char name_buff[NAME_LEN * 4 + 3];
+  char show_name_buff[FN_REFLEN*2+3];
   int retresult, result= 0;
 
   if (mysql_query_with_error_report(mysql, &tableres, "SELECT * FROM mysql.func"))
@@ -4867,10 +4870,11 @@ static int dump_all_udfs()
               row[0]);
     }
     fprintf(md_result_file,
-            "CREATE %s%sFUNCTION %s%s RETURNS %s SONAME '%s';\n",
+            "CREATE %s%sFUNCTION %s%s RETURNS %s SONAME %s;\n",
             opt_replace_into ? "/*M!100103 OR REPLACE */ ": "",
             (strcmp("AGGREGATE", row[2])==0 ? "AGGREGATE " : ""),
-            opt_ignore ? "IF NOT EXISTS " : "", row[0], udf_types[retresult], row[2]);
+            opt_ignore ? "IF NOT EXISTS " : "", quote_name(row[0],name_buff,0),
+            udf_types[retresult], quote_for_equal(row[2], show_name_buff));
   }
   mysql_free_result(tableres);
 
@@ -6218,6 +6222,7 @@ static int do_show_slave_status(MYSQL *mysql_con, int have_mariadb_gtid,
     (opt_slave_data == MYSQL_OPT_SLAVE_DATA_COMMENTED_SQL) ? "-- " : "";
   const char *gtid_comment_prefix= (use_gtid ? comment_prefix : "-- ");
   const char *nogtid_comment_prefix= (!use_gtid ? comment_prefix : "-- ");
+  char name_buff[FN_REFLEN*2+3];
 
   if (mysql_query_with_error_report(mysql_con, &slave,
                                     multi_source ?
@@ -6270,8 +6275,9 @@ static int do_show_slave_status(MYSQL *mysql_con, int have_mariadb_gtid,
       if (use_gtid)
       {
         if (multi_source)
-          fprintf(md_result_file, "%sCHANGE MASTER '%.80s' TO "
-                  "MASTER_USE_GTID=slave_pos;\n", gtid_comment_prefix, row[0]);
+          fprintf(md_result_file, "%sCHANGE MASTER %s TO "
+                  "MASTER_USE_GTID=slave_pos;\n", gtid_comment_prefix,
+                  quote_for_equal(row[0], name_buff));
         else
           fprintf(md_result_file, "%sCHANGE MASTER TO "
                   "MASTER_USE_GTID=slave_pos;\n", gtid_comment_prefix);
@@ -6279,21 +6285,24 @@ static int do_show_slave_status(MYSQL *mysql_con, int have_mariadb_gtid,
 
       /* SHOW MASTER STATUS reports file and position */
       if (multi_source)
-        fprintf(md_result_file, "%sCHANGE MASTER '%.80s' TO ",
-                nogtid_comment_prefix, row[0]);
+        fprintf(md_result_file, "%sCHANGE MASTER %s TO ",
+                nogtid_comment_prefix, quote_for_equal(row[0], name_buff));
       else
         fprintf(md_result_file, "%sCHANGE MASTER TO ", nogtid_comment_prefix);
       
       if (opt_include_master_host_port)
       {
         if (row[1 + multi_source])
-          fprintf(md_result_file, "MASTER_HOST='%s', ", row[1 + multi_source]);
+          fprintf(md_result_file, "MASTER_HOST=%s, ",
+                  quote_for_equal(row[1 + multi_source], name_buff));
         if (row[3])
-          fprintf(md_result_file, "MASTER_PORT=%s, ", row[3 + multi_source]);
+          fprintf(md_result_file, "MASTER_PORT=%llu, ",
+                  atoll(row[3 + multi_source]));
       }
       fprintf(md_result_file,
-              "MASTER_LOG_FILE='%s', MASTER_LOG_POS=%s;\n",
-              row[9 + multi_source], row[21 + multi_source]);
+              "MASTER_LOG_FILE=%s, MASTER_LOG_POS=%llu;\n",
+              quote_for_equal(row[9 + multi_source], name_buff),
+              atoll(row[21 + multi_source]));
 
       check_io(md_result_file);
     }
