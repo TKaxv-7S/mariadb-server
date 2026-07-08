@@ -6823,7 +6823,7 @@ static int clear_proc_denies(HASH *hash, const LEX_USER &combo)
         host_matches(combo, grant->host.hostname))
     {
       grant->privs.set_deny(NO_ACL, NO_ACL);
-      grant->init_privs= grant->privs;
+      grant->init_privs.set_deny(NO_ACL, NO_ACL);
       if (grant->privs.is_empty())
       {
         my_hash_delete(hash, (uchar *) grant);
@@ -6853,7 +6853,7 @@ static int clear_all_denies(const LEX_USER &combo)
     if (acl_role)
     {
       acl_role->access.set_deny(NO_ACL, NO_ACL);
-      acl_role->initial_role_access= acl_role->access;
+      acl_role->initial_role_access.set_deny(NO_ACL, NO_ACL);
     }
   }
 
@@ -6865,7 +6865,7 @@ static int clear_all_denies(const LEX_USER &combo)
     if (host_matches(combo ,acl_db->host.hostname))
     {
       acl_db->access.set_deny(NO_ACL, NO_ACL);
-      acl_db->initial_access= acl_db->access;
+      acl_db->initial_access.set_deny(NO_ACL, NO_ACL);
       if (acl_db->access.is_empty())
       {
         acl_dbs.del(i);
@@ -6882,13 +6882,14 @@ static int clear_all_denies(const LEX_USER &combo)
         host_matches(combo, gt->host.hostname))
     {
       gt->privs.set_deny(NO_ACL, NO_ACL);
-      gt->init_privs= gt->privs;
+      gt->init_privs.set_deny(NO_ACL, NO_ACL);
 
       for (uint j= 0; j < gt->hash_columns.records;)
       {
         GRANT_COLUMN *gc= (GRANT_COLUMN *) my_hash_element(&gt->hash_columns, j);
         gc->rights.set_deny(NO_ACL, NO_ACL);
-        gc->init_rights= gc->rights;
+        /* Don't copy rights, for roles they include inherited privileges */
+        gc->init_rights.set_deny(NO_ACL, NO_ACL);
         if (gc->rights.is_empty())
         {
           my_hash_delete(&gt->hash_columns, (uchar *) gc);
@@ -7008,7 +7009,7 @@ static int apply_deny_table(const LEX_USER &combo,const access_t& acc, const cha
       return 1;
   }
   gt->privs.merge_same_level(acc);
-  gt->init_privs= gt->privs;
+  gt->init_privs.merge_same_level(acc);
   /* Delete from hash, if no privileges, and no columns are left */
   if (gt->privs.is_empty() && !gt->hash_columns.records)
     my_hash_delete(&column_priv_hash, (uchar *) gt);
@@ -7064,7 +7065,7 @@ static int apply_deny_column(const LEX_USER &combo, const access_t &access,const
   }
 
   grant_column->rights.merge_same_level(access);
-  grant_column->init_rights= grant_column->rights;
+  grant_column->init_rights.merge_same_level(access);
 
   /*
     Remove column if no privileges left at all.
@@ -7120,7 +7121,7 @@ static int apply_deny_proc(const LEX_USER &combo, const access_t &access, ACL_PR
     {
       // Entry exists - always update (even if clearing deny bits)
       grant_name->privs.merge_same_level(access);
-      grant_name->init_privs= grant_name->privs;
+      grant_name->init_privs.merge_same_level(access);
 
       // Remove if no privileges left at all
       if (grant_name->privs.is_empty())
@@ -7397,7 +7398,7 @@ static int replace_column_table(GRANT_TABLE *g_t, const User_table &user_table,
 	  if (grant_column)
           {
             grant_column->rights.set_allow_bits(privileges);
-            grant_column->init_rights= grant_column->rights;
+            grant_column->init_rights.set_allow_bits(privileges);
           }
 	}
 	else
